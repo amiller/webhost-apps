@@ -55,8 +55,11 @@ PY
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 tar czf "$TMP/app.tgz" -C "$DIR" server.ts project.json
-curl -fsS -X POST "$CVM/_api/projects" \
+# The daemon echoes the full manifest (incl. env secrets) on success — capture it
+# and print only non-secret fields so secrets never hit stdout/logs.
+RESP=$(curl -fsS -X POST "$CVM/_api/projects" \
   -H "Authorization: Bearer $TEE_DAEMON_TOKEN" \
   -F "manifest=$MANIFEST;type=application/json" \
-  -F "files=@$TMP/app.tgz"
-echo; echo "Deployed → $CVM/router-dashboard/   (redeploy: re-run this script)"
+  -F "files=@$TMP/app.tgz")
+echo "$RESP" | python3 -c 'import sys,json; d=json.load(sys.stdin); print("deployed:",d["name"],"| mode:",d.get("mode"),"| tree:",d.get("tree_hash","")[:12],"| at:",d.get("deployed_at"))'
+echo "Deployed → $CVM/router-dashboard/   (redeploy: re-run this script)"
