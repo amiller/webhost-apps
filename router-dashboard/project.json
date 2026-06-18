@@ -1,0 +1,11 @@
+{
+  "runtime": "deno",
+  "entry": "server.ts",
+  "mode": "dev",
+  "listen": { "port": 8080 },
+  "env": {
+    "REFRESH_MS": "600000",
+    "LIMIT": "8000",
+    "ME": "amiller"
+  }
+}
