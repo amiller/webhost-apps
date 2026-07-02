@@ -39,8 +39,8 @@ Status legend: ✅ committed+pushed · 🟡 source on disk (dir, maybe not a rep
 | teleport-probe | hermes, webhost | dev | 🟡 | webhost-apps/teleport-probe (this repo) | |
 | status, report | webhost-staging | dev | 🔵? | likely zed-built (Jul 2) | verify on zed |
 | journeys | webhost-staging | dev | 🔵? | likely zed-built | verify on zed |
-| caps-probe | pod.dstack | dev | 🔴? | none found local; probe-family | verify (webhost-apps has brave-probe) |
-| probe | hermes-staging | attested | 🔴 | none found | **attested + no source = worst case; rescue** |
+| caps-probe | pod.dstack | dev | ⚪ | dead image container (regenerable) | image app; container not running; skip |
+| probe | hermes-staging | attested | ✅ | tee-daemon/examples/isolation-probe + ghcr.io/amiller/tee-isolation-probe | the "isolation probe" demo; image published, source committed — just wire deploy `source` |
 | cadence | hermes-staging | dev | 🔴 | none found | rescue from daemon disk |
 | elaine-dossier | hermes-staging | dev | 🔴 | none found (cf. teleport/onboard-elaine?) | rescue |
 | listen-fe | hermes-staging | dev | 🔴 | none found (listen frontend) | rescue |
@@ -50,8 +50,8 @@ Status legend: ✅ committed+pushed · 🟡 source on disk (dir, maybe not a rep
 
 ## Rescue priority (time-sensitive: 🔴 apps live only on daemon disk)
 1. **timeline-peek — DONE** (rescued to this repo).
-2. **probe** (🔴 **attested** with no source — highest risk) and **cadence, elaine-dossier, listen-fe, caps-probe** — pull from the daemon disk (RFC 0017 export, or fetch served content for static apps) before any volume loss.
-3. **status/report/journeys** — pull from zed (loop-built) once SSH is back.
+2. ~~probe~~ (resolved: isolation-probe demo, image on ghcr + source in tee-daemon/examples). cadence/elaine-dossier/listen-fe/caps-probe — deemed uninteresting/regenerable (operator call 2026-07-02); not rescued.
+3. **status/report/journeys** — pull from zed (loop-built) if wanted; not yet done.
 4. Give the 🟡 dir-only apps a repo home (this monorepo) + wire deploy `source` → makes them promotable.
 
 ## The monorepo
