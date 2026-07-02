@@ -1,0 +1,79 @@
+<!doctype html>
+<meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Timeline Peek</title>
+<!--
+  A relying-party app. Two modes:
+   • owner   — window.oauth3.connect() asks your extension for a scoped token.
+   • shared  — ?token=<scoped> in the URL: a public, revocable share of one feed.
+  Either way it only ever fetches the OAuth3 node's /api/twitter/feed. No cookies.
+-->
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0a0a0c;color:#e7e9ea;font:15px/1.45 -apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:620px;margin:0 auto;padding:0 14px 60px}
+header{padding:26px 4px 16px}h1{font-size:22px;margin:0 0 4px}.sub{color:#7a828c;font-size:13px}
+.badge{display:inline-block;margin-top:10px;font-size:11.5px;color:#86efac;background:#0f2417;border:1px solid #1c5236;padding:3px 9px;border-radius:999px}
+button{margin-top:16px;padding:11px 18px;border:0;border-radius:10px;background:#3ea8ff;color:#04121f;font:700 15px system-ui;cursor:pointer}
+button:disabled{opacity:.5;cursor:default}
+.note{margin-top:14px;color:#7a828c;font-size:13px}.err{color:#fca5a5}
+.t{display:flex;gap:12px;padding:14px 6px;border-bottom:1px solid #23262d}
+.av{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#2b3138,#3a4350);display:flex;align-items:center;justify-content:center;font-weight:700;color:#cdd3da;flex:0 0 42px}
+.body{min-width:0;flex:1}.hd{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.nm{font-weight:700}.hn,.dot,.tm{color:#7a828c;font-size:14px}
+.tx{margin:3px 0 9px;white-space:pre-wrap;word-wrap:break-word}.media{color:#7a828c}
+.st{display:flex;gap:22px;color:#7a828c;font-size:13px}
+footer{color:#7a828c;font-size:12px;text-align:center;padding:24px 0;border-top:1px solid #23262d;margin-top:8px}
+</style>
+<div class=wrap>
+  <header>
+    <h1>Timeline Peek</h1>
+    <div class=sub id=sub>A logged-in X feed, reconstructed.</div>
+    <div class=badge>🔒 a scoped, revocable token · cookies never leave the TEE</div>
+    <div><button id=go>Connect with OAuth3</button></div>
+    <div id=note class=note></div>
+  </header>
+  <div id=feed></div>
+  <footer id=foot hidden>Rendered by a relying-party app from a scoped token.<br>OAuth3 holds the session; this app only ever sees the feed. The owner can revoke this link any time.</footer>
+</div>
+<script>
+const NODE = location.origin + "/oauth3";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const card = (it) => {
+  const s = (it.stats||[]).concat(["","","",""]);
+  const tx = esc(it.text) || '<span class=media>🖼 media</span>';
+  return `<article class=t><div class=av>${esc((it.name||"?")[0])}</div><div class=body>
+    <div class=hd><span class=nm>${esc(it.name)}</span><span class=hn>${esc(it.handle)}</span>
+    <span class=dot>·</span><span class=tm>${esc(it.time)}</span></div>
+    <div class=tx>${tx}</div>
+    <div class=st><span>💬 ${esc(s[0])}</span><span>🔁 ${esc(s[1])}</span><span>♥ ${esc(s[2])}</span><span>📊 ${esc(s[3])}</span></div>
+    </div></article>`;
+};
+async function loadFeed(token) {
+  const r = await fetch(NODE + "/api/twitter/feed", { headers: { Authorization: "Bearer " + token } });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || ("feed " + r.status));
+  const items = body.items || [];
+  $("note").textContent = ""; $("foot").hidden = false;
+  $("sub").textContent = "For You · reconstructed, " + items.length + " posts";
+  $("feed").innerHTML = items.map(card).join("");
+}
+const shareToken = new URLSearchParams(location.search).get("token");
+if (shareToken) {
+  // Public share: no wallet needed, the token is in the link.
+  $("go").hidden = true; $("note").textContent = "Loading shared feed…";
+  loadFeed(shareToken).catch(e => { $("note").className = "note err"; $("note").textContent = String(e.message || e); });
+} else {
+  $("go").addEventListener("click", async () => {
+    $("note").className = "note"; $("note").textContent = "";
+    if (!window.oauth3) { $("note").className = "note err"; $("note").textContent = "No OAuth3 wallet found — install the oauth3 extension and reload."; return; }
+    $("go").disabled = true; $("note").textContent = "Asking your wallet for a scoped token…";
+    try {
+      const token = await window.oauth3.connect({ plugin: "twitter", app: "timeline-peek", node: NODE });
+      $("note").textContent = "Reading your feed with the scoped token…";
+      await loadFeed(token);
+      $("go").hidden = true; // connected — the button goes away
+    } catch (e) { $("note").className = "note err"; $("note").textContent = String(e.message || e); $("go").disabled = false; }
+  });
+}
+</script>
