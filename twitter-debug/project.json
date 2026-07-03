@@ -1,0 +1,8 @@
+{
+  "name": "twitter-debug",
+  "runtime": "image",
+  "image": "ghcr.io/amiller/tiktok-dstack:twitter-debug",
+  "image_port": 3000,
+  "oci_runtime": "runc",
+  "mode": "dev"
+}

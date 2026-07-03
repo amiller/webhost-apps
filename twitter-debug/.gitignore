@@ -1,0 +1,15 @@
+# Secrets — NEVER commit these
+.debug-secret
+*.env
+secrets.env
+.zai-env
+
+# Cookie jars / session material
+jar.json
+*jar*.json
+cookies*.json
+
+# Local build/scratch
+node_modules/
+dist/
+*.log

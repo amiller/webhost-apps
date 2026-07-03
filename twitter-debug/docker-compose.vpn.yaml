@@ -1,0 +1,27 @@
+# Local demo of VPN egress (option B): the same twitter-debug image, but all of its
+# egress (Brave + rettiwt + the IP check) routed through ProtonVPN via a privileged
+# openvpn-socks5 sidecar. The browser shares the VPN container's network namespace,
+# so there is no un-tunnelled path out. Creds come from secrets.env (never printed).
+#   ZAI_API_KEY=... docker compose -f docker-compose.vpn.yaml up -d
+services:
+  vpn:
+    image: ghcr.io/amiller/openvpn-socks5@sha256:287ca89cb223f70a607ea24f5bf7fc99d6484c5630ff43585a316a8342c3a620
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    env_file: /home/amiller/projects/teleport/login-with-anything/deploy/secrets.env
+    environment:
+      SOCKS5_PORT: "1080"
+      DAEMON_MODE: "true"
+    ports:
+      - "3010:3000"   # the browser's image_port, published via the VPN netns
+    restart: unless-stopped
+
+  browser:
+    image: ghcr.io/amiller/tiktok-dstack:twitter-debug   # the debug-console image
+    network_mode: "service:vpn"   # <-- share the VPN's network namespace
+    shm_size: 1gb
+    environment:
+      ZAI_API_KEY: ${ZAI_API_KEY}
+      NEKO_DESKTOP_SCREEN: "1280x720@30"
+      SCREEN_H: "720"
+    depends_on: [vpn]

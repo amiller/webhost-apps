@@ -1,0 +1,96 @@
+# OAuth3 debug console — Twitter as a case study
+
+A self-contained webhost-app (`runtime: image`) for the [tee-daemon](https://pod.dstack.soc1024.com). It demonstrates the OAuth3 thesis on one site: **your session cookie, sealed inside a TEE, is a full capability** — and the browser is only needed *once*, to discover the shape of a request.
+
+Live: `https://pod.dstack.soc1024.com/twitter-debug/` (trailing slash required).
+
+## The thesis: one sealed jar, four rungs
+
+The same intent (read your timeline, post a tweet) is served four ways, from most to least machinery:
+
+| # | path | browser? | how it signs |
+|---|------|----------|--------------|
+| 1 | **blind API** (`rettiwt-api`) | no | guesses the request; on a datacenter/VPN egress X rejects it before GraphQL |
+| 2 | **browser observe** (Brave + xdotool + X11 + GLM-4.5V vision, in-TEE) | yes | drives the real page; the request is signed by X's own JS |
+| 3 | **reify = replay** | no | replay the browser-observed request headlessly (plain `fetch`) |
+| 4 | **headless engine** | no | build the request from scratch: jar + queryId (from X's JS bundle) + feature flags |
+
+The point of the console is the **instrumentation** — putting these side by side shows exactly where each one succeeds or fails.
+
+### Key finding: X's `x-client-transaction-id` is not enforced here
+
+We spent effort capturing the `x-client-transaction-id` (xctid) the browser sends, assuming it was the gate. It isn't — on an **authenticated** session, X does not validate it for these endpoints:
+
+- `HomeTimeline` (read): valid / **absent** / **garbage** xctid → all `200`.
+- `FavoriteTweet` / `CreateTweet` (writes): **garbage** xctid → succeeds (`"favorite_tweet":"Done"`, real tweet created).
+
+So the whole surface reduces to rung 4. You need only:
+
+- `auth_token` + `ct0` cookies (the latter is also the `x-csrf-token`),
+- the graphql **queryId** — grep'd live from `https://abs.twimg.com/responsive-web/client-web/main.<hash>.js` (`queryId:"…",operationName:"…"`), so it self-updates,
+- the operation's **feature flags** (baked in `server.ts`).
+
+The xctid is a bot-detection signal aimed mostly at the *guest/unauthenticated* surface. (If you ever need it for that surface, the generation inputs are all fetchable headlessly too: the `twitter-site-verification` meta, the four `loading-x-anim` SVG frames, and the byte indices in `ondemand.s.<hash>.js`.)
+
+## Endpoints (served by `ws-bridge.js` on the single `image_port` 3000, proxied to the agent on 8090)
+
+Reads/observation are **public**. Writes and the mouse-probe require the shared secret (`X-Debug-Secret` header). Browser-driving is lock+cooldown'd so the single in-TEE browser can't be hogged.
+
+| endpoint | gate | notes |
+|----------|------|-------|
+| `GET /twitter/health` `/twitter/status` `/twitter/shot` `/twitter/ip` `/twitter/cookies` | public | observe: health, what's holding the browser, live frame, egress IP, loaded cookie names |
+| `POST /twitter/setjar` | secret | load the cookie jar into the TEE (in-memory) |
+| `POST /twitter/api {op}` | timeline public; post/like/unlike secret | blind `rettiwt-api` path |
+| `POST /twitter/browser {task}` | trace public (lock+cooldown); post secret | drive the real browser (vision + xdotool), verified against the CDP trace |
+| `POST /twitter/reify` | public (lock+cooldown) | rung 1 vs 2 vs 3 side-by-side + diff + verdict |
+| `POST /twitter/engine {op}` | timeline public; post/like/unlike secret | **rung 4 — fully headless, no browser, no xctid** |
+| `POST /twitter/probe` | secret | xdotool diagnostics (geometry, mouse) |
+
+## Security model
+
+Public URL → **read-only by default**:
+
+- `DEBUG_SECRET` env gates all writes (`setjar`, `post`, `like`, `unlike`) and the probe. No secret set → writes hard-disabled.
+- The dashboard has a `🔒 read-only / 🔓 unlocked` pill: paste the secret once (stored in `localStorage`, sent as `X-Debug-Secret`; never baked into the page).
+- Browser-driving (`browser`, `reify`) has a single-flight lock + 20s cooldown so nobody can monopolize the one browser.
+
+The secret lives in `.debug-secret` (git-ignored, perms 600). Rotate by regenerating it and redeploying.
+
+## Deploy
+
+Prereqs: `docker`, a `TEE_DAEMON_TOKEN`, a `ZAI_API_KEY` (GLM-4.5V, z.ai coding/paas endpoint), and — for the attested VPN egress — ProtonVPN creds in `secrets.env`.
+
+```bash
+# generate the write-secret once
+openssl rand -hex 16 > .debug-secret && chmod 600 .debug-secret
+
+# attested: caps:[NET_ADMIN] → the baked-in vpn.sh brings up a full-tunnel ProtonVPN egress
+ZAI_API_KEY=… ./deploy-attested.sh          # posts the image manifest to the daemon
+
+# load the jar (needs the secret)
+curl -X POST https://pod.dstack.soc1024.com/twitter-debug/twitter/setjar \
+  -H "X-Debug-Secret: $(cat .debug-secret)" -H 'content-type: application/json' \
+  --data '{"jar": { "auth_token": "…", "ct0": "…", "twid": "…", … }}'
+```
+
+`deploy.sh` is the non-attested variant (no VPN, no NET_ADMIN). The jar is held **in-memory** in the TEE — reload it after any container restart.
+
+### Attested privilege
+
+`NET_ADMIN` + `/dev/net/tun` are granted by the tee-daemon **only when `mode: attested`** (opaque/dev containers can't get them). That's what lets `vpn.sh` bring up a full-tunnel ProtonVPN egress inside the enclave.
+
+## Layout
+
+- `server.ts` — the agent (data hub). All four paths + the reify diff + the headless engine + status/visibility.
+- `human-mouse.ts` — xdotool input (ghost-cursor bezier moves, per-char typing, `Ctrl+Enter` submit).
+- `glm-vision.ts` — GLM-4.5V locate/classify (normalized-1000 coords).
+- `extension/` — the Envoy Chrome extension: CDP network-trace capture (`startTrace`/`captureTrace`), cookie injection, and `rectOf(selector)` for exact DOM rects.
+- `ws-bridge.js` — serves the dashboard + relays tool commands to the extension.
+- `web/index.html` — the dashboard.
+- `Dockerfile` — neko/brave base + node + xdotool/x11vnc/openvpn + the above. Deps install in a cached layer and source is a tiny top layer, so editing `server.ts`/`web/` is a ~1s rebuild.
+
+## Notes / limits
+
+- Browser **posting** works via `Ctrl+Enter` (X's shortcut): in this container XTEST *clicks* focus inputs but don't fire X's React Post button, while keyboard input does. Coordinates/vision/typing are all correct — see `server.ts` `runBrowser` and the git history for the diagnosis.
+- The **engine** is the reliable write path (rung 4); the browser path is the ground-truth observer and the tool for sites that *do* enforce signing.
+- One image (~1.85 GB, neko/brave). The jar and all secrets are read from env / external files — none are baked into the image.

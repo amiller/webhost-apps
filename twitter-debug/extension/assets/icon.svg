@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0a1628"/>
+      <stop offset="100%" stop-color="#1a1a2e"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#4ecdc4" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#2a6f6a" stop-opacity="0.6"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="128" height="128" rx="24" fill="url(#bg)"/>
+  <!-- Inner border glow -->
+  <rect x="3" y="3" width="122" height="122" rx="21" fill="none" stroke="#4ecdc4" stroke-opacity="0.15" stroke-width="1"/>
+  <!-- Geometric "E" mark — clean Severance-style corridors -->
+  <!-- Outer envelope shape -->
+  <path d="M 32 38 L 64 24 L 96 38 L 96 90 L 64 104 L 32 90 Z"
+        fill="none" stroke="url(#glow)" stroke-width="2.5" stroke-linejoin="round"/>
+  <!-- Inner horizontal lines — hallway floors -->
+  <line x1="40" y1="52" x2="88" y2="52" stroke="#4ecdc4" stroke-opacity="0.5" stroke-width="1.5"/>
+  <line x1="44" y1="66" x2="84" y2="66" stroke="#4ecdc4" stroke-opacity="0.35" stroke-width="1.5"/>
+  <line x1="48" y1="80" x2="80" y2="80" stroke="#4ecdc4" stroke-opacity="0.2" stroke-width="1.5"/>
+  <!-- Center dot — the watcher -->
+  <circle cx="64" cy="64" r="4" fill="#4ecdc4" opacity="0.85"/>
+  <!-- Subtle radial lines from center -->
+  <line x1="64" y1="60" x2="64" y2="24" stroke="#4ecdc4" stroke-opacity="0.3" stroke-width="1"/>
+  <line x1="64" y1="68" x2="64" y2="104" stroke="#4ecdc4" stroke-opacity="0.15" stroke-width="1"/>
+</svg>
