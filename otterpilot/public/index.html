@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>otter — what were we talking about?</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+         background: #0b0c10; color: #d7dae0; display: flex; flex-direction: column; height: 100vh; }
+  header { padding: 12px 18px; border-bottom: 1px solid #1e2029; display: flex; gap: 12px; align-items: center; }
+  header b { color: #8ad; font-size: 16px; }
+  header .meet { color: #6b7080; font-size: 13px; margin-right: auto; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #2a2e3b; display: inline-block; margin-right: 6px; vertical-align: -1px; }
+  .dot.live { background: #2b6; animation: blink .9s infinite; } @keyframes blink { 50% { opacity: .25; } }
+  button { border: 0; border-radius: 7px; padding: 9px 16px; font: inherit; font-weight: 700; cursor: pointer; }
+  #recap { background: #c9a227; color: #1a1500; font-size: 15px; }
+  #recap:active { transform: translateY(1px); }
+  #recap:disabled { opacity: .5; cursor: default; }
+  select { background: #15171f; border: 1px solid #2a2e3b; color: #cdd2da; border-radius: 6px; padding: 8px; font: inherit; }
+  .main { flex: 1; display: grid; grid-template-columns: 1fr 420px; min-height: 0; }
+  .feed { overflow-y: auto; padding: 16px 22px; border-right: 1px solid #1e2029; }
+  .feed .u { margin: 0 0 11px; color: #c3c8d2; }
+  .feed .u:last-child { color: #eef1f6; }
+  .side { display: flex; flex-direction: column; min-height: 0; }
+  .side h3 { margin: 0; padding: 11px 18px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #c9a227; border-bottom: 1px solid #16181f; }
+  #slides { padding: 10px 14px; border-bottom: 1px solid #16181f; display: none; flex: 0 0 auto; max-height: 38%; overflow-y: auto; }
+  #slides.has { display: block; }
+  #slides .big { width: 100%; max-height: 180px; object-fit: contain; border-radius: 6px; border: 1px solid #232734; display: block; }
+  #slides .row { display: flex; gap: 6px; margin-top: 6px; overflow-x: auto; }
+  #slides .row img { height: 46px; border-radius: 4px; border: 1px solid #232734; cursor: pointer; opacity: .65; }
+  #slides .row img:hover { opacity: 1; }
+  #slides .cap { color: #5f6470; font-size: 10px; margin-top: 4px; }
+  #out { padding: 16px 20px; overflow-y: auto; white-space: pre-wrap; font-size: 14.5px; line-height: 1.6; color: #e6e9ef; flex: 1; }
+  #out .ph { color: #5f6470; }
+  #out .when { color: #6b7080; font-size: 11px; margin-bottom: 10px; }
+  .err { color: #c0524a; }
+</style>
+</head>
+<body>
+<header>
+  <b>otter live</b>
+  <span class="meet" id="meet"><span class="dot" id="dot"></span>looking for a live meeting…</span>
+  <select id="win" title="how far back to recap">
+    <option value="40">last bit</option>
+    <option value="120" selected>~last few min</option>
+    <option value="400">longer</option>
+  </select>
+  <button id="recap">what were we talking about?</button>
+</header>
+<div class="main">
+  <div class="feed" id="feed"></div>
+  <section class="side">
+    <div id="slides">
+      <img class="big" id="slideBig" />
+      <div class="row" id="slideRow"></div>
+      <div class="cap" id="slideCap"></div>
+    </div>
+    <h3>recap</h3>
+    <div id="out"><span class="ph">Hit the button during a meeting and I'll tell you what's being discussed right now.</span></div>
+  </section>
+</div>
+<script>
+const feed = document.getElementById('feed'), out = document.getElementById('out');
+const meet = document.getElementById('meet'), dot = document.getElementById('dot');
+const btn = document.getElementById('recap'), win = document.getElementById('win');
+const slides = document.getElementById('slides'), slideBig = document.getElementById('slideBig');
+const slideRow = document.getElementById('slideRow'), slideCap = document.getElementById('slideCap');
+let after = 0, segs = [], live = false, lastSlide = '';
+
+function renderSlides(images, isLive) {
+  if (!isLive) { slides.classList.remove('has'); return; }
+  slides.classList.add('has');
+  if (!images.length) {
+    slideBig.style.display = 'none'; slideRow.innerHTML = '';
+    slideCap.textContent = 'no screenshots yet — Otter only captures the shared screen when OtterPilot joins the call (not in record mode)';
+    return;
+  }
+  slideBig.style.display = 'block';
+  const newest = images[images.length - 1].src;
+  if (newest !== lastSlide) { slideBig.src = newest; lastSlide = newest; }
+  slideRow.innerHTML = '';
+  for (const im of images.slice().reverse()) {
+    const t = document.createElement('img'); t.src = im.src;
+    t.onclick = () => { slideBig.src = im.src; };
+    slideRow.appendChild(t);
+  }
+  slideCap.textContent = images.length + ' screenshot' + (images.length > 1 ? 's' : '') + ' captured';
+}
+
+async function poll() {
+  try {
+    const r = await fetch('live?after=' + after);
+    const d = await r.json();
+    if (d.error) { meet.innerHTML = '<span class="dot"></span>' + d.error; live = false; renderSlides([], false); }
+    else if (!d.live) { meet.innerHTML = '<span class="dot"></span>no live meeting right now'; live = false; renderSlides([], false); }
+    else {
+      live = true;
+      meet.innerHTML = '<span class="dot live"></span>' + (d.title || 'live meeting');
+      for (const s of d.segments) {
+        segs.push(s.text);
+        const p = document.createElement('p'); p.className = 'u'; p.textContent = s.text;
+        feed.appendChild(p);
+      }
+      if (d.segments.length) feed.scrollTop = feed.scrollHeight;
+      after = d.max_order;
+      renderSlides(d.images || [], true);
+    }
+  } catch (e) { meet.innerHTML = '<span class="dot"></span>server unreachable'; }
+}
+
+btn.onclick = async () => {
+  const n = parseInt(win.value, 10);
+  const text = segs.slice(-n).join(' ');
+  if (!text.trim()) { out.innerHTML = '<span class="ph">No transcript captured yet.</span>'; return; }
+  btn.disabled = true; out.innerHTML = '<span class="ph">thinking…</span>';
+  try {
+    const r = await fetch('recap', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text }) });
+    const d = await r.json();
+    if (d.error) out.innerHTML = '<span class="err">' + d.error + '</span>';
+    else out.innerHTML = '<div class="when">' + new Date().toLocaleTimeString() +
+      (d.used_slide ? ' · read the current slide 🖼️' : '') + '</div>' +
+      d.summary.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  } catch (e) { out.innerHTML = '<span class="err">recap failed: ' + e + '</span>'; }
+  btn.disabled = false;
+};
+
+poll(); setInterval(poll, 8000);
+</script>
+</body>
+</html>
