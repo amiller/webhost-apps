@@ -12,6 +12,8 @@ import { promisify } from 'node:util'
 import sharp from 'sharp'
 import { submitCompose, typeText, type BoundingBox, type Vector } from './human-mouse.js'
 import { locateElement } from './glm-vision.js'
+import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { dirname } from 'node:path'
 
 const PORT = Number(process.env.PORT) || 8090
 const BRIDGE = process.env.BRIDGE_URL || 'http://localhost:3000'
@@ -27,7 +29,8 @@ async function displayHeight(): Promise<number> {
   return screenH
 }
 
-// The sealed jar lives here, in the TEE — never in the client. Set once via /setjar.
+// The sealed jar lives here, in the TEE — never in the client. Sourced from the user's
+// OAuth3 vault via the delegated-jar consent flow (see the OAuth3 client below), not hand-fed.
 let currentJar: Record<string, string> = {}
 const HTTPONLY = new Set(['auth_token', 'kdt'])
 
@@ -67,6 +70,59 @@ function jarToCookies(jar: Record<string, string>) {
   }))
 }
 const cookieHeader = (jar: Record<string, string>) => Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ')
+
+// ---- OAuth3 delegated-jar client ----------------------------------------------------------
+// The x.com jar is owned by the user's OAuth3 vault (populated by their extension/plugin under
+// key owner:twitter). We obtain a consent-gated token carrying the "jar" capability, then pull
+// the raw jar (TEE→TEE) instead of a manual upload. The token is persisted to a sealed volume so
+// a container restart re-fetches the jar with no re-approval — the vault is the source of truth.
+const OAUTH3 = process.env.OAUTH3_SERVER || 'https://pod.dstack.soc1024.com/oauth3'
+const TOKEN_PATH = process.env.OAUTH3_TOKEN_PATH || '/data/oauth3-token'
+let oauthToken: string | null = null
+let connectPending: { requestId: string; approveUrl: string } | null = null
+
+async function saveToken(tok: string) {
+  oauthToken = tok
+  await mkdir(dirname(TOKEN_PATH), { recursive: true }).catch(() => {})
+  await writeFile(TOKEN_PATH, tok, { mode: 0o600 })
+}
+
+async function refreshJar(): Promise<{ count: number }> {
+  if (!oauthToken) throw new Error('not connected to OAuth3 — connect X on the dashboard')
+  const r = await fetch(`${OAUTH3}/api/twitter/jar`, { headers: { Authorization: `Bearer ${oauthToken}` }, signal: AbortSignal.timeout(15_000) })
+  const j = await r.json()
+  if (!r.ok) throw new Error(`jar fetch ${r.status}: ${j.error || 'failed'}`)
+  currentJar = j.jar || {}
+  if (currentJar.auth_token) await cmdSoft('setCookies', [jarToCookies(currentJar)])
+  return { count: Object.keys(currentJar).length }
+}
+
+async function pollApproval(requestId: string) {
+  for (let i = 0; i < 150; i++) { // ~5 min at 2s
+    await sleep(2000)
+    const j = await fetch(`${OAUTH3}/api/connect/${requestId}`, { signal: AbortSignal.timeout(10_000) }).then(r => r.json()).catch(() => null)
+    if (!j) continue
+    if (j.status === 'approved' && j.token) {
+      await saveToken(j.token); connectPending = null
+      await refreshJar().then(r => console.log(`[oauth3] connected — jar refreshed (${r.count} cookies)`)).catch(e => console.log('[oauth3] refresh after approve failed:', e.message))
+      return
+    }
+    if (j.status === 'denied') { connectPending = null; console.log('[oauth3] connect denied'); return }
+  }
+  connectPending = null
+}
+
+async function startConnect(): Promise<{ approveUrl: string; requestId: string }> {
+  const r = await fetch(`${OAUTH3}/api/connect`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ plugin: 'twitter', caps: ['jar'], app: 'twitter-debug' }), signal: AbortSignal.timeout(15_000),
+  })
+  const j = await r.json()
+  if (!r.ok) throw new Error(`connect ${r.status}: ${j.error || 'failed'}`)
+  connectPending = { requestId: j.requestId, approveUrl: j.approveUrl }
+  pollApproval(j.requestId)
+  return connectPending
+}
 
 // ---- reification (browser trace → candidate unofficial API) ----
 const SIGN = ['authorization', 'x-csrf-token', 'x-client-transaction-id', 'content-type', 'x-twitter-active-user', 'x-twitter-auth-type', 'x-twitter-client-language']
@@ -375,11 +431,14 @@ http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' })
       return res.end(buf)
     }
-    if (post && url === '/twitter/setjar') {
-      if (!authed(req)) return send(403, { error: 'loading the jar needs the debug secret' })
-      const b = await readBody(req); currentJar = b.jar || {}
-      return send(200, { count: Object.keys(currentJar).length, names: Object.keys(currentJar) })
-    }
+    // OAuth3 delegated-jar: connect X once (owner approves in the OAuth3 popup), then the jar is
+    // pulled from the vault. No debug secret — the approval screen is the gate. Replaces /setjar.
+    if (post && url === '/twitter/oauth3/connect') return send(200, await startConnect())
+    if (url === '/twitter/oauth3/status') return send(200, {
+      connected: !!oauthToken, jarLoaded: !!currentJar.auth_token,
+      count: Object.keys(currentJar).length, pending: connectPending, server: OAUTH3,
+    })
+    if (post && url === '/twitter/oauth3/refresh') return send(200, await refreshJar())
     if (url === '/twitter/cookies') {
       let injected: any = null
       if (currentJar.auth_token) injected = await cmd('setCookies', [jarToCookies(currentJar)]).catch((e: Error) => ({ error: e.message }))
@@ -440,3 +499,11 @@ async function bootNav() {
   }
 }
 bootNav()
+
+// On boot, re-source the jar from the OAuth3 vault using the persisted token (survives restart).
+async function bootJar() {
+  oauthToken = await readFile(TOKEN_PATH, 'utf8').then(s => s.trim() || null).catch(() => null)
+  if (!oauthToken) return console.log('[boot] no OAuth3 token — connect X on the dashboard')
+  await refreshJar().then(r => console.log(`[boot] jar re-sourced from OAuth3 vault (${r.count} cookies)`)).catch(e => console.log('[boot] jar refresh failed — reconnect needed:', e.message))
+}
+bootJar()
