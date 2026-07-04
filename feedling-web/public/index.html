@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>feedling</title>
+<style>
+  :root { --bg:#FFF9F0; --card:#fff; --primary:#FF9B85; --text:#4A4A4A; --light:#8A8A8A; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:32px 16px; }
+  .container { max-width:560px; margin:0 auto; }
+  h1 { font-size:2rem; text-align:center; color:var(--primary); margin-bottom:8px; }
+  .sub { text-align:center; color:var(--light); font-size:0.85rem; margin-bottom:24px; }
+  .card { background:var(--card); border-radius:20px; padding:24px; box-shadow:0 4px 24px rgba(255,155,133,0.12); margin-bottom:16px; }
+  .cat { font-size:5rem; text-align:center; margin-bottom:8px; }
+  .state-code { text-align:center; font-weight:600; font-size:1.2rem; text-transform:capitalize; }
+  .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:16px; }
+  .stat { text-align:center; }
+  .stat b { display:block; font-size:1.4rem; color:var(--primary); }
+  .stat span { font-size:0.75rem; color:var(--light); }
+  .diary { white-space:pre-wrap; line-height:1.5; font-family:'Caveat',serif; font-size:1.1rem; }
+  .actions { display:flex; gap:8px; justify-content:center; margin-top:12px; flex-wrap:wrap; }
+  button { background:var(--primary); color:#fff; border:0; padding:10px 16px; border-radius:10px; font-weight:600; cursor:pointer; font-size:0.9rem; }
+  button.ghost { background:transparent; color:var(--primary); border:1px solid var(--primary); }
+  .err { color:#c33; font-size:0.85rem; text-align:center; }
+  .foot { text-align:center; color:var(--light); font-size:0.75rem; margin-top:24px; }
+  .short { display:block; padding:6px 0; border-bottom:1px solid #f0f0f0; color:var(--text); text-decoration:none; line-height:1.35; }
+  .short:last-child { border-bottom:0; }
+  .short:hover { color:var(--primary); }
+  .short .idx { color:var(--light); font-size:0.75rem; margin-right:8px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>feedling</h1>
+  <div class="sub" id="subline">loading...</div>
+
+  <div class="card">
+    <div class="cat" id="cat">🐈</div>
+    <div class="state-code" id="stateCode">—</div>
+    <div class="stats">
+      <div class="stat"><b id="energy">—</b><span>energy</span></div>
+      <div class="stat"><b id="continuous">—</b><span>min continuous</span></div>
+      <div class="stat"><b id="shortsToday">—</b><span>shorts today</span></div>
+    </div>
+    <div class="actions">
+      <button id="enableBtn">enable push</button>
+      <button class="ghost" id="testBtn">send test push</button>
+      <button class="ghost" id="pollBtn">poll now</button>
+      <button class="ghost" id="refreshBtn">refresh</button>
+      <button class="ghost" id="disconnectBtn" style="display:none">disconnect</button>
+    </div>
+    <div class="err" id="err"></div>
+  </div>
+
+  <div class="card">
+    <div class="diary" id="diary">loading diary...</div>
+  </div>
+
+  <div class="card">
+    <div style="font-weight:600;margin-bottom:8px;font-size:0.9rem">what you watched today <span id="shortsCount" style="color:var(--light);font-weight:400"></span></div>
+    <div id="shortsList" style="font-size:0.85rem;color:var(--text)">—</div>
+  </div>
+
+  <div class="card">
+    <div style="font-weight:600;margin-bottom:8px;font-size:0.9rem;display:flex;justify-content:space-between;align-items:center">
+      <span>raw history page <span id="histCount" style="color:var(--light);font-weight:400"></span></span>
+      <button class="ghost" id="histBtn" style="padding:4px 10px;font-size:0.75rem">load</button>
+    </div>
+    <div id="histList" style="font-size:0.85rem;color:var(--light)">the exact list the youtube plugin returns right now — shorts and videos, verbatim</div>
+  </div>
+
+  <div class="card">
+    <div style="font-weight:600;margin-bottom:8px;font-size:0.9rem">registered devices <span id="subCount" style="color:var(--light);font-weight:400"></span></div>
+    <div id="subList" style="font-size:0.8rem;color:var(--text)"></div>
+  </div>
+
+  <div class="foot">poll: 5min idle / 60s while watching</div>
+</div>
+<script>
+const catEmoji = { night_owl:'🌙', drained:'😮‍💨', hyped:'✨', chill:'😺', cozy:'😻', missing:'🥺' };
+let vapidKey = null;
+
+function urlBase64ToUint8Array(b64) {
+  const pad = '='.repeat((4 - b64.length % 4) % 4);
+  const b = (b64 + pad).replace(/-/g,'+').replace(/_/g,'/');
+  return Uint8Array.from(atob(b), c => c.charCodeAt(0));
+}
+
+function renderShorts(snaps) {
+  const el = document.getElementById('shortsList');
+  const cnt = document.getElementById('shortsCount');
+  const fullest = (snaps || []).reduce((a, b) =>
+    (b.shorts || []).length >= (a.shorts || []).length ? b : a, { shorts: [] });
+  const seen = new Set();
+  const shorts = (fullest.shorts || []).filter(s => s.id && !seen.has(s.id) && seen.add(s.id));
+  cnt.textContent = shorts.length ? '(' + shorts.length + ')' : '';
+  if (!shorts.length) { el.innerHTML = '<span style="color:var(--light)">nothing captured yet — cookies may be expired</span>'; return; }
+  el.innerHTML = shorts.map((s, i) =>
+    '<a class="short" href="https://www.youtube.com/shorts/' + encodeURIComponent(s.id) +
+    '" target="_blank" rel="noopener"><span class="idx">' + (i + 1) + '</span>' +
+    (s.title || s.id).replace(/</g, '&lt;') + '</a>').join('');
+}
+
+async function loadHistory() {
+  const el = document.getElementById('histList');
+  const cnt = document.getElementById('histCount');
+  el.textContent = 'loading…';
+  try {
+    const { items, error } = await (await fetch('api/history')).json();
+    if (error) { el.innerHTML = '<span style="color:#c33">⚠ ' + error + '</span>'; return; }
+    cnt.textContent = items.length ? '(' + items.length + ')' : '';
+    if (!items.length) { el.innerHTML = '<span style="color:var(--light)">empty — cookies may be expired</span>'; return; }
+    el.innerHTML = items.map((it, i) => {
+      const url = (it.isShort ? 'https://www.youtube.com/shorts/' : 'https://www.youtube.com/watch?v=') + encodeURIComponent(it.id);
+      const tag = it.isShort ? 'short' : 'video';
+      const when = it.date ? ' · ' + new Date(it.date).toLocaleString() : '';
+      return '<a class="short" href="' + url + '" target="_blank" rel="noopener"><span class="idx">' + (i + 1) + '</span>' +
+        (it.title || it.id).replace(/</g, '&lt;') +
+        ' <span class="idx" style="margin:0 0 0 4px">[' + tag + when + ']</span></a>';
+    }).join('');
+  } catch (e) { el.textContent = e.message; }
+}
+
+async function refreshState() {
+  try {
+    const res = await fetch('api/state');
+    const { state, poll, connect, snaps } = await res.json();
+    renderShorts(snaps);
+    const errEl = document.getElementById('err');
+    const connected = connect && connect.connected;
+    document.getElementById('disconnectBtn').style.display = connected ? '' : 'none';
+    if (connect && !connected && connect.approveUrl) {
+      errEl.innerHTML = '🔗 <a href="' + connect.approveUrl + '" target="_blank" rel="noopener">Connect YouTube — approve feedling on your pod →</a>';
+    } else {
+      errEl.textContent = (poll && poll.error) ? '⚠ ' + poll.error : '';
+    }
+    if (state) {
+      document.getElementById('stateCode').textContent = state.stateCode.replace('_',' ');
+      document.getElementById('cat').textContent = catEmoji[state.stateCode] || '🐈';
+      document.getElementById('energy').textContent = state.energy;
+      document.getElementById('continuous').textContent = state.continuousMinutes;
+      document.getElementById('shortsToday').textContent = state.shortsToday;
+      document.getElementById('subline').textContent =
+        new Date(state.computedAt).toLocaleTimeString() + ' · vibe: ' + state.vibe;
+    } else {
+      document.getElementById('subline').textContent = 'waiting for first poll...';
+    }
+  } catch (e) { document.getElementById('err').textContent = e.message; }
+}
+
+async function refreshDiary(force = false) {
+  try {
+    const res = await fetch('api/diary' + (force ? '?force=1' : ''));
+    const { diary, error } = await res.json();
+    document.getElementById('diary').textContent = diary || ('(' + (error || 'no diary yet') + ')');
+  } catch (e) { document.getElementById('err').textContent = e.message; }
+}
+
+async function enablePush() {
+  try {
+    if (!('serviceWorker' in navigator)) throw new Error('no service worker support');
+    if (!vapidKey) {
+      const res = await fetch('api/vapid-key');
+      const d = await res.json();
+      if (!d.key) throw new Error(d.error || 'no vapid key');
+      vapidKey = d.key;
+    }
+    const reg = await navigator.serviceWorker.register('sw.js');
+    await navigator.serviceWorker.ready;
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') throw new Error('notifications denied');
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(vapidKey),
+    });
+    const j = sub.toJSON();
+    await fetch('api/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint: j.endpoint, keys: j.keys }),
+    });
+    document.getElementById('err').textContent = 'push enabled ✓';
+  } catch (e) { document.getElementById('err').textContent = e.message; }
+}
+
+async function testPush() {
+  try {
+    const r = await fetch('api/test-push', { method: 'POST' });
+    const d = await r.json();
+    document.getElementById('err').textContent = 'push sent=' + d.sent + ' pruned=' + d.pruned;
+  } catch (e) { document.getElementById('err').textContent = e.message; }
+}
+
+async function pollNow() {
+  try {
+    const r = await fetch('api/poll-now', { method: 'POST' });
+    const d = await r.json();
+    document.getElementById('err').textContent = 'polled: watching=' + d.watching;
+    refreshState();
+  } catch (e) { document.getElementById('err').textContent = e.message; }
+}
+
+document.getElementById('enableBtn').onclick = enablePush;
+document.getElementById('testBtn').onclick = testPush;
+document.getElementById('pollBtn').onclick = pollNow;
+document.getElementById('refreshBtn').onclick = () => { refreshState(); refreshDiary(true); };
+document.getElementById('histBtn').onclick = loadHistory;
+document.getElementById('disconnectBtn').onclick = async () => {
+  if (!confirm('Disconnect YouTube? feedling will drop its token and ask you to approve again.')) return;
+  await fetch('api/disconnect', { method: 'POST' });
+  refreshState();
+};
+
+async function refreshSubs() {
+  try {
+    const r = await fetch('api/subs');
+    const { subs } = await r.json();
+    document.getElementById('subCount').textContent = '(' + (subs?.length || 0) + ')';
+    const list = document.getElementById('subList');
+    list.innerHTML = (subs || []).map(s => {
+      const created = new Date(s.createdAt).toLocaleString();
+      const safe = s.endpoint.replace(/"/g, '&quot;');
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid #eee">
+        <span><b>${s.host}</b> · ${s.fingerprint} · <span style="color:var(--light);font-size:0.75rem">${created}</span></span>
+        <button class="ghost" style="padding:4px 8px;font-size:0.75rem" data-ep="${safe}">remove</button>
+      </div>`;
+    }).join('') || '<div style="color:var(--light)">none yet</div>';
+    list.querySelectorAll('button[data-ep]').forEach(b => {
+      b.onclick = async () => {
+        await fetch('api/unsubscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ endpoint: b.dataset.ep }),
+        });
+        refreshSubs();
+      };
+    });
+  } catch (e) { document.getElementById('err').textContent = e.message; }
+}
+
+refreshState();
+refreshDiary();
+refreshSubs();
+setInterval(refreshState, 60_000);
+setInterval(refreshSubs, 30_000);
+</script>
+</body>
+</html>
