@@ -8,25 +8,73 @@ const HTML = `<!doctype html><html lang=en><head>
 <meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>Otter via OAuth3</title>
 <style>
- :root{--ink:#16140f;--paper:#f4f0e7;--panel:#ece6d9;--faint:#6b6557;--rule:#d8d2c4;--accent:#b4441f;
-   --green:#3f7a3f;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
- *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:Georgia,serif;font-size:17px;line-height:1.5}
+ /* pod design system · constructivist overprint · grape-acid inking */
+ :root{
+   --ink1:#6f57a8; --ink2:#b5d33d; --paper:#f8f7f3; --deep:#2e2745; --overprint:#31491f;
+   --bg:var(--paper); --text:var(--deep);
+   --faint:color-mix(in srgb,var(--deep) 55%,var(--paper));
+   --rule:color-mix(in srgb,var(--deep) 16%,var(--paper));
+   --card:#fff; --block:var(--deep); --block-text:#f8f7f3;
+   --wash1:color-mix(in srgb,var(--ink1) 15%,var(--paper));
+   --wash2:color-mix(in srgb,var(--ink2) 17%,var(--paper));
+   --i1-text:#5a4590; --i2-text:#6d8317;
+   --warn:#a8780c; --warn-wash:color-mix(in srgb,#e0a41a 22%,var(--paper));
+   --sans:"Helvetica Neue",Arial,sans-serif;
+   --cond:"Arial Narrow","Helvetica Neue",sans-serif;
+   --mono:ui-monospace,SFMono-Regular,Menlo,monospace; --off:1px;
+ }
+ @media (prefers-color-scheme: dark){ :root{
+   --ink1:#9b82d6; --ink2:#cbe85c; --paper:#181524; --deep:#100d1a;
+   --bg:#181524; --text:#e8e3f0;
+   --faint:color-mix(in srgb,#e8e3f0 55%,#181524);
+   --rule:color-mix(in srgb,#e8e3f0 14%,#181524);
+   --card:#221d33; --block:#100d1a; --block-text:#e8e3f0;
+   --wash1:color-mix(in srgb,#9b82d6 20%,#181524);
+   --wash2:color-mix(in srgb,#cbe85c 20%,#181524);
+   --i1-text:#b9a4e2; --i2-text:#d6f07a;
+   --warn:#e0b34a; --warn-wash:color-mix(in srgb,#e0b34a 18%,#181524);
+ }}
+ :root[data-theme="dark"]{
+   --ink1:#9b82d6; --ink2:#cbe85c; --paper:#181524; --deep:#100d1a;
+   --bg:#181524; --text:#e8e3f0;
+   --faint:color-mix(in srgb,#e8e3f0 55%,#181524);
+   --rule:color-mix(in srgb,#e8e3f0 14%,#181524);
+   --card:#221d33; --block:#100d1a; --block-text:#e8e3f0;
+   --wash1:color-mix(in srgb,#9b82d6 20%,#181524);
+   --wash2:color-mix(in srgb,#cbe85c 20%,#181524);
+   --i1-text:#b9a4e2; --i2-text:#d6f07a;
+   --warn:#e0b34a; --warn-wash:color-mix(in srgb,#e0b34a 18%,#181524);
+ }
+ :root[data-theme="light"]{
+   --ink1:#6f57a8; --ink2:#b5d33d; --paper:#f8f7f3; --deep:#2e2745;
+   --bg:#f8f7f3; --text:#2e2745;
+   --faint:color-mix(in srgb,#2e2745 55%,#f8f7f3);
+   --rule:color-mix(in srgb,#2e2745 16%,#f8f7f3);
+   --card:#fff; --block:#2e2745; --block-text:#f8f7f3;
+   --wash1:color-mix(in srgb,#6f57a8 15%,#f8f7f3);
+   --wash2:color-mix(in srgb,#b5d33d 17%,#f8f7f3);
+   --i1-text:#5a4590; --i2-text:#6d8317;
+   --warn:#a8780c; --warn-wash:color-mix(in srgb,#e0a41a 22%,#f8f7f3);
+ }
+ *{box-sizing:border-box}
+ body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 var(--sans)}
+ a{color:var(--i1-text)}:focus-visible{outline:2px solid var(--ink2);outline-offset:2px}
  .wrap{max-width:760px;margin:0 auto;padding:48px 22px}
- h1{font-size:40px;margin:0;letter-spacing:-.02em}
- .sub{color:var(--faint);font-size:15px;margin:8px 0 0}
- .accent{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent)}
- button{font:inherit;background:var(--accent);color:#fff;border:0;border-radius:10px;padding:11px 20px;cursor:pointer;font-size:15px}
+ h1{font:800 clamp(30px,5.5vw,48px)/0.94 var(--cond);text-transform:uppercase;margin:0;color:var(--ink1);text-shadow:var(--off) var(--off) 0 var(--ink2);text-wrap:balance}
+ .sub{color:var(--faint);font:15px var(--sans);margin:8px 0 0;max-width:60ch}
+ .accent{font:500 11px/1 var(--mono);letter-spacing:.16em;text-transform:lowercase;color:var(--i1-text)}
+ button{display:inline-flex;align-items:center;gap:8px;font:800 14px var(--cond);text-transform:uppercase;letter-spacing:.12em;border:0;padding:12px 22px;cursor:pointer;background:var(--ink1);color:#fff;box-shadow:3px 3px 0 var(--ink2)}
  button:disabled{opacity:.5;cursor:default}
- .ghost{background:none;color:var(--accent);border:1px solid var(--rule);padding:8px 14px;font-size:14px;border-radius:9px}
+ .ghost{background:transparent;color:var(--i1-text);border:3px solid var(--ink1);box-shadow:none;padding:9px 18px;font:800 13px var(--cond);text-transform:uppercase;letter-spacing:.12em}
  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px}
- .who{font-family:var(--mono);font-size:12px;color:var(--green)}
- .diag{font-family:var(--mono);font-size:12px;color:var(--faint);margin:10px 0;line-height:1.7}
- .diag b.ok{color:var(--green)} .diag b.bad{color:var(--accent)}
- #status{font-family:var(--mono);font-size:13px;margin:14px 0;min-height:1.2em;color:var(--accent)}
+ .who{font:500 12px var(--mono);color:var(--i1-text)}
+ .diag{font:12px/1.7 var(--mono);color:var(--faint);margin:10px 0}
+ .diag b.ok{color:var(--i1-text);font-weight:700} .diag b.bad{color:var(--i2-text);font-weight:700}
+ #status{font:13px var(--mono);margin:14px 0;min-height:1.2em;color:var(--i2-text)}
  .row{padding:12px 4px;border-bottom:1px solid var(--rule);display:flex;justify-content:space-between;align-items:baseline;gap:14px;cursor:pointer}
- .row:hover{color:var(--accent)} .row .d{font-family:var(--mono);font-size:12px;color:var(--faint);white-space:nowrap}
- pre{background:var(--ink);color:#ece6d9;border-radius:12px;padding:18px;white-space:pre-wrap;font-family:var(--mono);font-size:13px;line-height:1.55;max-height:60vh;overflow:auto}
- a{color:var(--accent)} #more{margin-top:12px}
+ .row:hover{color:var(--ink1)} .row .d{font:12px var(--mono);color:var(--faint);white-space:nowrap}
+ pre{background:var(--block);color:var(--block-text);border-left:12px solid var(--ink2);padding:16px 20px;white-space:pre-wrap;font:13px/1.7 var(--mono);max-height:60vh;overflow:auto}
+ #more{margin-top:12px}
 </style></head><body><div class=wrap>
  <p class=accent>oauth3 · live demo · build ${BUILD}</p>
  <h1>Otter via OAuth3</h1>

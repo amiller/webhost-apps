@@ -9,27 +9,83 @@
   Either way it only ever fetches the OAuth3 node's /api/twitter/feed. No cookies.
 -->
 <style>
-*{box-sizing:border-box}body{margin:0;background:#0a0a0c;color:#e7e9ea;font:15px/1.45 -apple-system,Segoe UI,Roboto,sans-serif}
+/* pod design system · constructivist overprint · grape-acid inking */
+:root{
+  --ink1:#6f57a8; --ink2:#b5d33d; --paper:#f8f7f3; --deep:#2e2745; --overprint:#31491f;
+  --bg:var(--paper); --text:var(--deep);
+  --faint:color-mix(in srgb,var(--deep) 55%,var(--paper));
+  --rule:color-mix(in srgb,var(--deep) 16%,var(--paper));
+  --card:#fff; --block:var(--deep); --block-text:#f8f7f3;
+  --wash1:color-mix(in srgb,var(--ink1) 15%,var(--paper));
+  --wash2:color-mix(in srgb,var(--ink2) 17%,var(--paper));
+  --i1-text:#5a4590; --i2-text:#6d8317;
+  --warn:#a8780c; --warn-wash:color-mix(in srgb,#e0a41a 22%,var(--paper));
+  --sans:"Helvetica Neue",Arial,sans-serif;
+  --cond:"Arial Narrow","Helvetica Neue",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  --off:1px;
+}
+@media (prefers-color-scheme: dark){ :root{
+  --ink1:#9b82d6; --ink2:#cbe85c; --paper:#181524; --deep:#100d1a;
+  --bg:#181524; --text:#e8e3f0;
+  --faint:color-mix(in srgb,#e8e3f0 55%,#181524);
+  --rule:color-mix(in srgb,#e8e3f0 14%,#181524);
+  --card:#221d33; --block:#100d1a; --block-text:#e8e3f0;
+  --wash1:color-mix(in srgb,#9b82d6 20%,#181524);
+  --wash2:color-mix(in srgb,#cbe85c 20%,#181524);
+  --i1-text:#b9a4e2; --i2-text:#d6f07a;
+  --warn:#e0b34a; --warn-wash:color-mix(in srgb,#e0b34a 18%,#181524);
+}}
+:root[data-theme="dark"]{
+  --ink1:#9b82d6; --ink2:#cbe85c; --paper:#181524; --deep:#100d1a;
+  --bg:#181524; --text:#e8e3f0;
+  --faint:color-mix(in srgb,#e8e3f0 55%,#181524);
+  --rule:color-mix(in srgb,#e8e3f0 14%,#181524);
+  --card:#221d33; --block:#100d1a; --block-text:#e8e3f0;
+  --wash1:color-mix(in srgb,#9b82d6 20%,#181524);
+  --wash2:color-mix(in srgb,#cbe85c 20%,#181524);
+  --i1-text:#b9a4e2; --i2-text:#d6f07a;
+  --warn:#e0b34a; --warn-wash:color-mix(in srgb,#e0b34a 18%,#181524);
+}
+:root[data-theme="light"]{
+  --ink1:#6f57a8; --ink2:#b5d33d; --paper:#f8f7f3; --deep:#2e2745;
+  --bg:#f8f7f3; --text:#2e2745;
+  --faint:color-mix(in srgb,#2e2745 55%,#f8f7f3);
+  --rule:color-mix(in srgb,#2e2745 16%,#f8f7f3);
+  --card:#fff; --block:#2e2745; --block-text:#f8f7f3;
+  --wash1:color-mix(in srgb,#6f57a8 15%,#f8f7f3);
+  --wash2:color-mix(in srgb,#b5d33d 17%,#f8f7f3);
+  --i1-text:#5a4590; --i2-text:#6d8317;
+  --warn:#a8780c; --warn-wash:color-mix(in srgb,#e0a41a 22%,#f8f7f3);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 var(--sans)}
+a{color:var(--i1-text)}:focus-visible{outline:2px solid var(--ink2);outline-offset:2px}
 .wrap{max-width:620px;margin:0 auto;padding:0 14px 60px}
-header{padding:26px 4px 16px}h1{font-size:22px;margin:0 0 4px}.sub{color:#7a828c;font-size:13px}
-.badge{display:inline-block;margin-top:10px;font-size:11.5px;color:#86efac;background:#0f2417;border:1px solid #1c5236;padding:3px 9px;border-radius:999px}
-button{margin-top:16px;padding:11px 18px;border:0;border-radius:10px;background:#3ea8ff;color:#04121f;font:700 15px system-ui;cursor:pointer}
-button:disabled{opacity:.5;cursor:default}
-.note{margin-top:14px;color:#7a828c;font-size:13px}.err{color:#fca5a5}
-.t{display:flex;gap:12px;padding:14px 6px;border-bottom:1px solid #23262d}
-.av{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#2b3138,#3a4350);display:flex;align-items:center;justify-content:center;font-weight:700;color:#cdd3da;flex:0 0 42px}
+header{padding:26px 4px 16px}
+h1.display{font:800 clamp(28px,5vw,40px)/0.94 var(--cond);text-transform:uppercase;margin:0 0 4px;color:var(--ink1);text-shadow:var(--off) var(--off) 0 var(--ink2);text-wrap:balance}
+.sub{color:var(--faint);font:13px var(--mono);margin:6px 0 0}
+.label{font:500 11px/1 var(--mono);letter-spacing:.16em;text-transform:lowercase;color:var(--faint)}
+.pill{display:inline-flex;align-items:center;gap:6px;font:500 12px/1 var(--mono);padding:4px 10px;border-radius:999px;background:var(--wash1);color:var(--i1-text)}
+.btn{display:inline-flex;align-items:center;gap:8px;font:800 14px var(--cond);text-transform:uppercase;letter-spacing:.12em;border:0;padding:12px 22px;cursor:pointer;background:var(--ink1);color:#fff;box-shadow:3px 3px 0 var(--ink2)}
+.btn:disabled{opacity:.5;cursor:default}
+.note{margin-top:14px;color:var(--faint);font:13px/1.6 var(--mono)}
+.note.err{color:var(--i2-text)}
+.t{display:flex;gap:12px;padding:14px 6px;border-bottom:1px solid var(--rule)}
+.av{width:42px;height:42px;background:var(--block);display:flex;align-items:center;justify-content:center;font:800 16px var(--cond);color:var(--i2-text);flex:0 0 42px}
 .body{min-width:0;flex:1}.hd{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-.nm{font-weight:700}.hn,.dot,.tm{color:#7a828c;font-size:14px}
-.tx{margin:3px 0 9px;white-space:pre-wrap;word-wrap:break-word}.media{color:#7a828c}
-.st{display:flex;gap:22px;color:#7a828c;font-size:13px}
-footer{color:#7a828c;font-size:12px;text-align:center;padding:24px 0;border-top:1px solid #23262d;margin-top:8px}
+.nm{font-weight:700}.hn,.dot,.tm{color:var(--faint);font:13px var(--mono)}
+.tx{margin:3px 0 9px;white-space:pre-wrap;word-wrap:break-word}.media{color:var(--faint);font:13px var(--mono)}
+.st{display:flex;gap:22px;color:var(--faint);font:13px var(--mono)}
+footer{color:var(--faint);font:12px var(--mono);text-align:center;padding:24px 0;border-top:1px solid var(--rule);margin-top:8px}
 </style>
 <div class=wrap>
   <header>
-    <h1>Timeline Peek</h1>
+    <p class=label>oauth3 · relying-party demo</p>
+    <h1 class=display>Timeline Peek</h1>
     <div class=sub id=sub>A logged-in X feed, reconstructed.</div>
-    <div class=badge>🔒 a scoped, revocable token · cookies never leave the TEE</div>
-    <div><button id=go>Connect with OAuth3</button></div>
+    <div style=margin-top:10px><span class=pill>🔒 a scoped, revocable token · cookies never leave the TEE</span></div>
+    <div style=margin-top:16px><button id=go class=btn>Connect with OAuth3</button></div>
     <div id=note class=note></div>
   </header>
   <div id=feed></div>
