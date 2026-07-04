@@ -137,9 +137,9 @@ table.diff th.bad{color:var(--bad)}table.diff th.acc{color:var(--acc)}
 
 <div class=grid>
   <div class=card>
-    <h2><span class=badge>②</span> Cookies loaded in the browser</h2>
-    <div class=row><button class=go onclick="cookies()">load jar → browser</button></div>
-    <p class=muted>The jar is injected into the in-TEE browser (incl. <code>httpOnly</code> auth_token). Values never leave the enclave.</p>
+    <h2><span class=badge>②</span> Jar from your OAuth3 vault</h2>
+    <div class=row><button class=go onclick="connectX()">Connect X via OAuth3</button><button onclick="cookies()">refresh / re-inject</button></div>
+    <p class=muted>The x.com jar is sourced from your OAuth3 vault (<code>owner:twitter</code>), populated by your extension — not hand-fed. Approve once in the OAuth3 popup; the raw jar is released into this enclave (incl. <code>httpOnly</code> auth_token) and re-fetched automatically on restart.</p>
     <pre id=out-cookies>—</pre>
   </div>
   <div class=card>
@@ -192,6 +192,21 @@ const getJSON=(u)=>fetch(u).then(r=>r.json())
 const postJSON=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json',...(SECRET?{'X-Debug-Secret':SECRET}:{})},body:JSON.stringify(b)}).then(r=>r.json())
 function wake(){postJSON('api/bridge',{tool:'navigate',args:['https://x.com/home']}).catch(()=>{})}
 const cookies=()=>call('out-cookies',()=>getJSON('twitter/cookies'))
+async function connectX(){
+  const el=document.getElementById('out-cookies');el.textContent='… starting OAuth3 connect …'
+  try{
+    const st=await getJSON('twitter/oauth3/status')
+    if(st.connected){show('out-cookies',await postJSON('twitter/oauth3/refresh',{}));cookies();return}
+    const c=await postJSON('twitter/oauth3/connect',{});if(c.error)throw new Error(c.error)
+    window.open(c.approveUrl,'_blank')
+    show('out-cookies','approve in the OAuth3 popup → waiting…\n'+c.approveUrl)
+    for(let i=0;i<150;i++){await new Promise(r=>setTimeout(r,2000))
+      const s=await getJSON('twitter/oauth3/status')
+      if(s.connected){show('out-cookies','connected ✓ — jar from vault owner:twitter: '+s.count+' cookies');cookies();return}
+      if(!s.pending){show('out-cookies','connect ended without approval — try again');return}}
+    show('out-cookies','timed out waiting for approval')
+  }catch(e){show('out-cookies','ERROR: '+e.message)}
+}
 const ip=()=>call('out-ip',()=>getJSON('twitter/ip'))
 const api=(op)=>call('out-api',()=>postJSON('twitter/api',{op,text:document.getElementById('api-text').value}))
 function engine(op){const text=document.getElementById('eng-text').value;if(op==='post'&&!confirm('Post a LIVE tweet via the headless engine: "'+text+'" ?'))return;call('out-engine',()=>postJSON('twitter/engine',{op,text}))}
