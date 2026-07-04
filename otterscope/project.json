@@ -1,0 +1,6 @@
+{
+  "name": "otterscope",
+  "runtime": "deno",
+  "entry": "server.ts",
+  "mode": "dev"
+}
