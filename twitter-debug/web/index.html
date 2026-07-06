@@ -126,7 +126,7 @@ table.diff th.bad{color:var(--bad)}table.diff th.acc{color:var(--acc)}
 
 <header>
   <h1><b>OAuth3</b> debug console <span style="color:var(--faint);font-weight:400">— Twitter as a case study</span></h1>
-  <p class=sub>Your cookies stay sealed in the TEE. Act on a site you're logged into three ways — a blind reverse-engineered API, a real browser driven by vision + xdotool, and a <b class=tee>reified</b> headless replay of what the browser observed — and watch every capability. <span id=jarpill class="pill">jar: checking…</span> <span id=lockpill class="pill" onclick="unlock()" style="cursor:pointer" title="reads are open; writes/posting need the secret">🔒 read-only</span></p>
+  <p class=sub>Your cookies stay sealed in the TEE. Act on a site you're logged into three ways — a blind reverse-engineered API, a real browser driven by vision + xdotool, and a <b class=tee>reified</b> headless replay of what the browser observed — and watch every capability. <span id=jarpill class="pill">jar: checking…</span> <span id=lockpill class="pill" onclick="connectX()" style="cursor:pointer" title="reads are open; writes/posting unlock when you connect X via OAuth3">🔒 read-only</span></p>
 </header>
 
 <div class="card full">
@@ -175,7 +175,7 @@ table.diff th.bad{color:var(--bad)}table.diff th.acc{color:var(--acc)}
 
 <div class="card full">
   <h2><span class=badge>⑦</span> Headless engine — the reified rung <span class="pill tee">no browser · no xctid</span></h2>
-  <p class=muted>The same capability, collapsed to pure HTTP: the sealed jar + a queryId grep'd <i>live</i> from X's JS bundle + feature flags. <b>No browser, no <code>x-client-transaction-id</code></b> — the browser was only ever needed to discover the request shape once. Reads are open; posting needs the secret.</p>
+  <p class=muted>The same capability, collapsed to pure HTTP: the sealed jar + a queryId grep'd <i>live</i> from X's JS bundle + feature flags. <b>No browser, no <code>x-client-transaction-id</code></b> — the browser was only ever needed to discover the request shape once. Reads are open; posting needs OAuth3 consent (connect X).</p>
   <div class=row><button class=go onclick="engine('timeline')">read timeline</button><input id=eng-text type=text placeholder="tweet text"><button class=warn onclick="engine('post')">tweet (headless)</button></div>
   <pre id=out-engine>—</pre>
 </div>
@@ -185,11 +185,10 @@ const live = document.getElementById('live')
 function tick(){const i=new Image();i.onload=()=>{live.src=i.src;setTimeout(tick,800)};i.onerror=()=>setTimeout(tick,1600);i.src='twitter/shot?'+Date.now()}tick()
 const show=(id,v)=>document.getElementById(id).textContent=(typeof v==='string')?v:JSON.stringify(v,null,2)
 async function call(id,fn){const el=document.getElementById(id);el.textContent='… running …';try{show(id,await fn())}catch(e){show(id,'ERROR: '+e.message)}}
-let SECRET=localStorage.getItem('oauth3_debug_secret')||''
-function refreshLock(){const p=document.getElementById('lockpill');p.textContent=SECRET?'🔓 unlocked':'🔒 read-only';p.className='pill'+(SECRET?' tee':'')}
-function unlock(){const s=prompt('Debug secret — enables writes/posting on the owner’s account. Leave blank to lock:','');if(s===null)return;SECRET=s.trim();SECRET?localStorage.setItem('oauth3_debug_secret',SECRET):localStorage.removeItem('oauth3_debug_secret');refreshLock()}
+let WRITES=false   // writes unlock when the owner approves the OAuth3 connect (the "jar" cap)
+function refreshLock(){const p=document.getElementById('lockpill');p.textContent=WRITES?'🔓 writes on':'🔒 read-only';p.className='pill'+(WRITES?' tee':'')}
 const getJSON=(u)=>fetch(u).then(r=>r.json())
-const postJSON=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json',...(SECRET?{'X-Debug-Secret':SECRET}:{})},body:JSON.stringify(b)}).then(r=>r.json())
+const postJSON=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json())
 function wake(){postJSON('api/bridge',{tool:'navigate',args:['https://x.com/home']}).catch(()=>{})}
 const cookies=()=>call('out-cookies',()=>getJSON('twitter/cookies'))
 async function connectX(){
@@ -238,5 +237,7 @@ function pollStatus(){getJSON('twitter/status').then(s=>{
   else{busy.textContent='idle';busy.className='pill'}
 }).catch(()=>{}).finally(()=>setTimeout(pollStatus,1200))}
 pollStatus()
+function pollConn(){getJSON('twitter/oauth3/status').then(s=>{WRITES=!!s.connected;refreshLock()}).catch(()=>{}).finally(()=>setTimeout(pollConn,3000))}
+pollConn()
 </script>
 </div></body></html>
