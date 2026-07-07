@@ -513,7 +513,7 @@ function renderOwnerShare() {
   ShareKit.shareAction($("sk-share"), {
     label: "Share this live meeting →",
     async onShare() {
-      const tok = await window.oauth3.connect({ plugin: "otter", app: "otterpilot", node: NODE });
+      const tok = await window.oauth3.connect({ plugin: "otter", app: "otterpilot", caps: ["otter:live-follow"], node: NODE });
       const here = location.pathname.replace(/(index\.html)?$/, "");
       const link = location.origin + here + "?token=" + encodeURIComponent(tok);
       return ShareKit.handle({
