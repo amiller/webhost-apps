@@ -486,10 +486,16 @@ if (shareToken) {
         token = await connectViaWallet();
       }
       ownerToken = token;
-      $("note").textContent = "Reading your feed with the scoped token…";
-      await loadFeed(token);
       $("go").hidden = true; // connected — Connect is replaced by Share
+      // Minting a share only needs the scoped token, not a successful feed read, so
+      // render the panel BEFORE loadFeed. A feed-read failure (e.g. the browser-SPI
+      // /navigate 401) must not hide Share — the token is still valid and shareable.
       renderSharePanel();
+      $("note").textContent = "Reading your feed with the scoped token…";
+      await loadFeed(token).catch(e => {
+        $("note").className = "note err";
+        $("note").textContent = "Couldn't read your feed (" + String(e.message || e) + "), but your scoped token is valid — share it below.";
+      });
     } catch (e) { $("note").className = "note err"; $("note").textContent = String(e.message || e); $("go").disabled = false; }
   });
 }
