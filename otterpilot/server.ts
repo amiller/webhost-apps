@@ -33,9 +33,21 @@ async function readStatic(name: string): Promise<string> {
 }
 
 // The oauth3 node holds the sealed cookie; we present the scoped token.
-async function nodeLive(after: number): Promise<any> {
-  if (!TOKEN) throw new Error("OAUTH3_TOKEN not set — mint an otter token and set it on this project");
-  const r = await fetch(`${NODE}/api/otter/live?after=${after}`, { headers: { Authorization: `Bearer ${TOKEN}` } });
+// A follow-mode request may carry a scoped, read-only token (minted by the owner from the
+// browser via the OAuth3 extension) in the Authorization header or ?token=. For /live and
+// /frame we forward THAT token to the node instead of the owner token — the follower only
+// ever reads through their scoped cap, and the owner's otter jar stays sealed in the TEE.
+// /recap stays owner-only: it never accepts a client token (caps are read /live + /frame).
+function clientToken(req: Request, url: URL): string {
+  const a = req.headers.get("authorization") || "";
+  if (/^bearer /i.test(a)) return a.replace(/^bearer /i, "").trim();
+  return url.searchParams.get("token") || "";
+}
+
+async function nodeLive(after: number, tok?: string): Promise<any> {
+  const t = tok || TOKEN;
+  if (!t) throw new Error("OAUTH3_TOKEN not set — mint an otter token and set it on this project");
+  const r = await fetch(`${NODE}/api/otter/live?after=${after}`, { headers: { Authorization: `Bearer ${t}` } });
   if (!r.ok) throw new Error(`node /otter/live ${r.status}: ${(await r.text()).slice(0, 160)}`);
   return (await r.json()).data;
 }
@@ -91,7 +103,7 @@ export default async function handler(req: Request, ctx: { env: Record<string, s
   // never leaves the server, so <img> can't carry it — we relay).
   if (req.method === "GET" && path === "/live") {
     try {
-      const d = await nodeLive(Number(url.searchParams.get("after") || "0") || 0);
+      const d = await nodeLive(Number(url.searchParams.get("after") || "0") || 0, clientToken(req, url));
       if (d?.images) d.images = d.images.map((im: any) => ({ offset: im.offset, src: `frame?u=${b64url(im.url)}` }));
       return json(d);
     } catch (e) {
@@ -103,7 +115,7 @@ export default async function handler(req: Request, ctx: { env: Record<string, s
   if (req.method === "GET" && path === "/frame") {
     const u = url.searchParams.get("u") || "";
     const r = await fetch(`${NODE}/api/otter/frame?u=${encodeURIComponent(u)}`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
+      headers: { Authorization: `Bearer ${clientToken(req, url) || TOKEN}` },
     });
     if (!r.ok) return new Response(await r.text(), { status: 502 });
     return new Response(r.body, { headers: { "content-type": r.headers.get("content-type") || "image/png" } });
