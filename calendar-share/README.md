@@ -6,8 +6,18 @@ operator's Google Calendar account (`cube@shaperotator.xyz`) that **mints a shar
 and nothing else. Revocable. Where `timeline-peek` publishes a read-only feed, this
 publishes a single-event write delegation.
 
-Single self-contained `index.html` (no build, no backend). Deploy as a `static` project
-with `entry: index.html`, sitting next to the OAuth3 node so `/oauth3` resolves.
+A thin deno app (`server.ts` + `project.json` + `deploy.sh`, mirroring `otterpilot/`)
+serving one self-contained `public/index.html` (no build, no client framework). The page
+is mounted at `/calendar-share/` next to the OAuth3 node so the browser's
+`NODE = location.origin + "/oauth3"` resolves, with `<base href="/calendar-share/">`
+pinning relative fetches (the same #16 trap `otterpilot`/`timeline-peek` guard against).
+
+The server holds **no secrets**: unlike `otterpilot` there is no owner token to keep
+server-side. Every oauth3 call is made by the browser itself — the owner's read token
+comes from the extension (or the self-provisioned wallet) and the recipient's write token
+travels in the share URL. The delegation envelope (cap check, attenuation, audit,
+revocation) lives entirely in the oauth3 node, enforced against the token the client
+presents.
 
 ## Two modes (one file)
 
@@ -33,10 +43,28 @@ the share code at any time (`DELETE /api/tokens/:token`).
 Only ever talks to the OAuth3 node's `/api/google-calendar/*`; the account's `google.com`
 cookies stay sealed in the TEE. Real errors are surfaced, never masked.
 
+## Env
+
+- `OAUTH3_NODE` — the pod's oauth3 instance (default `https://pod.dstack.soc1024.com/oauth3`).
+  Advisory: the page recomputes the node from `location.origin`, so the app works unchanged
+  wherever it's mounted beside an oauth3 sibling. Kept in `project.json` for consistency
+  with the rest of the suite.
+
+## Deploy
+
+`bash deploy.sh` — tarballs `server.ts` + `project.json` + `public/`, POSTs to the daemon
+(`POST /_api/projects`, Bearer `TEE_DAEMON_TOKEN`). The only credential is the daemon
+token (no app secrets). For staging verify:
+`source ~/.tee-daemon-staging.env && CVM="$TEE_DAEMON_URL" bash deploy.sh`, then
+`GET $CVM/calendar-share/` → 200. Prod (the app's real home) is operator-run — set
+`CVM=https://pod.dstack.soc1024.com` and a prod `TEE_DAEMON_TOKEN`.
+
 ## Depends on
 
 `oauth3-server#69` — the `google-calendar` plugin + the `write:event:<id>` cap + the
-`POST /api/google-calendar/event/:id` endpoint. Until #69 ships on staging AND the cube@
-jar is synced, the live data path returns an honest `"edit path not yet captured"` error
-from the plugin — the delegation envelope (cap check, attenuation, audit, revocation) is
-verifiable today against the handler code (see the PR body for the proof).
+`POST /api/google-calendar/event/:id` endpoint — shipped to **prod** on 2026-07-07
+(`GET https://pod.dstack.soc1024.com/oauth3/api/plugins` lists `google-calendar`). The
+live mint → edit → reject-other-event journey therefore runs against **prod** (needs the
+prod oauth3 node + the synced cube@ jar); on the staging daemon the plugin is absent, so
+only static serving (`GET /calendar-share/` → 200) is verifiable there. Prod deploy + the
+jar sync are operator-run; this PR ships the deployable app and the static-serving proof.
