@@ -1,5 +1,10 @@
 <!doctype html>
 <meta charset=utf-8>
+<!-- /calendar-share/ is where the tee-daemon mounts this project; pin relative fetches
+     here so a stray relative URL can't escape to a sibling app (the #16 trap). The page
+     still talks to the oauth3 node at location.origin + "/oauth3" — an absolute path,
+     so <base> only affects the rare relative ref, never the oauth3 calls. -->
+<base href="/calendar-share/">
 <meta name=viewport content="width=device-width,initial-scale=1">
 <title>Calendar Share</title>
 <!--
