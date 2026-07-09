@@ -452,6 +452,46 @@ async function connectViaWallet() {
 let ownerToken = null;      // scoped twitter token after connecting (owner mode)
 let walletSession = null;   // wallet session (self-provision path) — used to revoke a share
 
+// --- stored share (localStorage) so the receipt survives a refresh ---
+// timeline-peek's share is just this page with ?token=<ownerToken>; the receipt (link,
+// copy, Revoke) keys off the token alone. Persisting it lets the receipt re-render on
+// load with no further intervention — no re-Connect, no re-Share — mirroring
+// calendar-share's stored-share pattern. Cleared on a successful revoke: share-kit only
+// flips the pill to "revoked" once onRevoke resolves, so a failed DELETE leaves the
+// store (and the receipt) intact and surfaces the real error — nothing masked.
+const STORE = "timeline_peek_share";
+function readShares() { try { return JSON.parse(localStorage.getItem(STORE) || "[]"); } catch { return []; } }
+function storeShare(token) {
+  const all = readShares().filter((t) => t !== token);
+  all.unshift(token);
+  localStorage.setItem(STORE, JSON.stringify(all));
+}
+function forgetShare(token) {
+  localStorage.setItem(STORE, JSON.stringify(readShares().filter((t) => t !== token)));
+}
+function shareLink(token) {
+  return location.origin + location.pathname + "?token=" + encodeURIComponent(token);
+}
+function shareHandle(token) {
+  return ShareKit.handle({
+    link: shareLink(token),
+    scope: "read-only · your X For-You feed · nothing else",
+    owner: "you", thing: "X feed", capability: "read-only",
+    onRevoke: async () => { await revokeToken(token); forgetShare(token); },
+  });
+}
+function appendReceipt(h) {
+  const box = $("sk-receipt");
+  box.hidden = false;
+  const host = document.createElement("div");
+  host.style.marginTop = "12px";
+  box.appendChild(host);
+  ShareKit.capabilityReceipt(host, h);
+}
+function restoreShares() {
+  readShares().forEach((t) => appendReceipt(shareHandle(t)));
+}
+
 const shareToken = new URLSearchParams(location.search).get("token");
 if (shareToken) {
   // Public share: no wallet needed, the token is in the link. Show the recipient banner
@@ -467,6 +507,7 @@ if (shareToken) {
     // other errors (network / 5xx): leave the banner active — the share may still be valid.
   });
 } else {
+  restoreShares(); // re-render any share receipt minted before this refresh — no re-click
   if (!window.oauth3) {
     // No extension (mobile / clean profile): Connect will self-provision a wallet here.
     $("note").className = "note";
@@ -510,15 +551,10 @@ function renderSharePanel() {
   ShareKit.shareAction($("sk-share"), {
     label: "Share my feed →",
     async onShare() {
-      const link = location.origin + location.pathname + "?token=" + encodeURIComponent(ownerToken);
-      return ShareKit.handle({
-        link,
-        scope: "read-only · your X For-You feed · nothing else",
-        owner: "you", thing: "X feed", capability: "read-only",
-        onRevoke: () => revokeToken(ownerToken),
-      });
+      storeShare(ownerToken);           // persist so the receipt survives a refresh
+      return shareHandle(ownerToken);
     },
-    onShared(h) { ShareKit.capabilityReceipt($("sk-receipt"), h); $("sk-share").hidden = true; }
+    onShared(h) { appendReceipt(h); $("sk-share").hidden = true; }
   });
 }
 
