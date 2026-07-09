@@ -93,6 +93,24 @@ select{background:var(--card);border:1.5px solid var(--rule);color:var(--text);
 #out .ph{color:var(--faint)}
 #out .when{color:var(--faint);font:11px var(--mono);margin-bottom:10px}
 .err{color:var(--i2-text)}
+/* responsive — narrow screens stack and the page flows (page-scroll) instead of the
+   desktop 100vh split panes, so the transcript feed, slides, and recap all stay
+   reachable without deleting anything (issue: mobile view broken / panels lost).
+   Root-cause fix for the 420px side column overflowing a phone viewport — no
+   overflow-x:hidden masking, the columns actually collapse. */
+@media (max-width:860px){
+  body{height:auto;min-height:100vh}
+  .main{flex:none;display:block}
+  .feed{overflow-y:visible;border-right:0;border-bottom:1.5px solid var(--rule)}
+}
+@media (max-width:480px){
+  header{padding:10px 14px;gap:10px}
+  .share-panel{padding:12px 14px}
+  .feed{padding:14px 16px}
+  #out{padding:14px 16px}
+  #slides{padding:8px 10px}
+  .btn{padding:10px 14px}
+}
 </style>
 </head>
 <body>
@@ -389,7 +407,7 @@ select{background:var(--card);border:1.5px solid var(--rule);color:var(--text);
 <script>
 const $ = (id) => document.getElementById(id);
 const feed = $("feed"), out = $("out"), meet = $("meet"), dot = $("dot");
-const btn = $("recap"), win = $("win");
+const btn = $("recap"), win = $("win"), recapSection = $("recap-section");
 const slides = $("slides"), slideBig = $("slideBig");
 const slideRow = $("slideRow"), slideCap = $("slideCap");
 const NODE = location.origin + "/oauth3";
@@ -461,11 +479,20 @@ async function poll() {
 
 // recap is owner-only — follow mode hides the button + section entirely.
 if (!FOLLOW) {
+  // On the stacked (mobile) layout the recap output sits below the transcript feed, so
+  // bring it into view when it updates — otherwise tapping the button looks like nothing
+  // happened, the very "lost the good-points list" symptom from the issue. No-op on
+  // desktop, where the side panel is already in view.
+  const revealRecap = () => {
+    if (window.matchMedia("(max-width:860px)").matches) {
+      recapSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
   btn.onclick = async () => {
     const n = parseInt(win.value, 10);
     const text = segs.slice(-n).join(" ");
-    if (!text.trim()) { out.innerHTML = '<span class="ph">No transcript captured yet.</span>'; return; }
-    btn.disabled = true; out.innerHTML = '<span class="ph">thinking…</span>';
+    if (!text.trim()) { out.innerHTML = '<span class="ph">No transcript captured yet.</span>'; revealRecap(); return; }
+    btn.disabled = true; out.innerHTML = '<span class="ph">thinking…</span>'; revealRecap();
     try {
       const r = await fetch("recap", { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ text }) });
@@ -475,7 +502,7 @@ if (!FOLLOW) {
         (d.used_slide ? ' · read the current slide 🖼️' : '') + '</div>' +
         d.summary.replace(/&/g, '&amp;').replace(/</g, '&lt;');
     } catch (e) { out.innerHTML = '<span class="err">recap failed: ' + e + '</span>'; }
-    btn.disabled = false;
+    btn.disabled = false; revealRecap();
   };
 }
 
