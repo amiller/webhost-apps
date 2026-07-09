@@ -31,14 +31,12 @@ GET /oauth3/api/reddit/karma        Authorization: Bearer <scoped token>
 → 200 { data: { name, total_karma, comment_karma, link_karma, created_utc } }
 ```
 
-`#83` is still **open** — on any instance where the plugin isn't registered yet, the live
-read fails honestly: the real error and HTTP status go into the evidence block under the
-number, the card is stamped **MOCK**, and clearly-labelled sample karma renders so the
-demo is viewable end-to-end today. When `#83` ships, real karma renders here with **no
-code change**. The **View demo (mock)** button shows the mock without attempting a login.
+There is no mock path. If the live read fails for any reason (plugin not registered,
+endpoint missing, network, denial), the real error and HTTP status go into the evidence
+block, and a plain error state renders in the card — no numbers, never fake karma.
 
 Nothing is masked: a failed connect/read never silently becomes "0 karma" — the failure
-is surfaced as evidence and the card is honestly stamped MOCK.
+is surfaced as evidence and the card shows the error itself.
 
 ## Deploy
 

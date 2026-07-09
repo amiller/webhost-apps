@@ -11,10 +11,9 @@
   It consumes the Reddit API plugin (oauth3-server#83), whose karma endpoint is expected
   at  GET /oauth3/api/reddit/account  (Bearer <scoped token>)  returning
   { data: { name, total_karma, comment_karma, link_karma, created_utc } }.
-  #83 is still OPEN, so on any instance where the plugin isn't registered yet the live
-  read fails honestly — the real error + status go into the evidence block below the
-  number, and the card falls back to clearly-labelled MOCK data so the demo is viewable
-  end-to-end today. When #83 ships, real karma renders here with no code change.
+  If the live read fails for any reason (plugin not registered, endpoint missing, network,
+  denial), the real error + status go into the evidence block, and a plain error state
+  renders in the card — no numbers, never fake karma.
 
   Two login paths, same as timeline-peek / calendar-share:
    • extension  — window.oauth3.connect({plugin:"reddit"}) carries the whole flow.
@@ -96,7 +95,7 @@ h1.display{font:800 clamp(28px,5vw,40px)/0.94 var(--cond);text-transform:upperca
 .ev-meta{color:var(--faint);font:12px var(--mono);margin-top:3px}
 .stamp{display:inline-block;font:800 12px var(--cond);text-transform:uppercase;letter-spacing:.24em;padding:6px 11px 6px 14px;transform:rotate(-3deg)}
 .stamp.ok{color:var(--i1-text);border:3px solid var(--i1-text)}
-.stamp.mock{color:var(--i2-text);border:3px solid var(--i2-text)}
+.stamp.err{color:var(--warn);border:3px solid var(--warn)}
 .big{display:flex;align-items:baseline;gap:14px;margin:16px 0 4px;flex-wrap:wrap}
 .num{font:800 clamp(48px,15vw,92px)/0.88 var(--cond);color:var(--ink1);text-shadow:var(--off) var(--off) 0 var(--ink2);letter-spacing:-.02em}
 .cap{font:500 11px var(--mono);letter-spacing:.16em;text-transform:lowercase;color:var(--faint)}
@@ -118,7 +117,6 @@ footer{color:var(--faint);font:12px var(--mono);text-align:center;padding:24px 0
     <div style=margin-top:10px><span class=pill>🔒 scoped <span class=chip style=background:transparent;padding:0>reddit:karma</span> · cookies never leave the TEE</span></div>
     <div class=acts>
       <button id=go class=btn>Connect with OAuth3</button>
-      <button id=demo class="btn ghost">View demo (mock)</button>
     </div>
     <div id=diag class=diag>checking…</div>
     <div id=note class=note></div>
@@ -128,21 +126,11 @@ footer{color:var(--faint);font:12px var(--mono);text-align:center;padding:24px 0
 </div>
 <script>
 const NODE = location.origin + "/oauth3";
-const PLUGIN = "reddit", APP = "reddit-karma", BUILD = "b1";
+const PLUGIN = "reddit", APP = "reddit-karma", BUILD = "b2";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (s == null ? "" : String(s)).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const fmtNum = (n) => Number(n||0).toLocaleString();
 const setNote = (msg, err) => { const n = $("note"); n.className = "note" + (err ? " err" : ""); n.textContent = msg || ""; };
-
-// The shape this app expects from the reddit plugin (oauth3-server#83). Until #83
-// ships, the live GET returns an honest error and we render MOCK instead — see connect().
-const MOCK = {
-  name: "r2d2_dev",
-  total_karma: 12873,
-  comment_karma: 4321,
-  link_karma: 8552,
-  created_utc: "2011-07-04T13:37:00Z"
-};
 
 // ---- diagnostics: is the oauth3 node up, is the reddit plugin registered, is the extension here? ----
 async function diag() {
@@ -172,13 +160,12 @@ function accountAge(v) {
 }
 function renderKarma(k, ev) {
   $("foot").hidden = false;
-  const mock = ev.source === "mock";
   $("view").innerHTML =
     '<div class=card>' +
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">' +
         '<div><b class=title>u/' + esc(k.name) + '</b>' +
         '<div class=ev-meta>account age ' + esc(accountAge(k.created_utc)) + ' · <span class=chip>reddit:karma</span></div></div>' +
-        '<span class="stamp ' + (mock ? "mock" : "ok") + '">' + (mock ? "mock" : "live") + '</span>' +
+        '<span class="stamp ok">live</span>' +
       '</div>' +
       '<div class=big><span class=num>' + esc(fmtNum(k.total_karma)) + '</span><span class=cap>total karma</span></div>' +
       '<div class=halftone></div>' +
@@ -199,6 +186,22 @@ function evidence(ev) {
   return '<div class=block>' + rows.join("\n") + '</div>';
 }
 
+// ---- render a plain error state in the card area (no numbers, never fake karma) ----
+// The evidence panel below carries the real error + status; the card itself shows no data.
+function renderError(ev) {
+  $("foot").hidden = false;
+  $("view").innerHTML =
+    '<div class=card>' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">' +
+        '<div><b class=title>No karma to show</b>' +
+        '<div class=ev-meta>connect or read failed · <span class=chip>reddit:karma</span></div></div>' +
+        '<span class="stamp err">error</span>' +
+      '</div>' +
+      '<p style="margin:14px 0 0;color:var(--warn);font:13px/1.6 var(--mono)">The connect or read failed — no karma is shown, never fake numbers. See the evidence below for the real error and HTTP status.</p>' +
+    '</div>' +
+    evidence(ev);
+}
+
 // ---- live read: GET /api/reddit/account with the scoped token. Throws the real error. ----
 async function fetchKarma(token) {
   const endpoint = "/api/" + PLUGIN + "/account"; // oauth3-server#84's shipped route
@@ -212,11 +215,11 @@ async function fetchKarma(token) {
 }
 
 // ---- connect: extension path, else wallet self-provision. Then read karma. ----
-//   On ANY failure (plugin not registered, karma endpoint 404, network) we fall back to
-//   MOCK data — but the real error + status go into the evidence block, and the card is
-//   stamped MOCK. Nothing is masked: a failed read never becomes a silent "0 karma".
+//   On ANY failure (plugin not registered, karma endpoint 404, network, denial) we
+//   render a plain error state in the card — no numbers, never fake karma. The real
+//   error + status go into the evidence block, which is never masked.
 async function onConnect() {
-  setNote(""); const viaExt = !!window.oauth3; $("go").disabled = true; $("demo").disabled = true;
+  setNote(""); const viaExt = !!window.oauth3; $("go").disabled = true;
   setNote(viaExt ? "Asking your wallet for a scoped reddit token…" : "Self-provisioning a wallet in this browser…");
   let token = null, connectErr = null;
   try {
@@ -226,27 +229,20 @@ async function onConnect() {
     if (!token) throw new Error("connect returned no token (approval denied/cancelled)");
   } catch (e) { connectErr = e; }
   if (connectErr) {
-    renderKarma(MOCK, { source: "mock", reason: "connect failed: " + String(connectErr.message || connectErr) });
-    setNote("Connect failed — showing mock karma. See evidence for the real error.", true);
-    $("go").disabled = false; $("demo").disabled = false; return;
+    renderError({ source: "error", reason: "connect failed: " + String(connectErr.message || connectErr) });
+    setNote("Connect failed — see evidence for the real error.", true);
+    $("go").disabled = false; return;
   }
-  $("go").hidden = true; $("demo").hidden = true;
+  $("go").hidden = true;
   setNote("Reading your karma with the scoped token…");
   try {
     const { karma, status } = await fetchKarma(token);
     renderKarma(karma, { source: "live", status, token: token.slice(0, 12) + "…" });
     setNote("");
   } catch (e) {
-    renderKarma(MOCK, { source: "mock", status: e.status, token: token.slice(0, 12) + "…", reason: "read failed: " + String(e.message || e) });
-    setNote("Live read isn't available here — showing mock karma. See evidence for the real error.", true);
+    renderError({ source: "error", status: e.status, token: token.slice(0, 12) + "…", reason: "read failed: " + String(e.message || e) });
+    setNote("Live read failed — see evidence for the real error.", true);
   }
-}
-
-// ---- instant demo without login: clearly-labelled mock, no token claimed ----
-function onDemo() {
-  $("go").hidden = true; $("demo").hidden = true; $("foot").hidden = false;
-  renderKarma(MOCK, { source: "mock", reason: "manual demo — no token requested, no claim of live data" });
-  setNote("");
 }
 
 // --- wallet self-provision path (no extension) — same block timeline-peek / calendar-share use.
@@ -283,7 +279,7 @@ async function walletSignIn() {
 }
 // connect handshake without the extension: request → approve with the wallet session →
 // poll for the scoped token. If the reddit plugin isn't registered on the node yet,
-// /api/connect rejects with a real error that onConnect surfaces (then mock karma).
+// /api/connect rejects with a real error that onConnect surfaces as a plain error state.
 async function connectViaWallet() {
   const session = await walletSignIn();
   const cr = await fetch(NODE + "/api/connect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plugin: PLUGIN, app: APP }) });
@@ -302,6 +298,5 @@ async function connectViaWallet() {
 }
 
 $("go").addEventListener("click", onConnect);
-$("demo").addEventListener("click", onDemo);
 diag();
 </script>
