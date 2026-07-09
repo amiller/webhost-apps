@@ -481,6 +481,12 @@ if (shareToken) {
       let token;
       if (viaExt) {
         token = await window.oauth3.connect({ plugin: "twitter", app: "timeline-peek", node: NODE });
+        // The wallet keeps its node session in the extension, not the page. Borrow it via
+        // signIn (same-origin as the node here, so the wallet allows it) so a share can be
+        // revoked — without it DELETE /api/tokens/:token 401s and the receipt pill never
+        // flips to Revoked. Best-effort: a failure leaves walletSession null and revoke then
+        // surfaces the real 401 (nothing masked); the share itself only needs the scoped token.
+        walletSession = await window.oauth3.signIn({ node: NODE }).then(r => r && r.session).catch(() => null);
       } else {
         walletSession = await walletSignIn();   // capture so a share can be revoked later
         token = await connectViaWallet();
@@ -522,10 +528,10 @@ function renderSharePanel() {
   });
 }
 
-// DELETE /api/tokens/:token — allowed for the owner secret or any web session. On the
-// wallet path walletSession is in-browser; on the extension path the wallet holds the
-// session, so the call 401s from a raw browser context until the extension exposes a
-// revoke bridge (honest — share-kit surfaces the real error and leaves the pill active).
+// DELETE /api/tokens/:token — allowed for the owner secret or any web session. Both
+// paths now carry walletSession: the wallet path self-provisions it; the extension path
+// borrows the wallet's node session via window.oauth3.signIn (same-origin). If it is
+// absent, the call 401s and share-kit surfaces the real error, leaving the pill active.
 async function revokeToken(t) {
   const headers = { "Content-Type": "application/json" };
   if (walletSession) headers.Authorization = "Bearer " + walletSession;
