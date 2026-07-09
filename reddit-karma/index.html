@@ -9,7 +9,7 @@
   Reddit cookie; the TEE pod does the authenticated read and hands back only the karma.
 
   It consumes the Reddit API plugin (oauth3-server#83), whose karma endpoint is expected
-  to live at  GET /oauth3/api/reddit/karma  (Bearer <scoped token>)  returning
+  at  GET /oauth3/api/reddit/account  (Bearer <scoped token>)  returning
   { data: { name, total_karma, comment_karma, link_karma, created_utc } }.
   #83 is still OPEN, so on any instance where the plugin isn't registered yet the live
   read fails honestly — the real error + status go into the evidence block below the
@@ -115,7 +115,7 @@ footer{color:var(--faint);font:12px var(--mono);text-align:center;padding:24px 0
     <p class=label>oauth3 · sample app · reddit</p>
     <h1 class=display>Reddit Karma</h1>
     <div class=sub id=sub>Your karma, read through a scoped token — never your cookie.</div>
-    <div style=margin-top:10px><span class=pill>🔒 scoped <span class=chip style=background:transparent;padding:0>reddit:read</span> · cookies never leave the TEE</span></div>
+    <div style=margin-top:10px><span class=pill>🔒 scoped <span class=chip style=background:transparent;padding:0>reddit:karma</span> · cookies never leave the TEE</span></div>
     <div class=acts>
       <button id=go class=btn>Connect with OAuth3</button>
       <button id=demo class="btn ghost">View demo (mock)</button>
@@ -177,7 +177,7 @@ function renderKarma(k, ev) {
     '<div class=card>' +
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">' +
         '<div><b class=title>u/' + esc(k.name) + '</b>' +
-        '<div class=ev-meta>account age ' + esc(accountAge(k.created_utc)) + ' · <span class=chip>reddit:read</span></div></div>' +
+        '<div class=ev-meta>account age ' + esc(accountAge(k.created_utc)) + ' · <span class=chip>reddit:karma</span></div></div>' +
         '<span class="stamp ' + (mock ? "mock" : "ok") + '">' + (mock ? "mock" : "live") + '</span>' +
       '</div>' +
       '<div class=big><span class=num>' + esc(fmtNum(k.total_karma)) + '</span><span class=cap>total karma</span></div>' +
@@ -192,22 +192,23 @@ function renderKarma(k, ev) {
 function evidence(ev) {
   const rows = [];
   rows.push('<span class=k>source</span><span class=hit>' + esc(ev.source) + '</span>');
-  rows.push('<span class=k>endpoint</span>GET ' + esc(ev.endpoint || (NODE + "/api/" + PLUGIN + "/karma")));
+  rows.push('<span class=k>endpoint</span>GET ' + esc(ev.endpoint || (NODE + "/api/" + PLUGIN + "/account")));
   if (ev.status != null) rows.push('<span class=k>status</span>' + esc(ev.status));
   if (ev.token) rows.push('<span class=k>token</span>' + esc(ev.token));
   if (ev.reason) rows.push('<span class=k>reason</span>' + esc(ev.reason));
   return '<div class=block>' + rows.join("\n") + '</div>';
 }
 
-// ---- live read: GET /api/reddit/karma with the scoped token. Throws the real error. ----
+// ---- live read: GET /api/reddit/account with the scoped token. Throws the real error. ----
 async function fetchKarma(token) {
-  const endpoint = "/api/" + PLUGIN + "/karma";
+  const endpoint = "/api/" + PLUGIN + "/account"; // oauth3-server#84's shipped route
   const r = await fetch(NODE + endpoint, { headers: { Authorization: "Bearer " + token } });
   const body = await r.json().catch(() => ({}));
-  if (!r.ok) { const err = new Error(body.error || ("karma " + r.status)); err.status = r.status; err.body = body; throw err; }
-  const d = body.data || {};
-  if (d.total_karma == null) { const err = new Error("karma response missing data.total_karma"); err.status = r.status; err.body = body; throw err; }
-  return { karma: { name: d.name || "?", total_karma: d.total_karma, comment_karma: d.comment_karma || 0, link_karma: d.link_karma || 0, created_utc: d.created_utc || null }, status: r.status };
+  if (!r.ok) { const err = new Error(body.error || ("account " + r.status)); err.status = r.status; err.body = body; throw err; }
+  const a = body.account || {};
+  const f = (k) => ((a.fields || []).find((x) => x.key === k) || {}).value;
+  if (f("total_karma") == null) { const err = new Error("account response missing total_karma field"); err.status = r.status; err.body = body; throw err; }
+  return { karma: { name: a.id || "?", total_karma: f("total_karma"), comment_karma: f("comment_karma") || 0, link_karma: f("link_karma") || 0, created_utc: null }, status: r.status };
 }
 
 // ---- connect: extension path, else wallet self-provision. Then read karma. ----
