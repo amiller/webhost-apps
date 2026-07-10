@@ -1,578 +1,389 @@
 <!doctype html>
 <meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<title>Timeline Peek</title>
+<title>Home / Timeline Peek</title>
 <!--
-  A relying-party app. Two modes:
-   • owner   — scoped twitter token from the OAuth3 node. With the extension,
-               window.oauth3.connect() carries the whole flow. Without it
-               (e.g. a phone), the app self-provisions an Ed25519 did:key wallet
-               in this browser, signs into the node, and runs the connect
-               handshake itself — same path /login's "Continue in this browser" uses.
+  A relying-party app. Three modes:
+   • owner   — window.oauth3.connect() asks your extension for a scoped token.
    • shared  — ?token=<scoped> in the URL: a public, revocable share of one feed.
-  Either way it only ever fetches the OAuth3 node's /api/twitter/feed. No cookies.
+   • demo    — ?demo : renders bundled SAMPLE data so the rendering is reviewable
+               without a live token (clearly labeled "Demo · sample data").
+  Either real mode only ever fetches the OAuth3 node's /api/twitter/feed. No cookies.
+
+  NOTE on media: the feed endpoint reconstructs posts from the rendered page's
+  innerText (see oauth3-server/server/browser.ts parseFeed()), so its items today
+  carry {name, handle, time, text, stats} and NO image/avatar/verified fields.
+  This viewer is MEDIA-READY: when an item carries `avatar`, `verified`, or
+  `media:[{type,url,poster}]`, they render at x.com's aspect ratios. Displaying
+  REAL tweet media requires parseFeed() to also scrape <img>/media DOM — a change
+  in the oauth3-server repo, not this one. See issue #45.
 -->
 <style>
-/* pod design system · constructivist overprint · grape-acid inking */
-:root{
-  --ink1:#6f57a8; --ink2:#b5d33d; --paper:#f8f7f3; --deep:#2e2745; --overprint:#31491f;
-  --bg:var(--paper); --text:var(--deep);
-  --faint:color-mix(in srgb,var(--deep) 55%,var(--paper));
-  --rule:color-mix(in srgb,var(--deep) 16%,var(--paper));
-  --card:#fff; --block:var(--deep); --block-text:#f8f7f3;
-  --wash1:color-mix(in srgb,var(--ink1) 15%,var(--paper));
-  --wash2:color-mix(in srgb,var(--ink2) 17%,var(--paper));
-  --i1-text:#5a4590; --i2-text:#6d8317;
-  --warn:#a8780c; --warn-wash:color-mix(in srgb,#e0a41a 22%,var(--paper));
-  --sans:"Helvetica Neue",Arial,sans-serif;
-  --cond:"Arial Narrow","Helvetica Neue",sans-serif;
-  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
-  --off:1px;
-}
-@media (prefers-color-scheme: dark){ :root{
-  --ink1:#9b82d6; --ink2:#cbe85c; --paper:#181524; --deep:#100d1a;
-  --bg:#181524; --text:#e8e3f0;
-  --faint:color-mix(in srgb,#e8e3f0 55%,#181524);
-  --rule:color-mix(in srgb,#e8e3f0 14%,#181524);
-  --card:#221d33; --block:#100d1a; --block-text:#e8e3f0;
-  --wash1:color-mix(in srgb,#9b82d6 20%,#181524);
-  --wash2:color-mix(in srgb,#cbe85c 20%,#181524);
-  --i1-text:#b9a4e2; --i2-text:#d6f07a;
-  --warn:#e0b34a; --warn-wash:color-mix(in srgb,#e0b34a 18%,#181524);
-}}
-:root[data-theme="dark"]{
-  --ink1:#9b82d6; --ink2:#cbe85c; --paper:#181524; --deep:#100d1a;
-  --bg:#181524; --text:#e8e3f0;
-  --faint:color-mix(in srgb,#e8e3f0 55%,#181524);
-  --rule:color-mix(in srgb,#e8e3f0 14%,#181524);
-  --card:#221d33; --block:#100d1a; --block-text:#e8e3f0;
-  --wash1:color-mix(in srgb,#9b82d6 20%,#181524);
-  --wash2:color-mix(in srgb,#cbe85c 20%,#181524);
-  --i1-text:#b9a4e2; --i2-text:#d6f07a;
-  --warn:#e0b34a; --warn-wash:color-mix(in srgb,#e0b34a 18%,#181524);
-}
-:root[data-theme="light"]{
-  --ink1:#6f57a8; --ink2:#b5d33d; --paper:#f8f7f3; --deep:#2e2745;
-  --bg:#f8f7f3; --text:#2e2745;
-  --faint:color-mix(in srgb,#2e2745 55%,#f8f7f3);
-  --rule:color-mix(in srgb,#2e2745 16%,#f8f7f3);
-  --card:#fff; --block:#2e2745; --block-text:#f8f7f3;
-  --wash1:color-mix(in srgb,#6f57a8 15%,#f8f7f3);
-  --wash2:color-mix(in srgb,#b5d33d 17%,#f8f7f3);
-  --i1-text:#5a4590; --i2-text:#6d8317;
-  --warn:#a8780c; --warn-wash:color-mix(in srgb,#e0a41a 22%,#f8f7f3);
-}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 var(--sans)}
-a{color:var(--i1-text)}:focus-visible{outline:2px solid var(--ink2);outline-offset:2px}
-.wrap{max-width:620px;margin:0 auto;padding:0 14px 60px}
-header{padding:26px 4px 16px}
-h1.display{font:800 clamp(28px,5vw,40px)/0.94 var(--cond);text-transform:uppercase;margin:0 0 4px;color:var(--ink1);text-shadow:var(--off) var(--off) 0 var(--ink2);text-wrap:balance}
-.sub{color:var(--faint);font:13px var(--mono);margin:6px 0 0}
-.label{font:500 11px/1 var(--mono);letter-spacing:.16em;text-transform:lowercase;color:var(--faint)}
-.pill{display:inline-flex;align-items:center;gap:6px;font:500 12px/1 var(--mono);padding:4px 10px;border-radius:999px;background:var(--wash1);color:var(--i1-text)}
-.btn{display:inline-flex;align-items:center;gap:8px;font:800 14px var(--cond);text-transform:uppercase;letter-spacing:.12em;border:0;padding:12px 22px;cursor:pointer;background:var(--ink1);color:#fff;box-shadow:3px 3px 0 var(--ink2)}
-.btn:disabled{opacity:.5;cursor:default}
-.note{margin-top:14px;color:var(--faint);font:13px/1.6 var(--mono)}
-.note.err{color:var(--i2-text)}
-.t{display:flex;gap:12px;padding:14px 6px;border-bottom:1px solid var(--rule)}
-.av{width:42px;height:42px;background:var(--block);display:flex;align-items:center;justify-content:center;font:800 16px var(--cond);color:var(--i2-text);flex:0 0 42px}
-.body{min-width:0;flex:1}.hd{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-.nm{font-weight:700}.hn,.dot,.tm{color:var(--faint);font:13px var(--mono)}
-.tx{margin:3px 0 9px;white-space:pre-wrap;word-wrap:break-word}.media{color:var(--faint);font:13px var(--mono)}
-.st{display:flex;gap:22px;color:var(--faint);font:13px var(--mono)}
-footer{color:var(--faint);font:12px var(--mono);text-align:center;padding:24px 0;border-top:1px solid var(--rule);margin-top:8px}
+:root[data-theme=dark]{
+  --bg:#000; --bg2:#000; --hover:rgba(255,255,255,.04); --blur:rgba(0,0,0,.65);
+  --text:#e7e9ea; --sec:#71767b; --sec2:#a0a4a8; --border:#2f3336; --link:#1d9bf0;
+  --like:#f91880; --repost:#00ba7c; --reply:#1d9bf0; --chip:#16181c; --composebg:#080808;
+  --railbg:#000;
+}
+:root[data-theme=light]{
+  --bg:#fff; --bg2:#fff; --hover:rgba(0,0,0,.035); --blur:rgba(255,255,255,.85);
+  --text:#0f1419; --sec:#536471; --sec2:#536471; --border:#eff3f4; --link:#1d9bf0;
+  --like:#f91880; --repost:#00ba7c; --reply:#1d9bf0; --chip:#f7f9f9; --composebg:#fff;
+  --railbg:#fff;
+}
+:root{color-scheme:dark}
+html,body{margin:0;height:100%}
+body{
+  background:var(--bg);color:var(--text);
+  font:15px/1.34 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+svg.ic{width:1.5em;height:1.5em;fill:currentColor;vertical-align:middle}
+.hidden{display:none!important}
+.ent{color:var(--link);text-decoration:none;cursor:pointer}
+.muted{color:var(--sec)}
+
+/* ---------- connect / landing ---------- */
+.connect{max-width:590px;margin:0 auto;padding:56px 20px 80px}
+.connect .mark{font-size:46px;line-height:1;margin:0 0 26px;font-weight:800}
+.connect h1{font-size:30px;line-height:1.2;margin:0 0 12px;font-weight:800;letter-spacing:-.01em}
+.connect p{color:var(--sec2);margin:0 0 18px;font-size:15px;line-height:1.5}
+.connect p b{color:var(--text)}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#86efac;background:#0f2417;border:1px solid #1c5236;padding:5px 11px;border-radius:999px;margin-bottom:22px}
+:root[data-theme=light] .chip{color:#0f5132;background:#d1e7dd;border-color:#badbcc}
+.btnrow{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:6px}
+.primary{padding:9px 20px;border:0;border-radius:999px;background:var(--link);color:#fff;font:700 15px inherit;cursor:pointer}
+.primary:hover{background:#1a8cd8}
+.primary:disabled{opacity:.55;cursor:default}
+.linkbtn{background:none;border:0;color:var(--link);font:inherit;font-size:15px;cursor:pointer;padding:9px 4px}
+.linkbtn:hover{text-decoration:underline}
+.note{margin-top:16px;color:var(--sec2);font-size:14px;min-height:1em}
+.note.err{color:var(--like)}
+
+/* ---------- app shell ---------- */
+.app{display:flex;justify-content:center;min-height:100%}
+.rail{
+  position:sticky;top:0;align-self:flex-start;height:100vh;
+  flex:0 0 auto;width:88px;padding:0 12px;display:flex;flex-direction:column;gap:4px;
+  border-right:1px solid var(--border);background:var(--railbg);
+}
+.rail .logo{font-size:26px;font-weight:800;text-align:center;padding:10px 0 14px;color:var(--text)}
+.rail .ritem{display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 0;border-radius:999px;color:var(--text);cursor:default;font-size:13px}
+.rail .ritem svg{width:26px;height:26px;fill:currentColor}
+.rail .ritem.active{font-weight:700}
+.rail .post{margin:12px 6px 0;padding:12px 0;border:0;border-radius:999px;background:var(--link);color:#fff;font:700 15px inherit;cursor:pointer}
+.col{flex:0 1 600px;min-width:0;border-left:1px solid var(--border);border-right:1px solid var(--border);min-height:100vh}
+.topbar{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:8px;padding:0 16px;height:53px;background:var(--blur);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--border)}
+.topbar .branddot{font-size:20px;font-weight:800;width:26px}
+.tabs{display:flex;flex:1;align-items:stretch;height:53px;margin:0}
+.tab{flex:1;background:none;border:0;color:var(--sec2);font:700 15px inherit;cursor:pointer;border-bottom:4px solid transparent;transition:.12s}
+.tab:hover{background:var(--hover);color:var(--link)}
+.tab.active{color:var(--text);border-bottom-color:var(--link)}
+.iconbtn{background:none;border:0;color:var(--text);cursor:pointer;padding:8px;border-radius:999px;display:flex;align-items:center}
+.iconbtn:hover{background:var(--hover)}
+.iconbtn svg{width:20px;height:20px;fill:currentColor}
+
+/* ---------- compose ghost ---------- */
+.compose{display:flex;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--composebg)}
+.compose .cph{flex:1;color:var(--sec);align-self:center;font-size:18px;padding:9px 0}
+.compose .postbtn{margin-left:auto;align-self:center;padding:8px 18px;border:0;border-radius:999px;background:var(--link);color:#fff;font:700 15px inherit;opacity:.5;cursor:not-allowed}
+
+/* ---------- tweet ---------- */
+#feed{margin-top:0}
+.tweet{display:flex;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border);transition:background .1s}
+.tweet:hover{background:var(--hover)}
+.avwrap{position:relative;flex:0 0 40px;width:40px;height:40px}
+.avatar{width:40px;height:40px;border-radius:999px;display:block}
+.av-img{position:absolute;inset:0;object-fit:cover}
+.av-img.dead{display:none}
+.av-def{display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;background:linear-gradient(135deg,#1d9bf0,#0a6fb0)}
+.tcol{flex:1;min-width:0}
+.thd{display:flex;align-items:center;gap:4px;flex-wrap:wrap;color:var(--sec);font-size:15px;line-height:1.2}
+.thd .name{color:var(--text);font-weight:700}
+.thd .name:hover{text-decoration:underline}
+.thd .handle,.thd .dot,.thd .time{color:var(--sec)}
+.thd .time::before{content:"·";margin:0 4px}
+.thd .time:empty::before{content:""}
+.badge{display:inline-flex;color:var(--link)}
+.badge svg{width:18px;height:18px;fill:var(--link)}
+.ttxt{margin:2px 0 0;font-size:15px;line-height:1.34;white-space:pre-wrap;word-wrap:break-word;color:var(--text)}
+
+/* ---------- media (x.com aspect grids) ---------- */
+.media{margin-top:10px;border:1px solid var(--border);border-radius:16px;overflow:hidden;background:var(--chip)}
+.m1{display:block;max-height:510px}
+.m1 .mcell{height:auto}
+.m1 img{width:100%;height:auto;max-height:510px;object-fit:cover;display:block}
+.m2{display:grid;grid-template-columns:1fr 1fr;gap:1px;height:min(60vw,360px)}
+.m4{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:1px;height:min(60vw,360px)}
+.m3{display:grid;grid-template-columns:2fr 1fr;gap:1px;height:min(60vw,360px)}
+.m3 .mcell:first-child{grid-row:span 2}
+.m3 .mcol2{display:grid;grid-template-rows:1fr 1fr;gap:1px;height:100%}
+.m2 .mcell,.m3 .mcell,.m4 .mcell{height:100%;min-height:0;position:relative}
+.m2 img,.m3 img,.m4 img{width:100%;height:100%;object-fit:cover;display:block}
+.mcell .play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.mcell .play svg{width:56px;height:56px;filter:drop-shadow(0 2px 6px rgba(0,0,0,.5))}
+
+/* ---------- engagement row ---------- */
+.acts{display:flex;align-items:center;margin-top:11px;color:var(--sec);max-width:480px}
+.act{flex:1;display:flex;align-items:center;gap:6px}
+.act svg{width:18px;height:18px;fill:currentColor}
+.act .cnt{font-size:13px}
+.act-end{display:flex;align-items:center;gap:22px;margin-left:auto}
+.act-end svg{width:18px;height:18px;fill:currentColor}
+.a-reply:hover{color:var(--reply)}
+.a-reply:hover svg{background:rgba(29,155,240,.12);border-radius:999px}
+.a-repost:hover{color:var(--repost)}
+.a-repost:hover svg{background:rgba(0,186,124,.12);border-radius:999px}
+.a-like:hover{color:var(--like)}
+.a-like:hover svg{background:rgba(249,24,128,.12);border-radius:999px}
+.a-views:hover{color:var(--link)}
+.a-views:hover svg{background:rgba(29,155,240,.12);border-radius:999px}
+.act svg{padding:5px;margin:-5px;transition:background .1s}
+.act-end svg{padding:5px;margin:-5px;border-radius:999px}
+.act-end svg:hover{background:var(--reply);color:var(--reply)}
+
+.empty{padding:40px 16px;color:var(--sec);text-align:center}
+.endpad{padding:30px 16px;color:var(--sec);text-align:center;font-size:13px}
+
+/* ---------- responsive ---------- */
+@media(max-width:999px){ .rail{display:none} }
+@media(max-width:600px){ .col{flex:1 1 100%;border:0} .acts{max-width:100%} .acts .cnt{font-size:12px} }
 </style>
-<div id=sk-banner></div>
-<div class=wrap>
-  <header>
-    <p class=label>oauth3 · relying-party demo</p>
-    <h1 class=display>Timeline Peek</h1>
-    <div class=sub id=sub>A logged-in X feed, reconstructed.</div>
-    <div style=margin-top:10px><span class=pill>🔒 a scoped, revocable token · cookies never leave the TEE</span></div>
-    <div style=margin-top:16px><button id=go class=btn>Connect with OAuth3</button></div>
-    <div id=note class=note></div>
-    <div id=sk-share style=margin-top:16px></div>
-    <div id=sk-receipt></div>
-  </header>
-  <div id=feed></div>
-  <footer id=foot hidden>Rendered by a relying-party app from a scoped token.<br>OAuth3 holds the session; this app only ever sees the feed. The owner can revoke this link any time.</footer>
+
+<!-- SVG icon library (x.com stroke set) -->
+<svg width=0 height=0 style="position:absolute" aria-hidden=true>
+  <symbol id=i-reply viewBox="0 0 24 24"><path d="M1.751 10c0-4.42 3.584-8 8.005-8h4.366c4.49 0 8.129 3.64 8.129 8.13 0 2.96-1.607 5.68-4.196 7.11l-8.054 4.46v-3.69h-.067c-4.49.1-8.183-3.51-8.183-8.01zm8.005-6c-3.317 0-6.005 2.69-6.005 6 0 3.37 2.77 6.08 6.138 6.01l.351-.01h1.761v2.3l5.087-2.81c1.951-1.08 3.163-3.13 3.163-5.36 0-3.39-2.744-6.13-6.129-6.13H9.756z"/></symbol>
+  <symbol id=i-repost viewBox="0 0 24 24"><path d="M12 1.75c-.52 0-1.012.232-1.344.64L8.96 4.61c-.46.56-.39 1.39.17 1.85.56.46 1.39.38 1.84-.18l.36-.43v6.07H7.5c-.69 0-1.25.56-1.25 1.25s.56 1.25 1.25 1.25h9c.69 0 1.25-.56 1.25-1.25s-.56-1.25-1.25-1.25h-3.17V5.85l.36.43c.46.56 1.28.64 1.84.18.56-.46.63-1.29.17-1.85L13.34 2.39c-.33-.408-.82-.64-1.34-.64zm-7 11.5c-.69 0-1.25.56-1.25 1.25v3.5c0 .97.78 1.75 1.75 1.75h13c.97 0 1.75-.78 1.75-1.75v-3.5c0-.69-.56-1.25-1.25-1.25s-1.25.56-1.25 1.25v3.25H5.75v-3.25c0-.69-.56-1.25-1.25-1.25z"/></symbol>
+  <symbol id=i-like viewBox="0 0 24 24"><path d="M16.697 5.5c-1.222-.06-2.679.51-3.89 2.16l-.805 1.09-.806-1.09C9.984 6.01 8.526 5.44 7.304 5.5c-1.243.07-2.349.78-2.91 1.91-.982 1.97-.668 4.45.929 6.39l.04.04c1.515 1.78 3.514 3.48 5.938 4.86 2.423-1.38 4.422-3.08 5.938-4.86l.04-.04c1.597-1.94 1.91-4.42.929-6.39-.562-1.13-1.668-1.84-2.91-1.91z"/></symbol>
+  <symbol id=i-views viewBox="0 0 24 24"><path d="M8.75 5.5C8.75 4.81 8.19 4.25 7.5 4.25S6.25 4.81 6.25 5.5v12.75c0 .69.56 1.25 1.25 1.25s1.25-.56 1.25-1.25V5.5zm4 0c0-.69-.56-1.25-1.25-1.25s-1.25.56-1.25 1.25v9.75c0 .69.56 1.25 1.25 1.25s1.25-.56 1.25-1.25V5.5zm2.75-1.25c.69 0 1.25.56 1.25 1.25v7.25c0 .69-.56 1.25-1.25 1.25s-1.25-.56-1.25-1.25V5.5c0-.69.56-1.25 1.25-1.25zm-9.5 0c.69 0 1.25.56 1.25 1.25v3.75c0 .69-.56 1.25-1.25 1.25S5 10.94 5 10.25V6.5c0-.69.56-1.25 1.25-1.25z"/></symbol>
+  <symbol id=i-bookmark viewBox="0 0 24 24"><path d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.84l5.5-3.92 5.5 3.92V4.5c0-.28-.224-.5-.5-.5h-11z"/></symbol>
+  <symbol id=i-share viewBox="0 0 24 24"><path d="M12 2.59l5.7 5.7-1.41 1.42L13 6.41V16h-2V6.41l-3.3 3.3-1.41-1.42L12 2.59zM21 15l-.02 3.51c0 1.38-1.12 2.49-2.5 2.49H5.5C4.11 21 3 19.88 3 18.5V15h2v3.5c0 .28.22.5.5.5h12.98c.28 0 .5-.22.5-.5L19 15h2z"/></symbol>
+  <symbol id=i-home viewBox="0 0 24 24"><path d="M12 9c-1.105 0-2 .9-2 2s.895 2 2 2 2-.9 2-2-.895-2-2-2zM12 1.696L1 9.86V22.5h6.828v-7.5h8.344v7.5H23V9.86L12 1.696z"/></symbol>
+  <symbol id=i-search viewBox="0 0 24 24"><path d="M10.25 3.75c-3.59 0-6.5 2.91-6.5 6.5s2.91 6.5 6.5 6.5c1.795 0 3.419-.726 4.596-1.904 1.178-1.177 1.904-2.801 1.904-4.596 0-3.59-2.91-6.5-6.5-6.5zm-8.5 6.5c0-4.694 3.806-8.5 8.5-8.5s8.5 3.806 8.5 8.5c0 1.986-.682 3.815-1.824 5.262l4.781 4.781-1.414 1.414-4.781-4.781c-1.447 1.142-3.276 1.824-5.262 1.824-4.694 0-8.5-3.806-8.5-8.5z"/></symbol>
+  <symbol id=i-bell viewBox="0 0 24 24"><path d="M19.993 9.042C19.48 5.017 16.054 2 11.996 2s-7.49 3.021-7.999 7.051L2.866 18H7.1c.463 2.282 2.481 4 4.9 4s4.437-1.718 4.9-4h4.236l-1.143-8.958zM12 20c-1.306 0-2.417-.835-2.829-2h5.658c-.412 1.165-1.523 2-2.829 2zm-6.866-4l.847-6.698C6.364 6.272 8.941 4 11.996 4s5.627 2.268 6.013 5.295L18.864 16H5.134z"/></symbol>
+  <symbol id=i-mail viewBox="0 0 24 24"><path d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5c-.276 0-.5.224-.5.5v.511l8.5 5.94 8.5-5.94V5.5c0-.276-.224-.5-.5-.5h-15zm16 2.92l-8 5.59-8-5.59V18.5c0 .276.224.5.5.5h15c.276 0 .5-.224.5-.5V7.92z"/></symbol>
+  <symbol id=i-moon viewBox="0 0 24 24"><path d="M12 3.5c-4.694 0-8.5 3.806-8.5 8.5s3.806 8.5 8.5 8.5c.27 0 .534-.013.794-.038-1.282-1.18-2.084-2.863-2.084-4.732 0-3.575 2.9-6.475 6.475-6.475.962 0 1.873.21 2.69.586C20.682 6.547 16.738 3.5 12 3.5z"/></symbol>
+  <symbol id=i-sun viewBox="0 0 24 24"><path d="M12 18.5c-3.585 0-6.5-2.915-6.5-6.5S8.415 5.5 12 5.5s6.5 2.915 6.5 6.5-2.915 6.5-6.5 6.5zm0-2c2.485 0 4.5-2.015 4.5-4.5S14.485 7.5 12 7.5 7.5 9.515 7.5 12s2.015 4.5 4.5 4.5zM11 1h2v4h-2V1zm0 18h2v4h-2v-4zM3.515 4.929l1.414-1.414L7.05 5.636 5.636 7.05 3.515 4.929zM16.95 18.364l1.414-1.414 2.121 2.121-1.414 1.415-2.121-2.122zM2 11h4v2H2v-2zm16 0h4v2h-4v-2zM5.636 16.95l-2.121 2.121-1.414-1.414 2.121-2.121 1.414 1.414zM18.364 7.05L16.95 5.636l2.121-2.121 1.414 1.414-2.121 2.121z"/></symbol>
+</svg>
+
+<!-- ============ CONNECT / LANDING ============ -->
+<div class="connect" id="connect">
+  <div class="mark">𝕏</div>
+  <h1>Your timeline, reconstructed.</h1>
+  <p>Timeline Peek asks the OAuth3 wallet for a scoped <b>twitter</b> token and renders only the feed the TEE reads for you. Cookies never leave the pod — the app only ever sees the feed.</p>
+  <div class="chip">🔒 scoped, revocable token · cookies never leave the TEE</div>
+  <div class="btnrow">
+    <button id="go" class="primary">Connect with OAuth3</button>
+    <a class="linkbtn" href="?demo">▶ Preview with sample data</a>
+  </div>
+  <div id="note" class="note"></div>
 </div>
-<!-- share-kit:inline — canonical source: share-kit/share-kit.js (v0.1.0).
-     Re-run: share-kit/inline.sh timeline-peek — do not edit the block by hand. -->
-<script>
-/*
- * share-kit.js — one shared capability-share UI for the webhost-app suite.
- *
- * The apps on this pod are all one primitive — "share a scoped, revocable capability
- * over something that's mine, without handing over the credential" — but each was
- * expressing it differently (or not at all). share-kit is the small shared UI that makes
- * that shape visible and consistent, so learning one app teaches all of them.
- *
- * It exports THREE pieces (plus the observable ShareHandle that wires them together):
- *   1. ShareKit.shareAction(el, {label, onShare})       — the journey-labeled button
- *   2. ShareKit.capabilityReceipt(el, handle)            — link + scope sentence + revoke + status pill
- *   3. ShareKit.recipientBanner(el, handleOrOpts)        — top strip on a shared view, honest end-states
- *
- * DESIGN SYSTEM: share-kit is a *component* layer, not a token layer — exactly like the
- * pod's components.css. It CONSUMES the host app's pod design tokens (--ink1/--ink2/
- * --paper/--deep/--wash1/--wash2/--i1-text/--i2-text/--warn/--warn-wash/--block/
- * --block-text/--rule/--faint/--card/--cond/--mono/--sans/--off), so it inherits each
- * app's own inking (watermelon classic, grape-acid webhost, …) and light/dark register.
- * Your app must already define them (inline tokens.css / your :root block) — see README.
- * All styles are scoped under `.sk` and every class is `.sk-*`, so the kit never collides
- * with a host app's own .btn / .pill / .card classes.
- *
- * No dependencies, no build, no network. Adopt by inlining this one file into your app's
- * index.html (run share-kit/inline.sh <app>).
- */
-(function () {
-  "use strict";
-  var VERSION = "0.1.0";
 
-  var CSS = [
-/* base — consumes host tokens; scoped so it never touches host styles */
-".sk{font:15px/1.6 var(--sans);color:var(--text)}",
-".sk *{box-sizing:border-box}",
-".sk :focus-visible{outline:2px solid var(--ink2);outline-offset:2px}",
-".sk .sk-err{font:13px/1.5 var(--mono);color:var(--i2-text);margin-top:8px;min-height:1px}",
-/* buttons — hard-edged, two-ink shadow; same grammar as components.css .btn */
-".sk .sk-btn{display:inline-flex;align-items:center;gap:8px;font:800 14px var(--cond);text-transform:uppercase;letter-spacing:.12em;border:0;padding:12px 22px;cursor:pointer;background:var(--ink1);color:#fff;box-shadow:3px 3px 0 var(--ink2);border-radius:0}",
-".sk .sk-btn:disabled{opacity:.5;cursor:default}",
-".sk .sk-btn.danger{background:var(--ink2);color:var(--deep);box-shadow:3px 3px 0 var(--ink1)}",
-".sk .sk-btn.quiet{background:transparent;color:var(--text);border:1px solid var(--rule);box-shadow:none;font:600 13px var(--sans);letter-spacing:0;text-transform:none;padding:9px 14px}",
-/* status pills — mono; ok/warn/bad (warn is the only third ink) */
-".sk .sk-pill{display:inline-flex;align-items:center;gap:6px;font:500 12px/1 var(--mono);padding:4px 10px;border-radius:999px;text-transform:capitalize}",
-".sk .sk-pill.ok{background:var(--wash1);color:var(--i1-text)}",
-".sk .sk-pill.warn{background:var(--warn-wash);color:var(--warn)}",
-".sk .sk-pill.bad{background:var(--wash2);color:var(--i2-text)}",
-/* capability receipt — white card with an ink1 frame, like components.css .card */
-".sk .sk-card{background:var(--card);border:2.5px solid var(--ink1);padding:16px 18px}",
-".sk .sk-receipt-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}",
-".sk .sk-title{font:800 16px var(--cond);text-transform:uppercase;letter-spacing:.08em}",
-".sk .sk-scope{font:13px/1.5 var(--mono);color:var(--text);margin:10px 0}",
-".sk .sk-link-row{display:flex;gap:8px;align-items:stretch}",
-".sk .sk-link{flex:1;min-width:0;font:12px var(--mono);padding:8px 10px;border:1.5px solid var(--rule);background:var(--paper);color:var(--text);border-radius:0}",
-".sk .sk-acts{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}",
-/* recipient banner — full-width top strip; wash ground + ink1 rule, bad/warn variants */
-".sk.sk-banner{display:block;background:var(--wash1);border-bottom:2.5px solid var(--ink1);padding:10px 16px;font:13px/1.5 var(--mono);color:var(--text)}",
-".sk.sk-banner.bad{background:var(--wash2);border-bottom-color:var(--ink2)}",
-".sk.sk-banner.warn{background:var(--warn-wash);border-bottom-color:var(--warn)}",
-".sk .sk-banner-inner{max-width:920px;margin:0 auto}",
-".sk .sk-cap{font-weight:700;color:var(--i1-text)}",
-".sk .sk-sep{color:var(--faint)}"
-  ].join("\n");
-
-  // inject <style id=share-kit-css> once. root defaults to document.head.
-  function init(root) {
-    var r = root || document.head;
-    if (!r || r.querySelector("#share-kit-css")) return;
-    var s = document.createElement("style");
-    s.id = "share-kit-css";
-    s.textContent = CSS;
-    r.appendChild(s);
-  }
-
-  function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
-    });
-  }
-  function el(tag, cls, txt) {
-    var e = document.createElement(tag);
-    if (cls) e.className = cls;
-    if (txt != null) e.textContent = txt;
-    return e;
-  }
-
-  /*
-   * ShareHandle — the live, observable state of one shared capability.
-   *
-   * The app creates a handle after it mints a token; BOTH the owner-side receipt and the
-   * recipient-side banner subscribe to it, so an owner revoking flips the recipient view
-   * to the honest revoked state on its next render. Fields:
-   *   link       — the ?token= (or ?code=) URL the recipient opens
-   *   scope      — plain-English scope sentence (MUST be true; see README)
-   *   owner      — who shared ("you" / a handle)
-   *   thing      — what was shared ("X feed" / "one calendar event" / "live meeting")
-   *   capability — recipient capability phrase ("read-only" / "edit this event" / …)
-   *   status     — "active" | "revoked" | "expired"
-   *   onRevoke   — async () => {} that performs the REAL revoke server-side and resolves
-   *                only once confirmed. If it throws, the status is NOT flipped (the
-   *                receipt re-enables and surfaces the real error — nothing masked).
-   */
-  function handle(opts) {
-    opts = opts || {};
-    var h = {
-      version: VERSION,
-      link: opts.link || "",
-      scope: opts.scope || "",
-      owner: opts.owner || "the owner",
-      thing: opts.thing || "view",
-      capability: opts.capability || "read-only",
-      status: opts.status || "active",
-      onRevoke: typeof opts.onRevoke === "function" ? opts.onRevoke : null,
-      _subs: new Set(),
-      subscribe: function (fn) { this._subs.add(fn); fn(this); return this; },
-      set: function (patch) { Object.assign(this, patch); this._subs.forEach(function (f) { f(h); }); return this; },
-      revoke: async function () {
-        if (this.status !== "active") return;
-        if (this.onRevoke) await this.onRevoke(); // may throw — propagate, do NOT flip
-        this.set({ status: "revoked" });
-      }
-    };
-    return h;
-  }
-
-  /*
-   * 1) SHARE ACTION — the primary button, labeled by the JOURNEY ("Share my feed →"),
-   *    never by the mechanism ("mint token"). Renders into `el`.
-   *    opts.label   — journey label
-   *    opts.onShare — async () => ShareHandle ; mint the capability however your app does
-   *    opts.onShared(handle) — called once minted (typically render the receipt here)
-   *    While minting the button is disabled; a mint failure is shown inline (no silent stall).
-   */
-  function shareAction(el, opts) {
-    init(); opts = opts || {};
-    var host = typeof el === "string" ? document.getElementById(el) : el;
-    host.className = "sk"; host.innerHTML = "";
-    var btn = el2(host, "button", "sk-btn");
-    btn.type = "button"; btn.textContent = opts.label || "Share →";
-    var err = el2(host, "div", "sk-err");
-    btn.addEventListener("click", async function () {
-      btn.disabled = true; var prev = btn.textContent; btn.textContent = "Sharing…"; err.textContent = "";
-      try {
-        var h = await opts.onShare();
-        btn.textContent = "Shared ✓";
-        if (typeof opts.onShared === "function") opts.onShared(h);
-      } catch (e) {
-        btn.disabled = false; btn.textContent = prev;
-        err.textContent = String((e && e.message) || e);
-      }
-    });
-    return { button: btn };
-  }
-  function el2(parent, tag, cls) { var e = el(tag, cls); parent.appendChild(e); return e; }
-
-  /*
-   * 2) CAPABILITY RECEIPT — link + plain-English scope sentence + status pill + Revoke.
-   *    Renders into `el` from a ShareHandle and re-renders on any handle change, so a
-   *    successful revoke flips the pill to "revoked" and disables Revoke.
-   */
-  function capabilityReceipt(host, h) {
-    init();
-    host = typeof host === "string" ? document.getElementById(host) : host;
-    host.className = "sk";
-    h.subscribe(render);
-    function render(hh) {
-      var st = hh.status;
-      var pillCls = st === "active" ? "sk-pill ok" : st === "expired" ? "sk-pill warn" : "sk-pill bad";
-      host.innerHTML =
-        '<div class="sk-card">' +
-          '<div class="sk-receipt-head">' +
-            '<b class="sk-title">Shared link</b>' +
-            '<span class="' + pillCls + '">' + esc(st) + '</span>' +
-          '</div>' +
-          '<div class="sk-scope">' + esc(hh.scope) + '</div>' +
-          '<div class="sk-link-row">' +
-            '<input class="sk-link" readonly value="' + esc(hh.link) + '">' +
-            '<button class="sk-btn quiet" type="button" data-act="copy">copy</button>' +
-          '</div>' +
-          '<div class="sk-acts">' +
-            '<button class="sk-btn danger" type="button" data-act="revoke"' + (st === "active" ? "" : " disabled") + '>' +
-              (st === "active" ? "Revoke" : "Revoked") + '</button>' +
-          '</div>' +
-          '<div class="sk-err" data-role="err"></div>' +
-        '</div>';
-      var copyBtn = host.querySelector('[data-act="copy"]');
-      var revokeBtn = host.querySelector('[data-act="revoke"]');
-      var errEl = host.querySelector('[data-role="err"]');
-      copyBtn.addEventListener("click", function () {
-        var inp = host.querySelector(".sk-link");
-        inp.select(); inp.setSelectionRange(0, 99999);
-        try {
-          navigator.clipboard.writeText(inp.value);
-          copyBtn.textContent = "copied";
-          setTimeout(function () { copyBtn.textContent = "copy"; }, 1200);
-        } catch (_) { try { document.execCommand("copy"); } catch (_) {} }
-      });
-      revokeBtn.addEventListener("click", async function () {
-        revokeBtn.disabled = true; var prev = revokeBtn.textContent; revokeBtn.textContent = "Revoking…"; errEl.textContent = "";
-        try { await h.revoke(); }
-        catch (e) { revokeBtn.disabled = false; revokeBtn.textContent = prev; errEl.textContent = String((e && e.message) || e); }
-      });
-    }
-    return h;
-  }
-
-  /*
-   * 3) RECIPIENT BANNER — top strip on a shared view.
-   *    "You're viewing <owner>'s shared <thing> · <capability>", and an HONEST end-state
-   *    when revoked / expired / gone — never a silent stall (anti-hollow-green, applied to UX).
-   *    Pass a ShareHandle to stay in sync with an owner-side revoke, or a static opts
-   *    object ({owner, thing, capability, status}) to render once.
-   */
-  function recipientBanner(host, h) {
-    init();
-    host = typeof host === "string" ? document.getElementById(host) : host;
-    function render(hh) {
-      var state = hh.status || "active";
-      var cap = hh.capability || "read-only";
-      var cls = "sk sk-banner";
-      var body;
-      if (state === "active") {
-        body = "You're viewing <b>" + esc(hh.owner) + "</b>'s shared " + esc(hh.thing) +
-               ' <span class="sk-sep">·</span> <span class="sk-cap">' + esc(cap) + "</span>";
-      } else if (state === "revoked") {
-        cls += " bad";
-        body = "This share was <b>revoked by the owner</b>. The link no longer works.";
-      } else if (state === "expired") {
-        cls += " warn";
-        body = "This share has <b>expired</b>. Ask the owner for a fresh link.";
-      } else { // "gone" or anything unknown — honest, doesn't over-claim a specific reason
-        cls += " bad";
-        body = "This share is <b>no longer available</b> — it was revoked or has expired.";
-      }
-      host.className = cls;
-      host.innerHTML = '<div class="sk-banner-inner">' + body + "</div>";
-    }
-    if (h && typeof h.subscribe === "function") { h.subscribe(render); return h; }
-    render(Object.assign({ capability: "read-only", status: "active" }, h || {}));
-    return h || {};
-  }
-
-  window.ShareKit = {
-    VERSION: VERSION,
-    CSS: CSS,
-    init: init,
-    handle: handle,
-    shareAction: shareAction,
-    capabilityReceipt: capabilityReceipt,
-    recipientBanner: recipientBanner,
-    esc: esc
-  };
-})();
-
-</script>
-<!-- /share-kit:inline -->
+<!-- ============ FEED APP (hidden until connected/shared/demo) ============ -->
+<div class="app hidden" id="app">
+  <aside class="rail" aria-hidden=true>
+    <div class="logo">𝕏</div>
+    <div class="ritem active"><svg class=ic><use href=#i-home></use></svg><span>Home</span></div>
+    <div class="ritem"><svg class=ic><use href=#i-search></use></svg><span>Explore</span></div>
+    <div class="ritem"><svg class=ic><use href=#i-bell></use></svg><span>Notifs</span></div>
+    <div class="ritem"><svg class=ic><use href=#i-mail></use></svg><span>Messages</span></div>
+    <button class="post">Post</button>
+  </aside>
+  <main class="col">
+    <header class="topbar">
+      <div class="branddot">𝕏</div>
+      <nav class="tabs">
+        <button class="tab active" data-tab=foryou>For you</button>
+        <button class="tab" data-tab=following>Following</button>
+      </nav>
+      <button class="iconbtn" id="theme" title="Toggle theme"><svg class=ic><use href=#i-moon></use></svg></button>
+    </header>
+    <div class="compose">
+      <div class="avatar av-def">𝕏</div>
+      <div class="cph">What is happening?!</div>
+      <button class="postbtn" disabled>Post</button>
+    </div>
+    <div id="feed"></div>
+    <div class="endpad" id="endpad"></div>
+  </main>
+</div>
 
 <script>
-ShareKit.init();
 const NODE = location.origin + "/oauth3";
 const $ = (id) => document.getElementById(id);
-const esc = (s) => (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const card = (it) => {
-  const s = (it.stats||[]).concat(["","","",""]);
-  const tx = esc(it.text) || '<span class=media>🖼 media</span>';
-  return `<article class=t><div class=av>${esc((it.name||"?")[0])}</div><div class=body>
-    <div class=hd><span class=nm>${esc(it.name)}</span><span class=hn>${esc(it.handle)}</span>
-    <span class=dot>·</span><span class=tm>${esc(it.time)}</span></div>
-    <div class=tx>${tx}</div>
-    <div class=st><span>💬 ${esc(s[0])}</span><span>🔁 ${esc(s[1])}</span><span>♥ ${esc(s[2])}</span><span>📊 ${esc(s[3])}</span></div>
-    </div></article>`;
-};
-async function loadFeed(token) {
+const params = new URLSearchParams(location.search);
+const DEMO = params.has("demo");
+
+// ---- helpers ---------------------------------------------------------------
+const esc = (s) => (s==null?"":String(s)).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const initial = (s) => (((s||"").trim()[0]) || "?").toUpperCase();
+
+// style tweet entities (mentions/hashtags/cashtags/urls) like x.com
+function fmtEntities(text){
+  if(!text) return "";
+  return String(text).split(/(\s+)/).map(tok=>{
+    if(tok==="" || /^\s+$/.test(tok)) return esc(tok);
+    if(/^https?:\/\//i.test(tok)){
+      const m = tok.match(/^(https?:\/\/[^\s]*?)([.,;:!?)\]]*)$/i);
+      return m ? `<span class="ent">${esc(m[1])}</span>${esc(m[2])}` : `<span class="ent">${esc(tok)}</span>`;
+    }
+    const t = tok.match(/^([@#$])(\w+)([\W_]+)$/);
+    if(t && (t[1]==="$" ? t[2].length<=6 : true))
+      return `<span class="ent">${esc(t[1]+t[2])}</span>${esc(t[3])}`;
+    if(/^[@#]\w+$/.test(tok) || /^\$[A-Za-z]{1,6}$/.test(tok))
+      return `<span class="ent">${esc(tok)}</span>`;
+    return esc(tok);
+  }).join("");
+}
+
+const BADGE = `<span class="badge" title="Verified"><svg viewBox="0 0 22 22"><path d="M20.396 11c-.018-.646-.215-1.275-.57-1.816-.354-.54-.852-.972-1.438-1.246.223-.607.27-1.264.14-1.897-.131-.634-.437-1.218-.882-1.687-.47-.445-1.053-.75-1.687-.882-.633-.13-1.29-.083-1.897.14-.273-.587-.704-1.086-1.245-1.44S11.647 1.62 11 1.604c-.646.017-1.273.213-1.813.568s-.969.854-1.24 1.44c-.608-.223-1.267-.272-1.902-.14-.635.13-1.22.436-1.69.882-.445.47-.749 1.055-.878 1.688-.13.633-.08 1.29.144 1.896-.587.274-1.087.705-1.443 1.245-.356.54-.555 1.17-.574 1.817.02.647.218 1.276.574 1.817.356.54.856.972 1.443 1.245-.224.606-.274 1.263-.144 1.896.13.634.433 1.218.877 1.688.47.443 1.054.747 1.687.878.633.132 1.29.084 1.897-.136.274.586.705 1.084 1.246 1.439.54.354 1.17.551 1.816.569.647-.016 1.276-.213 1.817-.567s.972-.854 1.245-1.44c.604.239 1.266.296 1.903.164.636-.132 1.22-.447 1.68-.907.46-.46.776-1.044.908-1.681s.075-1.299-.165-1.903c.586-.274 1.084-.705 1.439-1.246.354-.54.551-1.17.569-1.816zM9.662 14.85l-3.429-3.428 1.293-1.302 2.072 2.072 4.4-4.794 1.347 1.246z"/></svg></span>`;
+
+function avatarHTML(it){
+  const fb = `<div class="avatar av-def">${esc(initial(it.name||it.handle))}</div>`;
+  if(!it.avatar) return fb;
+  return `${fb}<img class="avatar av-img" src="${esc(it.avatar)}" alt="" loading="lazy" onerror="this.classList.add('dead')">`;
+}
+
+function mediaHTML(it){
+  const m = it.media;
+  if(!m || !m.length) return "";
+  const cell = (mi) => {
+    const url = esc(mi.url || mi.poster || "");
+    const play = mi.type === "video"
+      ? `<div class="play"><svg viewBox="0 0 24 24"><circle cx=12 cy=12 r=24 fill="rgba(0,0,0,.35)"/><path d="M8 5v14l11-7z" fill="#fff"/></svg></div>` : "";
+    return `<div class="mcell"><img src="${url}" alt="${esc(mi.alt||"")}" loading="lazy">${play}</div>`;
+  };
+  const n = m.length;
+  if(n === 1) return `<div class="media m1">${cell(m[0])}</div>`;
+  if(n === 2) return `<div class="media m2">${m.map(cell).join("")}</div>`;
+  if(n === 3) return `<div class="media m3">${cell(m[0])}<div class="mcol2">${m.slice(1).map(cell).join("")}</div></div>`;
+  return `<div class="media m4">${m.slice(0,4).map(cell).join("")}</div>`;
+}
+
+function actsHTML(it){
+  const s = (it.stats || []).concat(["","","",""]);
+  const cell = (id, count, cls) =>
+    `<div class="act ${cls}"><svg><use href="#i-${id}"></use></svg><span class="cnt">${esc(count||"")}</span></div>`;
+  return cell("reply",s[0],"a-reply") + cell("repost",s[1],"a-repost") +
+         cell("like",s[2],"a-like") + cell("views",s[3],"a-views") +
+         `<div class="act-end"><svg><use href="#i-bookmark"></use></svg><svg><use href="#i-share"></use></svg></div>`;
+}
+
+function card(it){
+  const txt = it.text ? `<div class="ttxt">${fmtEntities(it.text)}</div>` : "";
+  return `<article class="tweet">
+    <div class="avwrap">${avatarHTML(it)}</div>
+    <div class="tcol">
+      <div class="thd">
+        <span class="name">${esc(it.name)}</span>${it.verified ? BADGE : ""}
+        <span class="handle">${esc(it.handle)}</span><span class="time">${esc(it.time||"")}</span>
+      </div>
+      ${txt}${mediaHTML(it)}
+      <div class="acts">${actsHTML(it)}</div>
+    </div>
+  </article>`;
+}
+
+// ---- render feed -----------------------------------------------------------
+function renderFeed(items, who, demoLabel){
+  $("connect").classList.add("hidden");
+  $("app").classList.remove("hidden");
+  document.title = (who ? "@" + who + " / " : "") + "Home / Timeline Peek";
+  const feed = $("feed");
+  feed.innerHTML = items.length
+    ? items.map(card).join("")
+    : `<div class="empty">No posts in this feed yet.</div>`;
+  $("endpad").textContent = demoLabel
+    ? "Demo · sample data. Connect with OAuth3 to see your real timeline."
+    : `Rendered by a relying-party app from a scoped token. ${items.length} posts.`;
+}
+
+async function loadFeed(token){
   const r = await fetch(NODE + "/api/twitter/feed", { headers: { Authorization: "Bearer " + token } });
   const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body.error || ("feed " + r.status));
-  const items = body.items || [];
-  $("note").textContent = ""; $("foot").hidden = false;
-  $("sub").textContent = "For You · reconstructed, " + items.length + " posts";
-  $("feed").innerHTML = items.map(card).join("");
-}
-// --- owner mode: get a scoped twitter token from the OAuth3 node ---
-// With the extension: window.oauth3.connect() carries the whole flow (copies the
-// jar, approves, hands back a token). Without the extension (e.g. on a phone) we
-// self-provision an Ed25519 did:key wallet in this browser, sign into the node via
-// POST /api/login (the same "Continue in this browser" path /login uses), then run
-// the connect handshake and approve it with that session. Either way this app only
-// ever sees the scoped token; cookies stay sealed in the TEE.
-const DK = "oauth3_didkey", SK = "oauth3_session";
-const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-const b64 = (u) => btoa(String.fromCharCode(...u));
-const b64uDec = (s) => { s = s.replace(/-/g, "+").replace(/_/g, "/"); return Uint8Array.from(atob(s + "=".repeat((4 - s.length % 4) % 4)), c => c.charCodeAt(0)); };
-const b58e = (b) => { const d = [0]; for (const x of b) { let c = x; for (let j = 0; j < d.length; j++) { c += d[j] << 8; d[j] = c % 58; c = (c / 58) | 0; } while (c) { d.push(c % 58); c = (c / 58) | 0; } } let s = ""; for (const x of b) { if (x === 0) s += "1"; else break; } for (let k = d.length - 1; k >= 0; k--) s += B58[d[k]]; return s; };
-
-// Ed25519 keypair kept in localStorage; the public side becomes a did:key. The
-// private key never leaves the browser — the server only ever sees DID + signature.
-async function walletKey() {
-  let jwk = JSON.parse(localStorage.getItem(DK) || "null");
-  if (!jwk) {
-    const kp = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
-    jwk = await crypto.subtle.exportKey("jwk", kp.privateKey);
-    localStorage.setItem(DK, JSON.stringify(jwk));
-  }
-  const priv = await crypto.subtle.importKey("jwk", jwk, { name: "Ed25519" }, false, ["sign"]);
-  const did = "did:key:z" + b58e(Uint8Array.from([0xed, 0x01, ...b64uDec(jwk.x)]));
-  return { priv, did };
+  if(!r.ok) throw new Error(body.error || ("feed " + r.status));
+  renderFeed(body.items || [], body.who || "");
 }
 
-// Sign into the node with the self-provisioned wallet. Reuses a still-valid session
-// if one is already in localStorage; otherwise signs a fresh challenge. Throws the
-// real error on any failure — nothing is masked.
-async function walletSignIn() {
-  const stored = localStorage.getItem(SK);
-  if (stored) {
-    try {
-      const me = await (await fetch(NODE + "/api/me", { headers: { Authorization: "Bearer " + stored } })).json();
-      if (me && me.signedIn) return stored;
-    } catch (_) { /* session invalid/unreachable — fall through and re-sign-in */ }
-  }
-  const { priv, did } = await walletKey();
-  const { challenge } = await (await fetch(NODE + "/api/login/challenge")).json();
-  const sig = b64(new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, priv, new TextEncoder().encode(challenge))));
-  const r = await fetch(NODE + "/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ did, challenge, signature: sig }) });
-  const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body.error || ("login " + r.status));
-  localStorage.setItem(SK, body.session);
-  return body.session;
-}
+// ---- sample data for demo mode --------------------------------------------
+const SAMPLE = [
+  { name:"NASA", handle:"@NASA", verified:true, time:"2h",
+    text:"New imagery from the deepest reaches of space. The cosmos never stops surprising us 🌌 https://go.nasa.gov/3x",
+    stats:["2.4K","18.6K","156.2K","9.1M"],
+    avatar:"https://images.unsplash.com/photo-1614728263952-84ea256f9679?w=80&h=80&fit=crop",
+    media:[{type:"image", url:"https://images.unsplash.com/photo-1543722530-d2c3201371e7?w=900&h=600&fit=crop", alt:"galaxy"}] },
+  { name:"Ada Lovelace", handle:"@alovelace", verified:true, time:"38m",
+    text:"The analytical engine has no pretensions to originate anything. It can do whatever we know how to order it to perform. #computing $IBM",
+    stats:["142","1,204","9,883","412K"],
+    avatar:"https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=80&h=80&fit=crop",
+    media:[
+      {type:"image", url:"https://images.unsplash.com/photo-1518770660439-4636190af475?w=600&h=600&fit=crop"},
+      {type:"image", url:"https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=600&h=600&fit=crop"}
+    ] },
+  { name:"The Daily", handle:"@daily", verified:true, time:"1h",
+    text:"Tonight's briefing: markets close at record highs, and a deep dive into the new @federalreserve rate decision. Tap to listen ▶️",
+    stats:["89","332","1,901","228K"],
+    avatar:"https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=80&h=80&fit=crop",
+    media:[
+      {type:"image", url:"https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=500&h=500&fit=crop"},
+      {type:"image", url:"https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=500&h=500&fit=crop"},
+      {type:"image", url:"https://images.unsplash.com/photo-1590283603385-17ffb3a7f29f?w=500&h=500&fit=crop"}
+    ] },
+  { name:"Mountains", handle:"@mountainscape", time:"3h",
+    text:"Four peaks, one sunrise. Which one are you climbing this weekend? 🏔️",
+    stats:["57","640","5,031","189K"],
+    avatar:"https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=80&h=80&fit=crop",
+    media:[
+      {type:"image", url:"https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=500&h=500&fit=crop"},
+      {type:"image", url:"https://images.unsplash.com/photo-1501785888041-af3ef285b470?w=500&h=500&fit=crop"},
+      {type:"image", url:"https://images.unsplash.com/photo-1519681393784-d120267933ba?w=500&h=500&fit=crop"},
+      {type:"image", url:"https://images.unsplash.com/photo-1454496522488-7a8e488e8606?w=500&h=500&fit=crop"}
+    ] },
+  { name:"Web Dev Daily", handle:"@webdevdaily", verified:true, time:"5h",
+    text:"Reminder: a single network round-trip costs more than your entire render tree. Ship less JavaScript. 🧵",
+    stats:["421","2,113","11,742","1.2M"] },
+  { name:"Coffee Lab", handle:"@coffeelab", time:"20m",
+    text:"Today's roast is a bright Ethiopian Yirgacheffe — notes of blueberry and jasmine. Come say hi ☕️",
+    stats:["12","48","302","8,221"],
+    avatar:"https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=80&h=80&fit=crop",
+    media:[{type:"image", url:"https://images.unsplash.com/photo-1442512595331-e89e73853f31?w=900&h=506&fit=crop"}] }
+];
 
-// connect handshake without the extension: request → approve with the wallet session
-// → poll for the scoped token. The user already consented by clicking Connect, so the
-// freshly-minted wallet session approves the grant on its own subject. Surfaces the
-// real error at every step.
-async function connectViaWallet() {
-  const session = await walletSignIn();
-  const cr = await fetch(NODE + "/api/connect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plugin: "twitter", app: "timeline-peek" }) });
-  const c = await cr.json().catch(() => ({}));
-  if (!cr.ok) throw new Error(c.error || ("connect " + cr.status));
-  const ar = await fetch(NODE + "/api/connect/" + c.requestId + "/approve", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + session }, body: "{}" });
-  if (!ar.ok) { const e = await ar.json().catch(() => ({})); throw new Error(e.error || ("approve " + ar.status)); }
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    const s = await (await fetch(NODE + "/api/connect/" + c.requestId)).json().catch(() => ({}));
-    if (s.status === "approved" && s.token) return s.token;
-    if (s.status === "denied") throw new Error("connect denied by user");
-    await new Promise(r => setTimeout(r, 1000));
-  }
-  throw new Error("connect timed out");
-}
+// ---- theme toggle ----------------------------------------------------------
+document.documentElement.dataset.theme = "dark";
+$("theme").addEventListener("click", () => {
+  const cur = document.documentElement.dataset.theme;
+  const next = cur === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  $("theme").innerHTML = next === "dark"
+    ? `<svg class=ic><use href=#i-moon></use></svg>`
+    : `<svg class=ic><use href=#i-sun></use></svg>`;
+});
 
-let ownerToken = null;      // scoped twitter token after connecting (owner mode)
-let walletSession = null;   // wallet session (self-provision path) — used to revoke a share
+// ---- tabs (cosmetic: same single timeline) ---------------------------------
+document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+}));
 
-// --- stored share (localStorage) so the receipt survives a refresh ---
-// timeline-peek's share is just this page with ?token=<ownerToken>; the receipt (link,
-// copy, Revoke) keys off the token alone. Persisting it lets the receipt re-render on
-// load with no further intervention — no re-Connect, no re-Share — mirroring
-// calendar-share's stored-share pattern. Cleared on a successful revoke: share-kit only
-// flips the pill to "revoked" once onRevoke resolves, so a failed DELETE leaves the
-// store (and the receipt) intact and surfaces the real error — nothing masked.
-const STORE = "timeline_peek_share";
-function readShares() { try { return JSON.parse(localStorage.getItem(STORE) || "[]"); } catch { return []; } }
-function storeShare(token) {
-  const all = readShares().filter((t) => t !== token);
-  all.unshift(token);
-  localStorage.setItem(STORE, JSON.stringify(all));
-}
-function forgetShare(token) {
-  localStorage.setItem(STORE, JSON.stringify(readShares().filter((t) => t !== token)));
-}
-function shareLink(token) {
-  return location.origin + location.pathname + "?token=" + encodeURIComponent(token);
-}
-function shareHandle(token) {
-  return ShareKit.handle({
-    link: shareLink(token),
-    scope: "read-only · your X For-You feed · nothing else",
-    owner: "you", thing: "X feed", capability: "read-only",
-    onRevoke: async () => { await revokeToken(token); forgetShare(token); },
-  });
-}
-function appendReceipt(h) {
-  const box = $("sk-receipt");
-  box.hidden = false;
-  const host = document.createElement("div");
-  host.style.marginTop = "12px";
-  box.appendChild(host);
-  ShareKit.capabilityReceipt(host, h);
-}
-function restoreShares() {
-  readShares().forEach((t) => appendReceipt(shareHandle(t)));
-}
-
-const shareToken = new URLSearchParams(location.search).get("token");
-if (shareToken) {
-  // Public share: no wallet needed, the token is in the link. Show the recipient banner
-  // up top; if the feed rejects the token, flip the banner to the honest end-state.
-  $("go").hidden = true; $("sk-share").hidden = true; $("sk-receipt").hidden = true;
-  const banner = ShareKit.handle({ owner: "the owner", thing: "X feed", capability: "read-only", status: "active" });
-  ShareKit.recipientBanner($("sk-banner"), banner);
+// ---- entry: pick a mode ----------------------------------------------------
+const shareToken = params.get("token");
+if(DEMO){
+  renderFeed(SAMPLE, "you", true);
+} else if(shareToken){
   $("note").textContent = "Loading shared feed…";
-  loadFeed(shareToken).catch(e => {
-    $("note").className = "note err"; $("note").textContent = String(e.message || e);
-    // honest end-state: a token rejection means the share is revoked/expired/gone.
-    if (/401|403|revok|expire|invalid|unauthor/i.test(String(e.message || e))) banner.set({ status: "gone" });
-    // other errors (network / 5xx): leave the banner active — the share may still be valid.
-  });
+  loadFeed(shareToken).catch(e => { const n=$("note"); n.className="note err"; n.textContent = String(e.message||e); });
 } else {
-  restoreShares(); // re-render any share receipt minted before this refresh — no re-click
-  if (!window.oauth3) {
-    // No extension (mobile / clean profile): Connect will self-provision a wallet here.
-    $("note").className = "note";
-    $("note").textContent = "No OAuth3 extension detected — Connect will sign you in with a wallet kept in this browser.";
-  }
   $("go").addEventListener("click", async () => {
-    $("note").className = "note"; $("note").textContent = "";
-    const viaExt = !!window.oauth3;
-    $("go").disabled = true;
-    $("note").textContent = viaExt ? "Asking your wallet for a scoped token…" : "Self-provisioning a wallet in this browser…";
-    try {
-      let token;
-      if (viaExt) {
-        token = await window.oauth3.connect({ plugin: "twitter", app: "timeline-peek", node: NODE });
-        // The wallet keeps its node session in the extension, not the page. Borrow it via
-        // signIn (same-origin as the node here, so the wallet allows it) so a share can be
-        // revoked — without it DELETE /api/tokens/:token 401s and the receipt pill never
-        // flips to Revoked. Best-effort: a failure leaves walletSession null and revoke then
-        // surfaces the real 401 (nothing masked); the share itself only needs the scoped token.
-        walletSession = await window.oauth3.signIn({ node: NODE }).then(r => r && r.session).catch(() => null);
-      } else {
-        walletSession = await walletSignIn();   // capture so a share can be revoked later
-        token = await connectViaWallet();
-      }
-      ownerToken = token;
-      $("go").hidden = true; // connected — Connect is replaced by Share
-      // Minting a share only needs the scoped token, not a successful feed read, so
-      // render the panel BEFORE loadFeed. A feed-read failure (e.g. the browser-SPI
-      // /navigate 401) must not hide Share — the token is still valid and shareable.
-      renderSharePanel();
-      $("note").textContent = "Reading your feed with the scoped token…";
-      await loadFeed(token).catch(e => {
-        $("note").className = "note err";
-        $("note").textContent = "Couldn't read your feed (" + String(e.message || e) + "), but your scoped token is valid — share it below.";
-      });
-    } catch (e) { $("note").className = "note err"; $("note").textContent = String(e.message || e); $("go").disabled = false; }
+    const n = $("note"); n.className="note"; n.textContent="";
+    if(!window.oauth3){ n.className="note err"; n.textContent="No OAuth3 wallet found — install the oauth3 extension and reload."; return; }
+    $("go").disabled = true; n.textContent = "Asking your wallet for a scoped token…";
+    try{
+      const token = await window.oauth3.connect({ plugin:"twitter", app:"timeline-peek", node:NODE });
+      n.textContent = "Reading your feed with the scoped token…";
+      await loadFeed(token);
+    }catch(e){ n.className="note err"; n.textContent = String(e.message||e); $("go").disabled=false; }
   });
-}
-
-// --- share-kit wiring (owner mode) ---
-// After connecting, the owner can share their feed: the link is just this page with the
-// scoped token in ?token=. The receipt carries a TRUE scope sentence + a Revoke that
-// DELETEs the token at the OAuth3 node. share-kit only flips the pill to "revoked" once
-// that resolves — nothing masked.
-function renderSharePanel() {
-  if (!window.ShareKit || !ownerToken) return;
-  ShareKit.shareAction($("sk-share"), {
-    label: "Share my feed →",
-    async onShare() {
-      storeShare(ownerToken);           // persist so the receipt survives a refresh
-      return shareHandle(ownerToken);
-    },
-    onShared(h) { appendReceipt(h); $("sk-share").hidden = true; }
-  });
-}
-
-// DELETE /api/tokens/:token — allowed for the owner secret or any web session. Both
-// paths now carry walletSession: the wallet path self-provisions it; the extension path
-// borrows the wallet's node session via window.oauth3.signIn (same-origin). If it is
-// absent, the call 401s and share-kit surfaces the real error, leaving the pill active.
-async function revokeToken(t) {
-  const headers = { "Content-Type": "application/json" };
-  if (walletSession) headers.Authorization = "Bearer " + walletSession;
-  const r = await fetch(NODE + "/api/tokens/" + encodeURIComponent(t), { method: "DELETE", headers });
-  const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body.error || ("revoke " + r.status));
 }
 </script>
