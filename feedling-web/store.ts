@@ -17,6 +17,7 @@ let lastActivityAt: number | null = null;
 let consecutiveActivePolls = 0;
 let cumulativeActivePolls = 0;
 let confirmedActivityFired = false;
+let watchDetectedFired = false;
 
 let dataDir = "";
 let subsFile = "";
@@ -134,6 +135,7 @@ export function updateSession(hasActivity: boolean, now = Date.now()): SessionUp
       consecutiveActivePolls = 0;
       cumulativeActivePolls = 0;
       confirmedActivityFired = false;
+      watchDetectedFired = false;
       newSession = true;
     }
     cumulativeActivePolls += 1;
@@ -165,6 +167,17 @@ export function checkConfirmedActivity(isActive: boolean, threshold = 4): boolea
 
 export function consecutivePolls(): number { return consecutiveActivePolls; }
 export function cumulativePolls(): number { return cumulativeActivePolls; }
+
+// Verbose/test-mode trigger: fires once per session on the FIRST poll that sees a positive
+// count delta (i.e. a new watch), returning the delta so the push can name "N new item(s)".
+// Armed again on every new session (see updateSession). Normal mode never calls this.
+export function pendingWatchDetected(hasActivity: boolean, delta: number): number | null {
+  if (hasActivity && delta > 0 && !watchDetectedFired) {
+    watchDetectedFired = true;
+    return delta;
+  }
+  return null;
+}
 
 // Returns the largest milestone just crossed (in cumulative active polls) within the current session.
 // Each milestone fires once per session.
