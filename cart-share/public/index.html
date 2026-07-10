@@ -15,6 +15,7 @@ h1{margin:5px 0 3px;font-size:32px;font-weight:800;text-transform:uppercase;colo
 .item:last-child{border-bottom:0}
 .item .nm{flex:1}.item .nm b{font-weight:600}.item .q{color:var(--mut);font-size:12.5px}
 .item .pr{font-variant-numeric:tabular-nums;font-weight:700;min-width:64px;text-align:right}
+.asin{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:var(--mut);text-decoration:none;border-bottom:1px dotted var(--mut);margin-left:6px}
 .org{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:var(--org);border:1.5px solid var(--org);padding:1px 6px;text-transform:uppercase;margin-left:6px}
 .suggest{font-size:12.5px;color:var(--mut);margin-top:3px}
 .swap{font:inherit;font-weight:700;font-size:12px;border:2px solid var(--org);background:#fff;color:var(--org);padding:5px 11px;cursor:pointer;white-space:nowrap;text-transform:uppercase;letter-spacing:.02em}
@@ -45,11 +46,11 @@ async function j(m,p,b,h){const o={method:m,headers:h||{}};if(b){o.headers['cont
 // ---------- FRIEND VIEW ----------
 async function friend(){
   $('title').textContent='Organic-ify a Cart';
-  $('sub').innerHTML="Your friend gave you a <b>scoped capability</b> to swap items in their (SAMPLE) cart for organic equivalents. You never see their account, address, or payment — and you <b>can't check out</b>. <i>This runs on a fixture cart, not a real Amazon account — the point is the delegation model.</i>";
+  $('sub').innerHTML="Your friend gave you a <b>scoped capability</b> to swap items in their cart for organic equivalents. The items are <b>real Amazon listings</b>. You never see their account, address, or payment — and you <b>can't check out</b>.";
   const r=await j('GET','/friend/cart?cap='+encodeURIComponent(cap));
   if(r.error){$('view').innerHTML='<div class=deny style=display:block>Capability rejected: '+r.error+'</div>';return}
   $('view').innerHTML='<div class="scopebar">capability <b class=mono>'+r.scope+'</b> · CAN swap an item for a same-category organic alternative within a price band · <b class=no>CANNOT</b> checkout, add items, or see address/payment</div>'
-    +'<div class=card><h2>their sample cart — pick organic swaps (fixture, not real Amazon)</h2><div id=items></div></div>'
+    +'<div class=card><h2>their cart — pick organic swaps · '+(r.source==="amazon"?"LIVE FROM AMAZON":"fixture")+'</h2><div id=items></div></div>'
     +'<div class=row><button class="big pink" id=trycheckout>Try to check out</button><span class=note>(the scope should stop you)</span></div><div class=deny id=deny></div>';
   renderItems(r.items);
   $('trycheckout').onclick=async()=>{const x=await j('POST','/checkout',null,{authorization:'Bearer '+cap});$('deny').style.display='block';$('deny').textContent='⛔ '+x.reason};
@@ -59,7 +60,7 @@ function renderItems(items){
     const org=i.organic?'<span class=org>organic ✓</span>':'';
     const sug=i.suggest?'<div class=suggest>→ '+i.suggest.name+' · <span style="color:var(--org)">'+i.suggest.why+'</span></div>':'';
     const btn=i.organic?'<button class=swap disabled>swapped ✓</button>':(i.suggest?'<button class=swap data-id="'+i.id+'">swap to organic</button>':'');
-    return '<div class=item><div class=nm><b>'+i.name+'</b>'+org+'<span class=q> · qty '+i.qty+'</span>'+sug+'</div><div class=pr>'+money(i.price)+'</div>'+btn+'</div>';
+    const link=i.asin?' <a href="https://www.amazon.com/dp/'+i.asin+'" target=_blank class=asin>'+i.asin+' \u2197</a>':'';return '<div class=item><div class=nm><b>'+i.name+'</b>'+org+link+'<span class=q> · qty '+i.qty+'</span>'+sug+'</div><div class=pr>'+money(i.price)+'</div>'+btn+'</div>';
   }).join('');
   document.querySelectorAll('.swap[data-id]').forEach(b=>b.onclick=async()=>{
     b.disabled=true;b.textContent='swapping…';
@@ -71,7 +72,7 @@ function renderItems(items){
 
 // ---------- OWNER VIEW ----------
 async function owner(){
-  $('sub').innerHTML="<b>Demo of the mechanism on a SAMPLE cart</b> — this is <b>not</b> your real Amazon cart (there's no Amazon integration yet). It shows the model: a friend gets a <b>scoped, revocable, substitute-only capability</b> to swap items for organic equivalents, you get a receipt of every swap, and you check out yourself. Reading your <i>real</i> cart is the amazon browser-path plugin (v2).";
+  $('sub').innerHTML="These are <b>real Amazon listings</b> — names, prices, and ASINs fetched live from amazon.com (a guest search, not tied to your account). A friend gets a <b>scoped, revocable, substitute-only capability</b> to swap items for their organic equivalents; you get a receipt of every swap and check out yourself. (v2: drive your own logged-in cart via the browser-path.)";
   await drawOwner();
 }
 async function drawOwner(){
@@ -79,7 +80,7 @@ async function drawOwner(){
   const items=c.cart.map(i=>'<div class=item><div class=nm><b>'+i.name+'</b>'+(i.organic?'<span class=org>organic ✓</span>':'')+'<span class=q> · qty '+i.qty+'</span></div><div class=pr>'+money(i.price)+'</div></div>').join('');
   const rec=c.receipt.length?c.receipt.map(r=>'<div class=rec><span class=d>'+r.from.split(",")[0]+' → '+r.to.split(",")[0]+'</span> <span class=delta>('+(r.delta>=0?'+':'')+money(r.delta).replace("$-","-$")+')</span> <span class=note>by friend</span></div>').join(''):'<div class=rec><span class=note>no swaps yet</span></div>';
   $('view').innerHTML=
-    '<div class=card><h2>sample cart · fixture — not your real Amazon cart</h2>'+items+'<div class=total><span>total</span><span>'+money(c.total)+'</span></div></div>'
+    '<div class=card><h2>your cart · '+(c.source==="amazon"?"LIVE FROM AMAZON — real listings & prices":"fixture fallback (amazon unreachable)")+'</h2>'+items+'<div class=total><span>total</span><span>'+money(c.total)+'</span></div></div>'
     +'<div class=row>'
     +(c.shared?'<button class="big ghost" id=share disabled>friend invited ✓</button><button class="big pink" id=revoke>Revoke capability</button>':'<button class="big" id=share>Invite a friend to organic-ify it</button>')
     +'<button class="big" id=checkout '+(c.checkedOut?'disabled':'')+'>'+(c.checkedOut?'checked out ✓':'Check out (owner)')+'</button>'
