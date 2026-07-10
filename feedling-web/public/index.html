@@ -111,7 +111,7 @@
   </div>
 
   <div class="card">
-    <div style="font-weight:600;margin-bottom:8px;font-size:0.9rem">what you watched today <span id="shortsCount" style="color:var(--light);font-weight:400"></span></div>
+    <div style="font-weight:600;margin-bottom:8px;font-size:0.9rem"><span id="watchedLabel">what you watched (all history)</span> <span id="shortsCount" style="color:var(--light);font-weight:400"></span></div>
     <div id="shortsList" style="font-size:0.85rem;color:var(--text)">—</div>
   </div>
 
@@ -140,13 +140,20 @@ function urlBase64ToUint8Array(b64) {
   return Uint8Array.from(atob(b), c => c.charCodeAt(0));
 }
 
-function renderShorts(snaps) {
+function renderShorts(snaps, todayHonest) {
   const el = document.getElementById('shortsList');
   const cnt = document.getElementById('shortsCount');
   const fullest = (snaps || []).reduce((a, b) =>
     (b.shorts || []).length >= (a.shorts || []).length ? b : a, { shorts: [] });
+  let shorts = (fullest.shorts || []);
+  // Only scope the list to "today" when the plugin actually surfaced watched-at dates;
+  // otherwise this is the whole recent history page and the header says so honestly.
+  if (todayHonest) {
+    const sod = new Date(); sod.setHours(0, 0, 0, 0);
+    shorts = shorts.filter(s => s.date && new Date(s.date).getTime() >= sod.getTime());
+  }
   const seen = new Set();
-  const shorts = (fullest.shorts || []).filter(s => s.id && !seen.has(s.id) && seen.add(s.id));
+  shorts = shorts.filter(s => s.id && !seen.has(s.id) && seen.add(s.id));
   cnt.textContent = shorts.length ? '(' + shorts.length + ')' : '';
   if (!shorts.length) { el.innerHTML = '<span style="color:var(--light)">nothing captured yet — cookies may be expired</span>'; return; }
   el.innerHTML = shorts.map((s, i) =>
@@ -178,8 +185,9 @@ async function loadHistory() {
 async function refreshState() {
   try {
     const res = await fetch('api/state');
-    const { state, poll, connect, snaps } = await res.json();
-    renderShorts(snaps);
+    const { state, poll, connect, snaps, todayHonest } = await res.json();
+    renderShorts(snaps, todayHonest);
+    document.getElementById('watchedLabel').textContent = todayHonest ? 'what you watched today' : 'what you watched (all history)';
     const errEl = document.getElementById('err');
     const connected = connect && connect.connected;
     document.getElementById('disconnectBtn').style.display = connected ? '' : 'none';

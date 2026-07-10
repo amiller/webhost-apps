@@ -207,11 +207,14 @@ export default async function handler(
     const sessionMin = sess.startedAt ? Math.round((Date.now() - sess.startedAt) / 60_000) : 0;
     const limitParam = url.searchParams.get("limit");
     const limit = limitParam ? Math.max(1, Math.min(500, Number(limitParam) | 0)) : 12;
+    const recent = recentSnapshots();
+    const latest = recent.length ? recent[recent.length - 1] : null;
     return json({
       state: getState(),
+      todayHonest: !!(latest as { todayHonest?: boolean })?.todayHonest,
       poll: lastPoll,
       connect: connState(),
-      snaps: recentSnapshots().slice(-limit),
+      snaps: recent.slice(-limit),
       session: {
         startedAt: sess.startedAt,
         lastActivityAt: sess.lastActivityAt,
