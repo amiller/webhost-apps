@@ -80,7 +80,7 @@ async function drawOwner(){
   const items=c.cart.map(i=>'<div class=item><div class=nm><b>'+i.name+'</b>'+(i.organic?'<span class=org>organic ✓</span>':'')+'<span class=q> · qty '+i.qty+'</span></div><div class=pr>'+money(i.price)+'</div></div>').join('');
   const rec=c.receipt.length?c.receipt.map(r=>'<div class=rec><span class=d>'+r.from.split(",")[0]+' → '+r.to.split(",")[0]+'</span> <span class=delta>('+(r.delta>=0?'+':'')+money(r.delta).replace("$-","-$")+')</span> <span class=note>by friend</span></div>').join(''):'<div class=rec><span class=note>no swaps yet</span></div>';
   $('view').innerHTML=
-    (c.source==="amazon-jar"?('<div class=card><h2>your cart · YOUR REAL AMAZON CART (via OAuth3)</h2>'+items+'<div class=total><span>total</span><span>'+money(c.total)+'</span></div></div>'):('<div class=card><h2>your cart · not connected</h2><div class=rec><span class=note>'+(c.error||'connect your Amazon in the OAuth3 extension to load your real cart')+'</span></div></div>')
+    (c.source==="amazon-jar"?('<div class=card><h2>your cart · YOUR REAL AMAZON CART (via OAuth3)</h2>'+items+'<div class=total><span>total</span><span>'+money(c.total)+'</span></div></div>'):('<div class=card><h2>your cart · not connected</h2><div class=rec><span class=note>'+(c.error||'connect your Amazon in the OAuth3 extension to load your real cart')+'</span></div></div>'))
     +'<div class=row>'
     +(c.shared?'<button class="big ghost" id=share disabled>friend invited ✓</button><button class="big pink" id=revoke>Revoke capability</button>':'<button class="big" id=share>Invite a friend to organic-ify it</button>')
     +'<button class="big" id=checkout '+(c.checkedOut?'disabled':'')+'>'+(c.checkedOut?'checked out ✓':'Check out (owner)')+'</button>'
