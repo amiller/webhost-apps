@@ -1,0 +1,95 @@
+<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>cart-share · oauth3</title><style>
+:root{--paper:#faf7f0;--card:#fffdf8;--ink:#1c2528;--teal:#00838a;--pink:#ff48b0;--mut:#5c6b6e;--pass:#1e7d46;--fail:#c62828;--warn:#a05c12;--hair:#dcd6c8;--org:#2e7d32}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:26px 18px 80px}
+.kick{font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--teal)}
+h1{margin:5px 0 3px;font-size:32px;font-weight:800;text-transform:uppercase;color:var(--teal);text-shadow:2.5px 2.5px 0 var(--pink);letter-spacing:-.01em}
+.sub{color:var(--mut);max-width:64ch;margin:2px 0 14px}
+.mono{font-family:ui-monospace,Menlo,monospace}
+.scopebar{border:2px solid var(--ink);background:#eef7f5;padding:9px 13px;font-size:13px;margin-bottom:16px}
+.scopebar b{color:var(--teal)}.scopebar .no{color:var(--fail)}
+.card{border:2px solid var(--ink);background:var(--card);margin-bottom:16px}
+.card h2{margin:0;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);font-family:ui-monospace,Menlo,monospace;padding:9px 13px;border-bottom:1px solid var(--hair)}
+.item{display:flex;align-items:center;gap:12px;padding:10px 13px;border-bottom:1px solid var(--hair)}
+.item:last-child{border-bottom:0}
+.item .nm{flex:1}.item .nm b{font-weight:600}.item .q{color:var(--mut);font-size:12.5px}
+.item .pr{font-variant-numeric:tabular-nums;font-weight:700;min-width:64px;text-align:right}
+.org{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:var(--org);border:1.5px solid var(--org);padding:1px 6px;text-transform:uppercase;margin-left:6px}
+.suggest{font-size:12.5px;color:var(--mut);margin-top:3px}
+.swap{font:inherit;font-weight:700;font-size:12px;border:2px solid var(--org);background:#fff;color:var(--org);padding:5px 11px;cursor:pointer;white-space:nowrap;text-transform:uppercase;letter-spacing:.02em}
+.swap:disabled{opacity:.4;cursor:default;border-color:var(--hair);color:var(--mut)}
+.total{display:flex;justify-content:space-between;padding:11px 13px;font-weight:800;font-size:16px;border-top:2px solid var(--ink)}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+button.big{font:inherit;font-weight:700;border:2px solid var(--ink);background:var(--teal);color:#fff;padding:9px 15px;cursor:pointer;text-transform:uppercase;letter-spacing:.03em;box-shadow:3px 3px 0 var(--pink)}
+button.big.pink{background:var(--pink);box-shadow:3px 3px 0 var(--teal)}button.big.ghost{background:var(--card);color:var(--ink);box-shadow:3px 3px 0 var(--hair)}
+button.big:active{transform:translate(2px,2px)}button.big:disabled{opacity:.45}
+.note{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--mut)}
+.rec{padding:8px 13px;border-bottom:1px solid var(--hair);font-size:13px}
+.rec .d{color:var(--org);font-family:ui-monospace,Menlo,monospace;font-size:12px}
+.rec .delta{color:var(--warn);font-variant-numeric:tabular-nums}
+.deny{border:2px solid var(--fail);background:#fff0f0;color:var(--fail);padding:9px 13px;font-size:13.5px;margin-top:10px;display:none}
+.link{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#eef7f5;border:1px solid var(--hair);padding:7px 10px;word-break:break-all;margin-top:8px}
+</style></head><body><div class=wrap>
+<div class=kick id=kick>oauth3 · scoped delegation · amazon cart</div>
+<h1 id=title>Cart Share</h1>
+<p class=sub id=sub></p>
+<div id=view></div>
+<script>
+const BASE=location.pathname.replace(/\/$/,'');
+const $=id=>document.getElementById(id);
+const cap=new URLSearchParams(location.search).get('cap');
+const money=n=>'$'+n.toFixed(2);
+async function j(m,p,b,h){const o={method:m,headers:h||{}};if(b){o.headers['content-type']='application/json';o.body=JSON.stringify(b)}return (await fetch(BASE+p,o)).json()}
+
+// ---------- FRIEND VIEW ----------
+async function friend(){
+  $('title').textContent='Organic-ify a Cart';
+  $('sub').innerHTML="Your friend gave you a <b>scoped capability</b> to swap items in their cart for organic equivalents. You never see their account, address, or payment — and you <b>can't check out</b>. Just make it healthier.";
+  const r=await j('GET','/friend/cart?cap='+encodeURIComponent(cap));
+  if(r.error){$('view').innerHTML='<div class=deny style=display:block>Capability rejected: '+r.error+'</div>';return}
+  $('view').innerHTML='<div class="scopebar">capability <b class=mono>'+r.scope+'</b> · CAN swap an item for a same-category organic alternative within a price band · <b class=no>CANNOT</b> checkout, add items, or see address/payment</div>'
+    +'<div class=card><h2>their cart — pick organic swaps</h2><div id=items></div></div>'
+    +'<div class=row><button class="big pink" id=trycheckout>Try to check out</button><span class=note>(the scope should stop you)</span></div><div class=deny id=deny></div>';
+  renderItems(r.items);
+  $('trycheckout').onclick=async()=>{const x=await j('POST','/checkout',null,{authorization:'Bearer '+cap});$('deny').style.display='block';$('deny').textContent='⛔ '+x.reason};
+}
+function renderItems(items){
+  $('items').innerHTML=items.map(i=>{
+    const org=i.organic?'<span class=org>organic ✓</span>':'';
+    const sug=i.suggest?'<div class=suggest>→ '+i.suggest.name+' · <span style="color:var(--org)">'+i.suggest.why+'</span></div>':'';
+    const btn=i.organic?'<button class=swap disabled>swapped ✓</button>':(i.suggest?'<button class=swap data-id="'+i.id+'">swap to organic</button>':'');
+    return '<div class=item><div class=nm><b>'+i.name+'</b>'+org+'<span class=q> · qty '+i.qty+'</span>'+sug+'</div><div class=pr>'+money(i.price)+'</div>'+btn+'</div>';
+  }).join('');
+  document.querySelectorAll('.swap[data-id]').forEach(b=>b.onclick=async()=>{
+    b.disabled=true;b.textContent='swapping…';
+    const x=await j('POST','/friend/substitute',{cap,id:b.dataset.id});
+    if(!x.ok){$('view').querySelector('#deny')?.remove;alert('scope: '+x.reason);b.disabled=false;b.textContent='swap to organic';return}
+    const r=await j('GET','/friend/cart?cap='+encodeURIComponent(cap));renderItems(r.items);
+  });
+}
+
+// ---------- OWNER VIEW ----------
+async function owner(){
+  $('sub').innerHTML="Let a friend substitute similar items in your cart — organic swaps, say — without handing over your Amazon account. They get a <b>scoped, revocable, substitute-only capability</b>; you get a receipt of every swap and check out yourself.";
+  await drawOwner();
+}
+async function drawOwner(){
+  const c=await j('GET','/cart');
+  const items=c.cart.map(i=>'<div class=item><div class=nm><b>'+i.name+'</b>'+(i.organic?'<span class=org>organic ✓</span>':'')+'<span class=q> · qty '+i.qty+'</span></div><div class=pr>'+money(i.price)+'</div></div>').join('');
+  const rec=c.receipt.length?c.receipt.map(r=>'<div class=rec><span class=d>'+r.from.split(",")[0]+' → '+r.to.split(",")[0]+'</span> <span class=delta>('+(r.delta>=0?'+':'')+money(r.delta).replace("$-","-$")+')</span> <span class=note>by friend</span></div>').join(''):'<div class=rec><span class=note>no swaps yet</span></div>';
+  $('view').innerHTML=
+    '<div class=card><h2>your cart</h2>'+items+'<div class=total><span>total</span><span>'+money(c.total)+'</span></div></div>'
+    +'<div class=row>'
+    +(c.shared?'<button class="big ghost" id=share disabled>friend invited ✓</button><button class="big pink" id=revoke>Revoke capability</button>':'<button class="big" id=share>Invite a friend to organic-ify it</button>')
+    +'<button class="big" id=checkout '+(c.checkedOut?'disabled':'')+'>'+(c.checkedOut?'checked out ✓':'Check out (owner)')+'</button>'
+    +'</div><div id=linkbox></div>'
+    +'<div class=card><h2>receipt — what your friend swapped</h2>'+rec+'</div>';
+  const sh=$('share'); if(sh&&!c.shared)sh.onclick=async()=>{const g=await j('POST','/share');$('linkbox').innerHTML='<div class=note>share this link with your friend:</div><div class=link>'+location.origin+g.link+'</div><div class=row style=margin-top:10px><button class="big ghost" id=asfriend>Open the friend view →</button></div>';$('asfriend').onclick=()=>location.href=g.link;drawOwner()};
+  const rv=$('revoke'); if(rv)rv.onclick=async()=>{await j('POST','/revoke');drawOwner()};
+  const co=$('checkout'); if(co&&!c.checkedOut)co.onclick=async()=>{await j('POST','/checkout');drawOwner()};
+}
+
+if(cap){friend();}else{owner();}
+window.__cart={friend:()=>friend(),owner:()=>owner(),draw:()=>cap?friend():drawOwner()};
+</script></div></body></html>
