@@ -516,14 +516,23 @@ async function poll() {
     const headers = FOLLOW ? { Authorization: "Bearer " + shareToken } : {};
     const r = await fetch("live?after=" + after, { headers });
     const d = await r.json();
-    if (d.error) {
-      meet.innerHTML = '<span class="dot"></span>' + d.error;
+    if (d.state === "auth") {
+      // token rejected: honest end-state. In follow mode the share is gone; stop polling.
       live = false; renderSlides([], false);
-      // honest end-state: a token rejection means the share is revoked/expired/gone.
-      if (FOLLOW && /401|403|revok|expire|invalid|unauthor|no jar|not logged/i.test(String(d.error))) {
-        if (followBanner) followBanner.set({ status: "gone" });
-        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-      }
+      meet.innerHTML = '<span class="dot"></span>' + (d.message || "token rejected") +
+        (d.reading_as ? ' · reading as ' + d.reading_as : '');
+      if (FOLLOW && followBanner) followBanner.set({ status: "gone" });
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    } else if (d.state === "no-otter") {
+      // Otter isn't connected for the subject this token reads as — a truthful setup status,
+      // NOT an alarm and NOT masked as 'no live meeting'. Keep polling; it recovers the
+      // moment the jar is synced / the token rebound. States the subject it read as (#44).
+      live = false; renderSlides([], false);
+      meet.innerHTML = '<span class="dot"></span>' + (d.message || "Otter isn't connected") +
+        (d.reading_as ? ' · reading as ' + d.reading_as : '');
+    } else if (d.state || d.error) {
+      live = false; renderSlides([], false);
+      meet.innerHTML = '<span class="dot"></span>' + (d.message || d.error || "couldn't reach otter");
     } else if (!d.live) {
       live = false; renderSlides([], false);
       meet.innerHTML = '<span class="dot"></span>' +

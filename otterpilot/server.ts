@@ -44,16 +44,55 @@ function clientToken(req: Request, url: URL): string {
   return url.searchParams.get("token") || "";
 }
 
-async function nodeLive(after: number, tok?: string): Promise<any> {
+// otterpilot must not echo the node's raw HTTP error into the meeting header — that IS the
+// bug: prod showed `node /otter/live 409: {"error":"no jar synced for otter"}`. So nodeLive
+// returns a CATEGORIZED outcome the header renders as a truthful status, never an alarm:
+//   ok               — {data} from the node (a live meeting, or {live:false} when none runs)
+//   no-otter         — 409 'no jar synced' / 'not logged in': Otter isn't connected for the
+//                      subject this token reads as (a setup/rebind problem — root cause of
+//                      the prod 409). Truthful status, NOT masked as 'no live meeting'.
+//   auth             — 401/403: token rejected (revoked/stale).
+//   node-unreachable / error — anything else, surfaced short.
+type LiveOutcome =
+  | { ok: true; data: any }
+  | { ok: false; state: "no-otter" | "auth" | "node-unreachable" | "error"; detail: string };
+
+async function nodeLive(after: number, tok?: string): Promise<LiveOutcome> {
   const t = tok || TOKEN;
-  if (!t) throw new Error("OAUTH3_TOKEN not set — mint an otter token and set it on this project");
-  const r = await fetch(`${NODE}/api/otter/live?after=${after}`, { headers: { Authorization: `Bearer ${t}` } });
-  if (!r.ok) throw new Error(`node /otter/live ${r.status}: ${(await r.text()).slice(0, 160)}`);
-  return (await r.json()).data;
+  if (!t) return { ok: false, state: "error", detail: "no Otter token set (OAUTH3_TOKEN) — mint one and set it on this project" };
+  let r: Response;
+  try {
+    r = await fetch(`${NODE}/api/otter/live?after=${after}`, { headers: { Authorization: `Bearer ${t}` } });
+  } catch (e) {
+    return { ok: false, state: "node-unreachable", detail: "couldn't reach the oauth3 node (" + ((e as Error)?.message || e) + ")" };
+  }
+  if (r.ok) return { ok: true, data: (await r.json()).data };
+  const body = await r.text().catch(() => "");
+  if (r.status === 401 || r.status === 403) return { ok: false, state: "auth", detail: "Otter token was rejected — re-mint it" };
+  if (r.status === 409 && /no jar synced|not logged in/i.test(body)) {
+    return { ok: false, state: "no-otter", detail: /not logged in/i.test(body) ? "Otter session isn't logged in" : "Otter isn't connected to this instance yet" };
+  }
+  return { ok: false, state: "error", detail: "otter node returned " + r.status };
+}
+
+// "state the subject it read as": the node resolves otterpilot's token to a subject and
+// reads THAT subject's jar — a mis-bound subject is the root cause of the prod 409 (token
+// reads as 'owner' while the jar lives under the operator's real identity). The node does
+// NOT expose the resolved subject for a scoped token, so otterpilot states the credential
+// identity it presented (masked, never the full secret) — enough for the operator to see
+// which token — and thus which subject — otterpilot read as, and rebind it if it's wrong.
+// See issue #44.
+function readingAs(tok: string): string {
+  const t = tok || TOKEN;
+  if (!t) return "no token set";
+  // scoped tokens are opaque `tok-<plugin>-<rand>`; the raw owner secret reads as 'owner'.
+  return /^tok-/.test(t) ? "scoped otter token …" + t.slice(-4) : "owner secret → subject 'owner'";
 }
 
 async function latestSlide(): Promise<string | null> {
-  const d = await nodeLive(0);
+  const res = await nodeLive(0);
+  if (!res.ok) return null;
+  const d = res.data;
   const imgs = d?.images ?? [];
   if (!d?.live || !imgs.length) return null;
   const r = await fetch(`${NODE}/api/otter/frame?u=${encodeURIComponent(b64url(imgs[imgs.length - 1].url))}`, {
@@ -102,13 +141,15 @@ export default async function handler(req: Request, ctx: { env: Record<string, s
   // Live feed: node segments + frame urls rewritten to our own proxied path (the token
   // never leaves the server, so <img> can't carry it — we relay).
   if (req.method === "GET" && path === "/live") {
-    try {
-      const d = await nodeLive(Number(url.searchParams.get("after") || "0") || 0, clientToken(req, url));
+    const tok = clientToken(req, url);
+    const res = await nodeLive(Number(url.searchParams.get("after") || "0") || 0, tok);
+    if (res.ok) {
+      const d = res.data;
       if (d?.images) d.images = d.images.map((im: any) => ({ offset: im.offset, src: `frame?u=${b64url(im.url)}` }));
       return json(d);
-    } catch (e) {
-      return json({ error: `${(e as Error).message}` });
     }
+    // truthful, categorized state for the header — never the raw node HTTP error.
+    return json({ live: false, state: res.state, message: res.detail, reading_as: readingAs(tok) });
   }
 
   // Frame relay: browser -> /frame?u=<b64url(imageurl)> -> node /otter/frame (bearer) -> bytes.
