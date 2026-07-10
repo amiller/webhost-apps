@@ -46,11 +46,11 @@ async function j(m,p,b,h){const o={method:m,headers:h||{}};if(b){o.headers['cont
 // ---------- FRIEND VIEW ----------
 async function friend(){
   $('title').textContent='Organic-ify a Cart';
-  $('sub').innerHTML="Your friend gave you a <b>scoped capability</b> to swap items in their cart for organic equivalents. The items are <b>real Amazon listings</b>. You never see their account, address, or payment — and you <b>can't check out</b>.";
+  $('sub').innerHTML="Your friend gave you a <b>scoped capability</b> to swap items in their cart for organic equivalents. These are the items in their <b>real Amazon cart</b>. You never see their account, address, or payment — and you <b>can't check out</b>.";
   const r=await j('GET','/friend/cart?cap='+encodeURIComponent(cap));
   if(r.error){$('view').innerHTML='<div class=deny style=display:block>Capability rejected: '+r.error+'</div>';return}
   $('view').innerHTML='<div class="scopebar">capability <b class=mono>'+r.scope+'</b> · CAN swap an item for a same-category organic alternative within a price band · <b class=no>CANNOT</b> checkout, add items, or see address/payment</div>'
-    +'<div class=card><h2>their cart — pick organic swaps · '+(r.source==="amazon"?"LIVE FROM AMAZON":"fixture")+'</h2><div id=items></div></div>'
+    +'<div class=card><h2>their cart — pick organic swaps · '+(r.source==="amazon-jar"?"THEIR REAL AMAZON CART":"demo")+'</h2><div id=items></div></div>'
     +'<div class=row><button class="big pink" id=trycheckout>Try to check out</button><span class=note>(the scope should stop you)</span></div><div class=deny id=deny></div>';
   renderItems(r.items);
   $('trycheckout').onclick=async()=>{const x=await j('POST','/checkout',null,{authorization:'Bearer '+cap});$('deny').style.display='block';$('deny').textContent='⛔ '+x.reason};
@@ -72,7 +72,7 @@ function renderItems(items){
 
 // ---------- OWNER VIEW ----------
 async function owner(){
-  $('sub').innerHTML="These are <b>real Amazon listings</b> — names, prices, and ASINs fetched live from amazon.com (a guest search, not tied to your account). A friend gets a <b>scoped, revocable, substitute-only capability</b> to swap items for their organic equivalents; you get a receipt of every swap and check out yourself. (v2: drive your own logged-in cart via the browser-path.)";
+  $('sub').innerHTML="This is <b>your real Amazon cart</b> — read through OAuth3 from your logged-in amazon.com session (your cookies stay sealed in the TEE; this app never sees them). A friend gets a <b>scoped, revocable, substitute-only capability</b> to swap items for organic equivalents; you get a receipt of every swap and check out yourself.";
   await drawOwner();
 }
 async function drawOwner(){
@@ -80,7 +80,7 @@ async function drawOwner(){
   const items=c.cart.map(i=>'<div class=item><div class=nm><b>'+i.name+'</b>'+(i.organic?'<span class=org>organic ✓</span>':'')+'<span class=q> · qty '+i.qty+'</span></div><div class=pr>'+money(i.price)+'</div></div>').join('');
   const rec=c.receipt.length?c.receipt.map(r=>'<div class=rec><span class=d>'+r.from.split(",")[0]+' → '+r.to.split(",")[0]+'</span> <span class=delta>('+(r.delta>=0?'+':'')+money(r.delta).replace("$-","-$")+')</span> <span class=note>by friend</span></div>').join(''):'<div class=rec><span class=note>no swaps yet</span></div>';
   $('view').innerHTML=
-    '<div class=card><h2>your cart · '+(c.source==="amazon"?"LIVE FROM AMAZON — real listings & prices":"fixture fallback (amazon unreachable)")+'</h2>'+items+'<div class=total><span>total</span><span>'+money(c.total)+'</span></div></div>'
+    (c.source==="amazon-jar"?('<div class=card><h2>your cart · YOUR REAL AMAZON CART (via OAuth3)</h2>'+items+'<div class=total><span>total</span><span>'+money(c.total)+'</span></div></div>'):('<div class=card><h2>your cart · not connected</h2><div class=rec><span class=note>'+(c.error||'connect your Amazon in the OAuth3 extension to load your real cart')+'</span></div></div>')
     +'<div class=row>'
     +(c.shared?'<button class="big ghost" id=share disabled>friend invited ✓</button><button class="big pink" id=revoke>Revoke capability</button>':'<button class="big" id=share>Invite a friend to organic-ify it</button>')
     +'<button class="big" id=checkout '+(c.checkedOut?'disabled':'')+'>'+(c.checkedOut?'checked out ✓':'Check out (owner)')+'</button>'
