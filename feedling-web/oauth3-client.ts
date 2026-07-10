@@ -10,6 +10,9 @@ export interface ShortCheckResult {
   watching: boolean;
   newShorts: number;
   shortsCount: number;
+  /** Every item on the history page (shorts + regular videos). Verbose/test mode keys activity
+   *  off this — a regular (non-short) watch grows it — so the operator gets pinged for any watch. */
+  totalCount: number;
   /** Honest only when the youtube plugin surfaces a per-item watched-at into `item.date`.
    *  False ⇒ the history page carries no dates, so `videosToday` is the WHOLE page and any
    *  "today" label would be a lie; callers must relabel it "history (all)". */
@@ -137,6 +140,7 @@ export async function shortCheck(): Promise<ShortCheckResult> {
     watching: newShorts > 0,
     newShorts,
     shortsCount,
+    totalCount: items.length,
     todayHonest,
     videosToday: todayHonest ? countVideosToday(items, sod) : (items.length - shortsCount),
     shorts: shorts.map((it) => ({ id: it.id, title: it.title, date: it.date })),

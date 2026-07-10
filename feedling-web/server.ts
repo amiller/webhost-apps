@@ -5,6 +5,7 @@ import {
   addSub, removeSub, allSubs, lastPushed, markPushed,
   updateSession, pendingSessionMilestone, getSession, initStore,
   recordPush, getPushLog, checkConfirmedActivity, consecutivePolls, cumulativePolls,
+  pendingWatchDetected,
 } from "./store.ts";
 import { configurePush, pushAll, vapidPublicKey } from "./push.ts";
 import { renderDiary } from "./diary.ts";
@@ -12,11 +13,15 @@ import { renderDiary } from "./diary.ts";
 let ready = false;
 const POLL_IDLE_MS = 5 * 60 * 1000;
 const POLL_ACTIVE_MS = 60 * 1000;
+// Verbose/test mode (FEEDLING_VERBOSE=1): watch for ANY watch, not just shorts — poll idle every
+// 60s and ping on the first new item of a session so a brief / regular-video watch isn't missed.
+const POLL_IDLE_MS_VERBOSE = 60 * 1000;
 const SESSION_MILESTONES = [30, 60, 90, 120];
 let oauth3Node = "";
 let openrouterKey = "";
 let diaryModel = "anthropic/claude-sonnet-4-5";
 let nextPollAt = 0;
+let verbose = false;
 
 async function readStatic(path: string): Promise<Uint8Array | null> {
   try {
@@ -58,7 +63,10 @@ async function tick(): Promise<boolean> {
   const prevSnaps = recentSnapshots();
   const prevSnap = prevSnaps.length ? prevSnaps[prevSnaps.length - 1] : null;
   const countDelta = prevSnap ? snap.shortsCount - prevSnap.shortsCount : 0;
-  const hasActivity = countDelta > 0;
+  const totalDelta = prevSnap ? snap.totalCount - prevSnap.totalCount : 0;
+  // Verbose/test mode keys activity off TOTAL history items (a regular-video watch grows it);
+  // normal mode stays on shorts-count growth exactly as before.
+  const hasActivity = verbose ? totalDelta > 0 : countDelta > 0;
 
   await addSnapshot(snap);
 
@@ -69,12 +77,18 @@ async function tick(): Promise<boolean> {
   const sess = updateSession(hasActivity);
 
   console.log(
-    `[tick] watching=${snap.watching} new=${snap.newShorts} count=${snap.shortsCount} delta=${countDelta} ` +
-    `active=${hasActivity} cumulative=${cumulativePolls()} state=${state.stateCode} energy=${state.energy}`
+    `[tick] verbose=${verbose} watching=${snap.watching} new=${snap.newShorts} count=${snap.shortsCount} ` +
+    `total=${snap.totalCount} delta=${countDelta} totalDelta=${totalDelta} active=${hasActivity} ` +
+    `cumulative=${cumulativePolls()} state=${state.stateCode} energy=${state.energy}`
   );
 
   const triggers: string[] = [];
   if (checkConfirmedActivity(hasActivity, 5)) triggers.push("confirmed_5");
+  let watchDelta = 0;
+  if (verbose) {
+    const d = pendingWatchDetected(hasActivity, totalDelta);
+    if (d !== null) { triggers.push("watch_detected"); watchDelta = d; }
+  }
   const m = pendingSessionMilestone(cumulativePolls(), SESSION_MILESTONES);
   if (m !== null) triggers.push(`session_${m}`);
   if (state.stateCode !== lastPushed() && (state.stateCode === "drained" || state.stateCode === "night_owl")) {
@@ -85,6 +99,7 @@ async function tick(): Promise<boolean> {
   for (const t of triggers) {
     let body: string;
     if (t === "confirmed_5") body = "5 minutes of solid scrolling. Cat noticed.";
+    else if (t === "watch_detected") body = `you watched something just now — ${watchDelta} new item(s)`;
     else if (t.startsWith("session_")) body = milestoneCopy(Number(t.slice("session_".length)), state);
     else body = pushCopy[state.stateCode];
     try {
@@ -119,7 +134,8 @@ let loopTimer = 0;
 let ticking = false;
 function scheduleNext(watching: boolean) {
   clearTimeout(loopTimer);
-  const delay = !connState().connected ? POLL_CONNECT_MS : (watching ? POLL_ACTIVE_MS : POLL_IDLE_MS);
+  const idle = verbose ? POLL_IDLE_MS_VERBOSE : POLL_IDLE_MS;
+  const delay = !connState().connected ? POLL_CONNECT_MS : (watching ? POLL_ACTIVE_MS : idle);
   nextPollAt = Date.now() + delay;
   loopTimer = setTimeout(loop, delay) as unknown as number;
 }
@@ -145,6 +161,7 @@ function initOnce(env: Record<string, string>, dataDir: string) {
   if (ready) return;
   initStore(dataDir).catch((e) => console.error("[init] store:", (e as Error).message));
   oauth3Node = env.OAUTH3_NODE || "https://pod.dstack.soc1024.com/oauth3";
+  verbose = /^(1|true|yes|on)$/i.test(env.FEEDLING_VERBOSE || "");
   // Get feedling's scoped token via the SDK connect() handshake — an explicit OAUTH3_TOKEN
   // (owner-minted) still works as an override; otherwise the approved token is persisted here.
   const tokenFile = dataDir ? `${dataDir}/oauth3-token.txt` : "";
@@ -172,7 +189,7 @@ function initOnce(env: Record<string, string>, dataDir: string) {
   }
 
   ready = true;
-  console.log(`[init] ready — idle=${POLL_IDLE_MS}ms active=${POLL_ACTIVE_MS}ms node=${oauth3Node}`);
+  console.log(`[init] ready — verbose=${verbose} idle=${verbose ? POLL_IDLE_MS_VERBOSE : POLL_IDLE_MS}ms active=${POLL_ACTIVE_MS}ms node=${oauth3Node}`);
   loopTimer = setTimeout(loop, 3000) as unknown as number;
 }
 
@@ -214,6 +231,7 @@ export default async function handler(
       todayHonest: !!(latest as { todayHonest?: boolean })?.todayHonest,
       poll: lastPoll,
       connect: connState(),
+      verbose,
       snaps: recent.slice(-limit),
       session: {
         startedAt: sess.startedAt,
@@ -283,6 +301,15 @@ export default async function handler(
   if (req.method === "POST" && path === "/api/poll-now") {
     await loop(); // single-flight tick + reschedule (no racing with the timer)
     return json({ ok: true });
+  }
+  if (req.method === "GET" && path === "/api/verbose") {
+    return json({ verbose });
+  }
+  if (req.method === "POST" && path === "/api/verbose") {
+    const body = await req.json().catch(() => null) as any;
+    if (body && typeof body.enabled === "boolean") verbose = body.enabled;
+    kickSoon(100); // reschedule the single loop so the new idle interval applies at once
+    return json({ verbose });
   }
   if (req.method === "POST" && path === "/api/test-push") {
     const body = "hello from the server 🐈";

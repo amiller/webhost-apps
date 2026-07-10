@@ -20,7 +20,17 @@ Deno app, deployed as a tee-daemon project on the pod. Live: https://pod.dstack.
 ## Env
 `OAUTH3_NODE`, (optional) `OAUTH3_TOKEN` — leave unset to use the handshake, `OPENROUTER_API_KEY`,
 `DIARY_MODEL`, `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/`VAPID_SUBJECT`, `TZ` (e.g. `America/New_York`
-— day-boundary + night-owl logic runs in the container clock, so set it).
+— day-boundary + night-owl logic runs in the container clock, so set it), and (optional)
+`FEEDLING_VERBOSE=1`.
+
+## Test / verbose mode (`FEEDLING_VERBOSE=1`)
+For testing, you want to know the next time you watch **anything** — including a regular
+(non-short) video, even briefly. Verbose mode widens activity to growth in **total history
+items** (not just shorts), polls idle every **60s** (instead of 5min) so a short watch isn't
+missed, and fires a `watch_detected` push on the **first new item of a session**
+(`"you watched something just now — N new item(s)"`). Toggle it without a redeploy from the UI
+("test mode" button) or `POST /api/verbose {"enabled":true}` / `GET /api/verbose`; default is
+off and normal-mode behavior is unchanged.
 
 ## Deploy
 Source-tarball deploy to the pod's tee-daemon (`POST /_api/projects`, Bearer `TEE_DAEMON_TOKEN`),
