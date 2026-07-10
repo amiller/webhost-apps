@@ -28,6 +28,9 @@ Source-tarball deploy to the pod's tee-daemon (`POST /_api/projects`, Bearer `TE
 
 ## Known gaps
 - YouTube history items carry **no per-item watch date** (the plugin's `parseHistory` discards
-  YouTube's day-section headers), so the "what you watched today" card actually shows the whole
-  recent history page and `shortsToday` is a since-midnight delta. Real today-filtering needs the
-  plugin to stamp items with dates (tracked upstream in oauth3-server).
+  YouTube's day-section headers), so feedling cannot honestly compute "today". It refuses to
+  mislabel: when items lack `date`, `todayHonest` is false, `videosToday` is the whole recent
+  page, and the UI card reads "what you watched (all history)" — never "today". When the plugin
+  stamps items with dates (tracked upstream in oauth3-server), `videosToday`/the shorts list
+  become real start-of-day-filtered counts and the card relabels to "today". `shortsToday` stays
+  a since-midnight delta either way.

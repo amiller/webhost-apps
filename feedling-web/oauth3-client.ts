@@ -10,8 +10,12 @@ export interface ShortCheckResult {
   watching: boolean;
   newShorts: number;
   shortsCount: number;
+  /** Honest only when the youtube plugin surfaces a per-item watched-at into `item.date`.
+   *  False ⇒ the history page carries no dates, so `videosToday` is the WHOLE page and any
+   *  "today" label would be a lie; callers must relabel it "history (all)". */
+  todayHonest: boolean;
   videosToday: number;
-  shorts: { id: string; title: string }[];
+  shorts: { id: string; title: string; date?: string }[];
   checked: string;
   elapsed: string;
 }
@@ -25,6 +29,19 @@ let pendingReq = "";
 let persistToken: (t: string) => void = () => {};
 let clearToken: () => void = () => {};
 let prevCount = 0, primed = false;
+
+/** Local-midnight ms (the container clock — set TZ to your timezone). Only meaningful when
+ *  the youtube plugin stamps each item with a watched-at, so "today" can be enforced honestly. */
+function startOfDayMs(): number {
+  const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime();
+}
+
+/** Count non-short items watched at/after the given local start-of-day (ms). Pure: an item
+ *  without a `date` contributes nothing. Callers decide what to show when NO item carries a
+ *  date — that's the `todayHonest` flag, not this count. */
+export function countVideosToday(items: (PluginItem & { meta?: { isShort?: boolean } })[], sod: number): number {
+  return items.filter((it) => !it.meta?.isShort && it.date && Date.parse(it.date) >= sod).length;
+}
 
 export function connState(): ConnState { return conn; }
 
@@ -109,12 +126,20 @@ export async function shortCheck(): Promise<ShortCheckResult> {
   const newShorts = primed ? Math.max(0, shortsCount - prevCount) : 0;
   prevCount = shortsCount;
   primed = true;
+
+  // "today" is only honest when the plugin gives us a per-item watched-at (item.date). Without
+  // those dates we cannot tell today's watches from the rest of the history page, so videosToday
+  // falls back to the whole-page non-short count and the UI MUST relabel it "history (all)" —
+  // todayHonest = false. The date contract lives in oauth3-server's youtube plugin (parseHistory).
+  const sod = startOfDayMs();
+  const todayHonest = items.some((it) => it.date);
   return {
     watching: newShorts > 0,
     newShorts,
     shortsCount,
-    videosToday: items.length - shortsCount,
-    shorts: shorts.map((it) => ({ id: it.id, title: it.title })),
+    todayHonest,
+    videosToday: todayHonest ? countVideosToday(items, sod) : (items.length - shortsCount),
+    shorts: shorts.map((it) => ({ id: it.id, title: it.title, date: it.date })),
     checked: new Date().toISOString(),
     elapsed: `${Date.now() - t0}ms`,
   };
