@@ -9,7 +9,12 @@ export interface Snapshot {
   watching: boolean;
   newShorts: number;
   shortsCount: number;
+  /** Total items on the history page (shorts + regular). Drives verbose/test-mode activity. */
+  totalCount: number;
   videosToday: number;
+  /** True only when the youtube plugin surfaced per-item watched-at dates, so videosToday is
+   *  genuinely today-scoped. False ⇒ videosToday is the whole page; UI must relabel "history". */
+  todayHonest: boolean;
 }
 
 export interface PetState {
@@ -27,7 +32,9 @@ export function snapshotFrom(r: ShortCheckResult): Snapshot {
     watching: !!r.watching,
     newShorts: r.newShorts | 0,
     shortsCount: r.shortsCount | 0,
+    totalCount: r.totalCount | 0,
     videosToday: r.videosToday | 0,
+    todayHonest: !!r.todayHonest,
   };
 }
 

@@ -1,0 +1,71 @@
+<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>screenshare-debug · oauth3</title><style>
+:root{--paper:#faf7f0;--ink:#1c2528;--teal:#00838a;--pink:#ff48b0;--mut:#5c6b6e;--pass:#1e7d46;--fail:#c62828;--hair:#ddd7c9;--card:#fffdf8}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+.wrap{max-width:940px;margin:0 auto;padding:26px 18px 70px}
+.kick{font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--teal)}
+h1{margin:5px 0 3px;font-size:31px;font-weight:800;text-transform:uppercase;color:var(--teal);text-shadow:2.5px 2.5px 0 var(--pink);letter-spacing:-.01em}
+.sub{color:var(--mut);max-width:66ch;margin:2px 0 16px}
+.mono{font-family:ui-monospace,Menlo,monospace}
+.anchor{background:var(--card);border:2px solid var(--ink);padding:9px 13px;font-size:12px;margin-bottom:15px;word-break:break-all}
+.anchor b{color:var(--teal)}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+button{font:inherit;font-weight:700;border:2px solid var(--ink);background:var(--teal);color:#fff;padding:9px 15px;cursor:pointer;text-transform:uppercase;letter-spacing:.03em;box-shadow:3px 3px 0 var(--pink)}
+button.ghost{background:var(--card);color:var(--ink);box-shadow:3px 3px 0 var(--hair)}
+button.rev{background:var(--pink)}button:active{transform:translate(2px,2px);box-shadow:1px 1px 0 var(--pink)}
+button:disabled{opacity:.4;cursor:not-allowed;box-shadow:none}
+.pill{font-family:ui-monospace,Menlo,monospace;font-size:11px;padding:3px 9px;border:1.5px solid var(--mut);color:var(--mut)}
+.grid{display:grid;grid-template-columns:230px 1fr;gap:16px}@media(max-width:640px){.grid{grid-template-columns:1fr}}
+.card{border:2px solid var(--ink);background:var(--card)}
+.card h2{margin:0;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);font-family:ui-monospace,Menlo,monospace;padding:8px 12px;border-bottom:1px solid var(--hair)}
+#prev{display:block;width:100%;height:auto;background:#0c0f12}
+.stat{display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--hair);font-size:13px}
+.stat b{font-variant-numeric:tabular-nums;font-size:17px}.ok{color:var(--pass)}.no{color:var(--fail)}
+table{width:100%;border-collapse:collapse}
+th{font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);text-align:left;padding:6px 10px;border-bottom:2px solid var(--ink)}
+td{padding:5px 10px;border-bottom:1px solid var(--hair);font-family:ui-monospace,Menlo,monospace;font-size:12px}
+td.a{color:var(--pass);font-weight:700}td.r{color:var(--fail);font-weight:700}.reason{color:var(--mut);font-weight:400}
+.note{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--mut)}
+</style></head><body><div class=wrap>
+<div class=kick>oauth3 · outbound-stream consent · RFC 0011 did:key UCAN</div>
+<h1>Screenshare Debug</h1>
+<p class=sub>Your screen streams to a pod sink under a <b>scoped, revocable capability</b> that oauth3 <b>signs once</b> — the sink then verifies it <b>offline</b> (cryptographically, anchored on the issuer DID, no core call). This inverts the usual model: instead of delegating <i>read</i> access to a session you hold, you delegate a live <b>outbound</b> stream. Revoke and the sink stops honoring the same capability, live.</p>
+<div class=anchor>trust anchor · authority DID: <b class=mono id=anchor>…</b><br><span class=pill id=capstate>no capability</span></div>
+<div class=row>
+  <button id=start>Start capture (screen)</button>
+  <button id=demo class=ghost>Start synthetic demo</button>
+  <button id=revoke class=rev disabled>Revoke</button>
+  <span class="mono note" id=note></span>
+</div>
+<div class=grid>
+  <div class=card><h2>live frame → jpeg → sink</h2><canvas id=prev width=200 height=125></canvas>
+    <div class=stat><span>accepted by sink</span><b class=ok id=nA>0</b></div>
+    <div class=stat><span>rejected by sink</span><b class=no id=nR>0</b></div>
+  </div>
+  <div class=card><h2>sink console — what the pod verified offline</h2>
+    <table><thead><tr><th>seq</th><th>bytes</th><th>luma</th><th>sink verdict</th></tr></thead><tbody id=log></tbody></table>
+  </div>
+</div>
+<script>
+const BASE=location.pathname.replace(/\/$/,'');
+const $=id=>document.getElementById(id);
+const B58="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+function b58(b){let z=0;while(z<b.length&&b[z]===0)z++;const d=[0];for(let i=z;i<b.length;i++){let c=b[i];for(let j=0;j<d.length;j++){c+=d[j]<<8;d[j]=c%58;c=c/58|0}while(c){d.push(c%58);c=c/58|0}}let o='1'.repeat(z);for(let i=d.length-1;i>=0;i--)o+=B58[d[i]];return o}
+async function sessionDid(){const k=await crypto.subtle.generateKey('Ed25519',true,['sign','verify']);const raw=new Uint8Array(await crypto.subtle.exportKey('raw',k.publicKey));const p=new Uint8Array(2+raw.length);p[0]=0xed;p[1]=0x01;p.set(raw,2);return 'did:key:z'+b58(p)}
+const ctx=$('prev').getContext('2d');
+let ucan=null,seq=0,timer=null,video=null;
+function synthFrame(){const w=200,h=125,t=Date.now()/300;ctx.fillStyle='#0c0f12';ctx.fillRect(0,0,w,h);ctx.fillStyle='hsl('+((t*40)%360)+',85%,55%)';const x=(Math.sin(t)*.5+.5)*(w-42),y=(Math.cos(t*.7)*.5+.5)*(h-30);ctx.fillRect(x,y,42,30);ctx.fillStyle='#fff';ctx.font='11px monospace';ctx.fillText('synthetic · seq '+seq,6,16)}
+function drawVideo(){try{ctx.drawImage(video,0,0,200,125)}catch(e){}}
+function luma(){const im=ctx.getImageData(0,0,200,125).data;let s=0;for(let i=0;i<im.length;i+=400)s+=im[i];return Math.round(s/(im.length/400))}
+function blobOf(){return new Promise(r=>$('prev').toBlob(r,'image/jpeg',0.6))}
+function logRow(seq,bytes,lm,r){const tr=document.createElement('tr');tr.innerHTML='<td>'+seq+'</td><td>'+(bytes||'–')+'</td><td>'+lm+'</td>'+(r.ok?'<td class=a>ACCEPTED</td>':'<td class=r>401 <span class=reason>'+(r.reason||'')+'</span></td>');$('log').prepend(tr);while($('log').children.length>10)$('log').lastChild.remove()}
+async function tick(draw){draw();const lm=luma();const blob=await blobOf();seq++;let r;try{r=await(await fetch(BASE+'/sink/frame',{method:'POST',headers:{authorization:'Bearer '+ucan,'x-seq':String(seq),'x-luma':String(lm),'content-type':'image/jpeg'},body:blob})).json()}catch(e){r={ok:false,reason:String(e)}}logRow(seq,r.bytes,lm,r);const s=await(await fetch(BASE+'/sink/frames')).json();$('nA').textContent=s.accepted;$('nR').textContent=s.rejected}
+async function getGrant(){const sd=await sessionDid();const c=await(await fetch(BASE+'/consent/grant',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionDid:sd,rate:4,ttlMin:30})})).json();ucan=c.grant;$('capstate').textContent='capability live · '+c.maxRate+'fps · '+c.expiresInSec+'s';$('capstate').style.borderColor='var(--pass)';$('capstate').style.color='var(--pass)';$('revoke').disabled=false;return c}
+function begin(draw,label){$('start').disabled=true;$('demo').disabled=true;$('note').textContent=label;timer=setInterval(()=>tick(draw),600)}
+$('demo').onclick=async()=>{$('note').textContent='minting session key + requesting consent…';await getGrant();begin(synthFrame,'streaming synthetic frames (headless-safe; real capture is the other button)')};
+$('start').onclick=async()=>{if(!navigator.mediaDevices?.getDisplayMedia){$('note').textContent='getDisplayMedia unavailable — use synthetic demo';return}$('note').textContent='pick a window/screen…';try{const s=await navigator.mediaDevices.getDisplayMedia({video:true,audio:false});video=document.createElement('video');video.srcObject=s;await video.play()}catch(e){$('note').textContent='capture cancelled';return}await getGrant();begin(drawVideo,'streaming your screen under the signed capability')};
+$('revoke').onclick=async()=>{await fetch(BASE+'/consent/revoke',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({grant:ucan})});$('capstate').textContent='capability REVOKED';$('capstate').style.borderColor='var(--fail)';$('capstate').style.color='var(--fail)';$('note').textContent='revoked — the SAME capability is now rejected by the sink (watch the console)';$('revoke').disabled=true};
+(async()=>{const a=await(await fetch(BASE+'/authority')).json();$('anchor').textContent=a.did})();
+// headless driver for the evidence rig
+window.__ssdebug={demo:()=>$('demo').onclick(),revoke:()=>$('revoke').onclick(),state:()=>({seq,acc:$('nA').textContent,rej:$('nR').textContent,cap:$('capstate').textContent})};
+</script></div></body></html>

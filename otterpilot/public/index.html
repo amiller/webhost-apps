@@ -111,6 +111,68 @@ select{background:var(--card);border:1.5px solid var(--rule);color:var(--text);
   #slides{padding:8px 10px}
   .btn{padding:10px 14px}
 }
+/* conversation call-stack rail — temporal navigation (#30). pod tokens only. */
+.btn.quiet{background:transparent;color:var(--text);border:1.5px solid var(--rule);box-shadow:none;
+  font:600 13px var(--sans);letter-spacing:0;text-transform:none;padding:9px 14px}
+.btn.quiet:hover{border-color:var(--ink1);color:var(--ink1)}
+#stackToggle{background:transparent;color:var(--ink1);border:1.5px solid var(--ink1);box-shadow:none;
+  font:700 12px var(--cond);text-transform:uppercase;letter-spacing:.12em;padding:9px 13px}
+#stackToggle:hover{background:var(--wash1)}
+#stackToggle[aria-expanded="true"]{background:var(--wash2);color:var(--i2-text)}
+.stack-backdrop[hidden],.stack-rail[hidden]{display:none}
+.stack-backdrop{position:fixed;inset:0;background:color-mix(in srgb,var(--deep) 45%,transparent);
+  z-index:30;cursor:pointer}
+.stack-rail{position:fixed;top:0;left:0;bottom:0;width:344px;max-width:88vw;background:var(--paper);
+  border-right:2.5px solid var(--ink1);z-index:31;display:flex;flex-direction:column;
+  box-shadow:6px 0 0 var(--ink2)}
+.rail-head{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;
+  border-bottom:1.5px solid var(--rule)}
+.rail-title{font:800 14px var(--cond);text-transform:uppercase;letter-spacing:.12em;color:var(--ink1)}
+.rail-x{background:none;border:0;font:800 16px var(--cond);color:var(--faint);cursor:pointer;padding:4px 8px}
+.rail-x:hover{color:var(--ink1)}
+.rail-sub{font:12px/1.5 var(--mono);color:var(--faint);padding:10px 16px 6px;margin:0;
+  border-bottom:1.5px solid var(--rule)}
+.rail-scroll{flex:1;overflow-y:auto;padding:8px 0}
+.stack-list{list-style:none;margin:0;padding:0}
+.stk-empty{padding:18px 16px;font:13px/1.6 var(--mono);color:var(--faint)}
+.stk-row{display:grid;grid-template-columns:auto 1fr auto;
+  grid-template-areas:"depth label meta" "depth prev prev";
+  gap:2px 10px;padding:10px 14px;border-bottom:1px solid var(--rule);cursor:pointer;align-items:baseline}
+.stk-row:hover{background:var(--wash1)}
+.stk-row.cur{background:var(--wash2);box-shadow:inset 5px 0 0 var(--ink2)}
+.stk-row.head .stk-label{font-weight:800}
+.stk-depth{grid-area:depth;font:500 11px var(--mono);color:var(--i1-text);white-space:nowrap;
+  align-self:start;padding-top:2px}
+.stk-label{grid-area:label;font:800 13px var(--cond);text-transform:uppercase;letter-spacing:.04em;
+  color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stk-meta{grid-area:meta;font:11px var(--mono);color:var(--faint);white-space:nowrap}
+.stk-prev{grid-area:prev;font:12px/1.45 var(--mono);color:var(--faint);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.stk-tag{display:inline-block;margin-left:6px;font:500 10px var(--mono);text-transform:uppercase;
+  letter-spacing:.1em;color:var(--i2-text);background:var(--wash2);padding:2px 6px}
+.fork-box{border-top:2px solid var(--ink1);margin-top:8px;padding:8px 0 0}
+.fork-head{display:flex;justify-content:space-between;align-items:center;padding:0 14px 8px}
+.fork-label{font:800 11px var(--cond);text-transform:uppercase;letter-spacing:.12em;color:var(--ink1)}
+.fork-nav{display:inline-flex;align-items:center;gap:6px;font:11px var(--mono);color:var(--faint)}
+.fork-arrow{width:24px;height:24px;border:1.5px solid var(--rule);background:var(--card);color:var(--text);
+  font:800 14px var(--cond);cursor:pointer;border-radius:0;padding:0}
+.fork-arrow:disabled{opacity:.4;cursor:default}
+.fork-arrow:hover:not(:disabled){border-color:var(--ink1);color:var(--ink1)}
+.fork-list{padding:0 8px}
+.fork-row{display:grid;grid-template-columns:auto 1fr auto;
+  grid-template-areas:"num label meta" "num prev prev";
+  gap:2px 8px;padding:8px 10px;border:1.5px solid var(--rule);margin:0 6px 6px;cursor:pointer;background:var(--card)}
+.fork-row:hover{border-color:var(--ink1)}
+.fork-row.sel{border-color:var(--ink2);box-shadow:3px 3px 0 var(--ink2)}
+.fork-row.main{border-left:5px solid var(--ink1)}
+.fork-num{grid-area:num;font:800 11px var(--mono);color:var(--i1-text);align-self:start;padding-top:2px}
+.fork-label{grid-area:label;font:800 13px var(--cond);text-transform:uppercase;letter-spacing:.04em;
+  color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fork-meta{grid-area:meta;font:11px var(--mono);color:var(--faint);white-space:nowrap}
+.fork-prev{grid-area:prev;font:12px/1.45 var(--mono);color:var(--faint);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.rail-live{margin:10px 14px 16px}
+.feed p.u.hl{background:var(--wash2);box-shadow:inset 4px 0 0 var(--ink2)}
 </style>
 </head>
 <body>
@@ -118,6 +180,7 @@ select{background:var(--card);border:1.5px solid var(--rule);color:var(--text);
 <header>
   <h1>otter live</h1>
   <span class="meet" id="meet"><span class="dot" id="dot"></span>looking for a live meeting…</span>
+  <button id="stackToggle" class="btn" type="button" aria-expanded="false" aria-controls="stackRail" title="browse the meeting as a topic call stack (Go-browser style)">call stack</button>
   <select id="win" title="how far back to recap">
     <option value="40">last bit</option>
     <option value="120" selected>~last few min</option>
@@ -131,6 +194,29 @@ select{background:var(--card);border:1.5px solid var(--rule);color:var(--text);
   <div id="sk-receipt"></div>
 </div>
 
+<aside id="stackRail" class="stack-rail" hidden aria-label="conversation call stack">
+  <div class="rail-head">
+    <b class="rail-title">call stack</b>
+    <button id="stackClose" class="rail-x" type="button" aria-label="close call stack">✕</button>
+  </div>
+  <p class="rail-sub">topic frames · up the stack = further back · the frame two levels above the cursor is tagged “two frames ago”. heuristic grouping: time gaps + keyword shifts fork returns — Go-game-browser style. no LLM, labels are approximate.</p>
+  <div class="rail-scroll">
+    <ol id="stackList" class="stack-list"></ol>
+    <div id="forkBox" class="fork-box" hidden>
+      <div class="fork-head">
+        <span class="fork-label">variations after this frame</span>
+        <span class="fork-nav">
+          <button id="forkPrev" class="fork-arrow" type="button" aria-label="previous variation">‹</button>
+          <span id="forkPos"></span>
+          <button id="forkNext" class="fork-arrow" type="button" aria-label="next variation">›</button>
+        </span>
+      </div>
+      <div id="forkList" class="fork-list"></div>
+    </div>
+  </div>
+  <button id="stackLive" class="btn quiet rail-live" type="button" hidden>↩ back to live</button>
+</aside>
+<div id="stackBackdrop" class="stack-backdrop" hidden></div>
 <div class="main">
   <div class="feed" id="feed"></div>
   <section class="side">
@@ -413,7 +499,7 @@ const slideRow = $("slideRow"), slideCap = $("slideCap");
 const NODE = location.origin + "/oauth3";
 ShareKit.init();   // inject the share-kit <style> once (consumes the pod tokens above)
 
-let after = 0, segs = [], live = false, lastSlide = "";
+let after = 0, segs = [], live = false, lastSlide = "", lastTitle = "";
 let pollTimer = null, followBanner = null;
 
 const shareToken = new URLSearchParams(location.search).get("token");
@@ -448,28 +534,47 @@ async function poll() {
     const headers = FOLLOW ? { Authorization: "Bearer " + shareToken } : {};
     const r = await fetch("live?after=" + after, { headers });
     const d = await r.json();
-    if (d.error) {
-      meet.innerHTML = '<span class="dot"></span>' + d.error;
+    if (d.state === "auth") {
+      // token rejected: honest end-state. In follow mode the share is gone; stop polling.
       live = false; renderSlides([], false);
-      // honest end-state: a token rejection means the share is revoked/expired/gone.
-      if (FOLLOW && /401|403|revok|expire|invalid|unauthor|no jar|not logged/i.test(String(d.error))) {
-        if (followBanner) followBanner.set({ status: "gone" });
-        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-      }
+      meet.innerHTML = '<span class="dot"></span>' + (d.message || "token rejected") +
+        (d.reading_as ? ' · reading as ' + d.reading_as : '');
+      if (FOLLOW && followBanner) followBanner.set({ status: "gone" });
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    } else if (d.state === "no-otter") {
+      // Otter isn't connected for the subject this token reads as — a truthful setup status,
+      // NOT an alarm and NOT masked as 'no live meeting'. Keep polling; it recovers the
+      // moment the jar is synced / the token rebound. States the subject it read as (#44).
+      live = false; renderSlides([], false);
+      meet.innerHTML = '<span class="dot"></span>' + (d.message || "Otter isn't connected") +
+        (d.reading_as ? ' · reading as ' + d.reading_as : '');
+    } else if (d.state || d.error) {
+      live = false; renderSlides([], false);
+      meet.innerHTML = '<span class="dot"></span>' + (d.message || d.error || "couldn't reach otter");
     } else if (!d.live) {
       live = false; renderSlides([], false);
       meet.innerHTML = '<span class="dot"></span>' +
         (FOLLOW ? "waiting for the live meeting to start…" : "no live meeting right now");
     } else {
       live = true;
+      // a different meeting (title change) starts a fresh call stack + recap window.
+      if (d.title && d.title !== lastTitle) {
+        lastTitle = d.title;
+        if (segs.length) { segs = []; feed.innerHTML = ""; }
+        if (window.__stackReset) window.__stackReset();
+      }
       meet.innerHTML = '<span class="dot live"></span>' + (d.title || "live meeting");
       for (const s of d.segments) {
-        segs.push(s.text);
+        segs.push(s);
+        const fr = window.FrameModel ? FrameModel.ingest(s) : null;
         const p = document.createElement("p"); p.className = "u"; p.textContent = s.text;
+        if (s && s.order != null) p.dataset.order = String(s.order);
+        if (fr) p.dataset.frame = fr.id;
         feed.appendChild(p);
       }
       if (d.segments.length) feed.scrollTop = feed.scrollHeight;
       after = d.max_order;
+      if (d.segments.length && window.__stackIngested) window.__stackIngested();
       renderSlides(d.images || [], true);
     }
   } catch (e) {
@@ -490,7 +595,7 @@ if (!FOLLOW) {
   };
   btn.onclick = async () => {
     const n = parseInt(win.value, 10);
-    const text = segs.slice(-n).join(" ");
+    const text = segs.slice(-n).map((s) => s.text).join(" ");
     if (!text.trim()) { out.innerHTML = '<span class="ph">No transcript captured yet.</span>'; revealRecap(); return; }
     btn.disabled = true; out.innerHTML = '<span class="ph">thinking…</span>'; revealRecap();
     try {
@@ -505,6 +610,238 @@ if (!FOLLOW) {
     btn.disabled = false; revealRecap();
   };
 }
+
+// --- conversation call stack: temporal navigation (#30) ---
+// A "frame" = a run of consecutive transcript segments that form one topic episode.
+// Frames are grouped cheaply and locally (no LLM): a time gap, a run cap, or a keyword
+// shift opens a new frame. The frames form a TREE, not a list: a new frame normally
+// extends the current branch (parent = previous frame), but if its keywords strongly
+// match an EARLIER frame we treat that as a RETURN and fork from that earlier frame —
+// a Go-game-browser variation off that point. The "call stack" = path root → cursor;
+// "two stack frames ago" = the frame two levels up from the cursor. Heuristic by design
+// (the UI says so); a meeting with no detected returns degrades to a linear stack, which
+// is still a valid, browsable call stack.
+(function () {
+  const STOP = new Set(("the a an and or but of to in on for with is are was were be been being i you he she we they it " +
+    "this that these those there here so just like yeah okay ok um uh oh hi hey as at by from your my our their his her " +
+    "its not no yes do does did done doing have has had having will would can could should shall may might must about " +
+    "into over under again more most very really gonna want wants wanted go goes went going get gets got getting make " +
+    "makes made making say says said saying one two three if then than because when while where what who whom which how " +
+    "why up down out back now then also only we're i'm you're they're that's it's").split(/\s+/));
+  const KW = (txt) => (txt || "").toLowerCase().replace(/[^a-z0-9\s']/g, " ").split(/\s+/)
+    .filter((w) => w.length > 2 && !STOP.has(w));
+
+  const FM = {
+    frames: [], byId: new Map(), headId: null, _seq: 0,
+    GAP_S: 45, MAX_RUN: 6, FORK_OVERLAP: 0.34,
+    reset() { this.frames = []; this.byId.clear(); this.headId = null; this._seq = 0; },
+    _newFrame(parentId) {
+      const id = "f" + (++this._seq);
+      const f = { id, parentId, childIds: [], order0: null, order1: null, count: 0,
+        kw: new Map(), text: "", label: "(empty)", preview: "", lastT: null };
+      this.byId.set(id, f); this.frames.push(f);
+      if (parentId && this.byId.has(parentId)) this.byId.get(parentId).childIds.push(id);
+      return f;
+    },
+    _label(f) {
+      const ranked = [...f.kw.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, 2);
+      if (ranked.length) return ranked.map((r) => r[0]).join(" · ");
+      const w = f.text.trim().split(/\s+/).slice(0, 4).join(" ");
+      return w || "(empty)";
+    },
+    _overlap(segKw, frame) {
+      if (!frame.kw.size || !segKw.length) return 0;
+      let hit = 0;
+      for (const w of segKw) if (frame.kw.has(w)) hit++;
+      return hit / segKw.length;
+    },
+    _shift(seg, cur) {
+      if (!cur.kw.size) return false;
+      return this._overlap(KW(seg.text), cur) < 0.18;
+    },
+    _forkTarget(seg, cur) {
+      // strongest earlier frame (not cur, not a descendant of cur — those would loop) whose
+      // overlap clearly beats continuing the current branch. Ancestors ARE allowed: that's
+      // the canonical "return to an earlier topic" fork.
+      const sk = KW(seg.text);
+      let best = null, bestO = 0;
+      for (const f of this.frames) {
+        if (f === cur) continue;
+        let isDesc = false;
+        for (let p = f; p; p = p.parentId ? this.byId.get(p.parentId) : null) {
+          if (p.id === cur.id) { isDesc = true; break; }
+        }
+        if (isDesc) continue;
+        const o = this._overlap(sk, f);
+        if (o > bestO) { bestO = o; best = f; }
+      }
+      const curO = this._overlap(sk, cur);
+      if (best && bestO >= this.FORK_OVERLAP && bestO > curO + 0.15) return best.id;
+      return null;
+    },
+    ingest(seg) {
+      const t = (seg && Number.isFinite(seg.start_time)) ? Number(seg.start_time) : null;
+      const cur = this.headId ? this.byId.get(this.headId) : null;
+      let f = cur;
+      if (!cur) f = this._newFrame(null);
+      else {
+        const runFull = cur.count >= this.MAX_RUN;
+        const gap = (t != null && cur.lastT != null && (t - cur.lastT) > this.GAP_S);
+        const shift = this._shift(seg, cur);
+        if (runFull || gap || shift) {
+          const forkTo = this._forkTarget(seg, cur);
+          f = this._newFrame(forkTo || cur.id);
+        }
+      }
+      f.count++; f.order1 = seg && seg.order;
+      if (f.order0 == null) f.order0 = seg && seg.order;
+      if (t != null) f.lastT = t;
+      f.text = (f.text ? f.text + " " : "") + ((seg && seg.text) || "");
+      for (const w of KW(seg && seg.text)) f.kw.set(w, (f.kw.get(w) || 0) + 1);
+      f.label = this._label(f);
+      f.preview = f.text.length > 140 ? f.text.slice(0, 140) + "…" : f.text;
+      this.headId = f.id;
+      return f;
+    },
+    pathTo(id) {
+      const path = []; let f = this.byId.get(id);
+      while (f) { path.unshift(f); f = f.parentId ? this.byId.get(f.parentId) : null; }
+      return path;
+    },
+  };
+  window.FrameModel = FM;
+
+  const rail = document.getElementById("stackRail");
+  const backdrop = document.getElementById("stackBackdrop");
+  const toggleBtn = document.getElementById("stackToggle");
+  const closeBtn = document.getElementById("stackClose");
+  const liveBtn = document.getElementById("stackLive");
+  const listEl = document.getElementById("stackList");
+  const forkBox = document.getElementById("forkBox");
+  const forkList = document.getElementById("forkList");
+  const forkPos = document.getElementById("forkPos");
+  const forkPrev = document.getElementById("forkPrev");
+  const forkNext = document.getElementById("forkNext");
+
+  let cursorId = null, followLive = true, forkIndex = 0;
+
+  function escS(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  }
+  function depthLabel(d) { return d === 0 ? "now" : d === 1 ? "1 up" : d + " up"; }
+  function isOnLiveBranch(id) { return FM.pathTo(FM.headId).some((p) => p.id === id); }
+
+  function openRail() {
+    rail.hidden = false; backdrop.hidden = false; document.body.style.overflow = "hidden";
+    toggleBtn.setAttribute("aria-expanded", "true"); render();
+  }
+  function closeRail() {
+    rail.hidden = true; backdrop.hidden = true; document.body.style.overflow = "";
+    toggleBtn.setAttribute("aria-expanded", "false");
+  }
+  toggleBtn.addEventListener("click", () => (rail.hidden ? openRail() : closeRail()));
+  closeBtn.addEventListener("click", closeRail);
+  backdrop.addEventListener("click", closeRail);
+  liveBtn.addEventListener("click", () => {
+    followLive = true; cursorId = FM.headId; forkIndex = 0; render(); scrollFeedToFrame(FM.headId, true);
+  });
+  forkPrev.addEventListener("click", () => stepFork(-1));
+  forkNext.addEventListener("click", () => stepFork(1));
+
+  function selectFrame(id) {
+    followLive = false;
+    cursorId = id;
+    const cur = FM.byId.get(id);
+    const kids = cur ? cur.childIds : [];
+    let li = 0;
+    for (let i = 0; i < kids.length; i++) if (isOnLiveBranch(kids[i])) { li = i; break; }
+    forkIndex = li;
+    render();
+    scrollFeedToFrame(id, false);
+  }
+  function stepFork(d) {
+    const cur = FM.byId.get(cursorId);
+    const kids = cur ? cur.childIds : [];
+    if (!kids.length) return;
+    const i = forkIndex + d;
+    if (i < 0 || i >= kids.length) return;
+    forkIndex = i;
+    selectFrame(kids[i]);   // descend into the chosen variation
+  }
+  function scrollFeedToFrame(id, toBottom) {
+    feed.querySelectorAll("p.u.hl").forEach((el) => el.classList.remove("hl"));
+    const p = feed.querySelector('p[data-frame="' + id + '"]');
+    if (p) {
+      feed.querySelectorAll('p[data-frame="' + id + '"]').forEach((el) => el.classList.add("hl"));
+      p.scrollIntoView({ behavior: "smooth", block: toBottom ? "end" : "center" });
+    } else if (toBottom) {
+      feed.scrollTop = feed.scrollHeight;
+    }
+  }
+
+  function render() {
+    if (!FM.frames.length) {
+      listEl.innerHTML = '<li class="stk-empty">no transcript yet — frames appear as the meeting flows.</li>';
+      forkBox.hidden = true; liveBtn.hidden = true; return;
+    }
+    if (followLive || !cursorId || !FM.byId.has(cursorId)) cursorId = FM.headId;
+    const path = FM.pathTo(cursorId);
+    liveBtn.hidden = cursorId === FM.headId;
+    listEl.innerHTML = path.map((f, i) => {
+      const depth = path.length - 1 - i;          // 0 at cursor, 1 one-up, 2 two-up …
+      const isCur = f.id === cursorId;
+      const isHead = f.id === FM.headId;
+      const cls = "stk-row" + (isCur ? " cur" : "") + (isHead ? " head" : "");
+      const tag = depth === 2 ? ' <span class="stk-tag">two frames ago</span>' : "";
+      return '<li class="' + cls + '" data-id="' + f.id + '">' +
+        '<span class="stk-depth">' + escS(depthLabel(depth)) + '</span>' +
+        '<span class="stk-label">' + escS(f.label) + tag + '</span>' +
+        '<span class="stk-meta">' + f.count + ' seg' + (f.count > 1 ? "s" : "") + '</span>' +
+        '<span class="stk-prev">' + escS(f.preview) + '</span>' +
+        '</li>';
+    }).join("");
+    Array.from(listEl.querySelectorAll(".stk-row")).forEach((row) =>
+      row.addEventListener("click", () => selectFrame(row.dataset.id)));
+
+    const cur = FM.byId.get(cursorId);
+    const kids = cur ? cur.childIds.map((id) => FM.byId.get(id)) : [];
+    if (kids.length) {
+      forkBox.hidden = false;
+      if (forkIndex >= kids.length) forkIndex = 0;
+      forkPos.textContent = (forkIndex + 1) + " / " + kids.length;
+      forkPrev.disabled = forkIndex <= 0;
+      forkNext.disabled = forkIndex >= kids.length - 1;
+      forkList.innerHTML = kids.map((k, i) => {
+        const sel = i === forkIndex ? " sel" : "";
+        const main = isOnLiveBranch(k.id) ? " main" : "";
+        const tag = isOnLiveBranch(k.id) ? " · live branch" : "";
+        return '<div class="fork-row' + sel + main + '" data-id="' + k.id + '">' +
+          '<span class="fork-num">' + (i + 1) + '</span>' +
+          '<span class="fork-label">' + escS(k.label) + '</span>' +
+          '<span class="fork-meta">' + k.count + ' seg' + (k.count > 1 ? "s" : "") + tag + '</span>' +
+          '<span class="fork-prev">' + escS(k.preview) + '</span>' +
+          '</div>';
+      }).join("");
+      Array.from(forkList.querySelectorAll(".fork-row")).forEach((r) =>
+        r.addEventListener("click", () => {
+          forkIndex = kids.findIndex((k) => k.id === r.dataset.id);
+          selectFrame(r.dataset.id);
+        }));
+    } else {
+      forkBox.hidden = true;
+    }
+  }
+
+  window.__stackReset = function () {
+    FM.reset(); cursorId = null; followLive = true; forkIndex = 0;
+    if (!rail.hidden) render();
+  };
+  window.__stackIngested = function () {
+    if (followLive) cursorId = FM.headId;
+    if (!rail.hidden) render();
+  };
+})();
 
 // --- mode wiring ---
 if (FOLLOW) {
