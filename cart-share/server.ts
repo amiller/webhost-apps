@@ -5,7 +5,7 @@
 // change your address/payment, or add unrelated items. You get a receipt of every swap and
 // can revoke any time. v1 runs against a realistic cart fixture (the model is the point);
 // v2 is the amazon browser-path plugin driving your real logged-in cart in the TEE.
-const BUILD = "v1";
+const BUILD = "v2";
 
 interface Item { id: string; name: string; cat: string; price: number; qty: number; organic: boolean; asin?: string }
 interface Sub { name: string; price: number; organic: boolean; why: string; asin?: string }
@@ -37,59 +37,66 @@ async function amazonSearch(term: string): Promise<AzProd[]> {
   }
   return out;
 }
-// what to fill the cart with: a realistic base item + its organic swap, both real amazon listings.
-const CATALOG = [
-  { id: "milk", cat: "dairy-alt", base: "almond breeze almond milk", organic: "365 organic almond milk", qty: 2 },
-  { id: "eggs", cat: "eggs", base: "eggland's best large eggs", organic: "vital farms organic eggs", qty: 1 },
-  { id: "coffee", cat: "coffee", base: "folgers ground coffee", organic: "organic ground coffee", qty: 1 },
-  { id: "sauce", cat: "pantry", base: "barilla marinara sauce", organic: "organic marinara sauce", qty: 2 },
-  { id: "peanutbutter", cat: "pantry", base: "jif peanut butter", organic: "organic peanut butter", qty: 1 },
-  { id: "oats", cat: "breakfast", base: "quaker oats", organic: "organic rolled oats", qty: 1 },
-];
-let cartSource: "amazon" | "fixture" = "fixture";
-// A realistic grocery cart + a curated "organic / similar" substitution per line.
-const PRICE_BAND = 1.5; // a substitute may cost at most +150% of the original (real amazon prices vary)
+// v2: the cart is the OWNER'S REAL Amazon cart, read through the oauth3 core's amazon plugin
+// (GET /api/amazon/items — the plugin reads /gp/cart with the owner's synced jar). No fixtures,
+// no guest search. Organic SUGGESTIONS are still a live search (an organic alternative per line).
+let OAUTH3_BASE = "https://pod.dstack.soc1024.com/oauth3";
+let OAUTH3_TOKEN = ""; // bearer to read the owner's cart via /api/amazon/items (set from env)
+const PRICE_BAND = 1.5; // an organic substitute may cost at most +150% of the original
+let cartSource: "amazon-jar" | "unconnected" = "unconnected";
+let cartError = "";
 
-// fixture fallback ONLY if amazon is unreachable — clearly flagged via cartSource.
-const fixtureCart = (): Item[] => [
-  { id: "milk", name: "Almond Breeze Almond Milk, 64oz", cat: "dairy-alt", price: 3.79, qty: 2, organic: false },
-  { id: "eggs", name: "Large Eggs, dozen", cat: "eggs", price: 3.29, qty: 1, organic: false },
-  { id: "coffee", name: "Folgers Ground Coffee, 25oz", cat: "coffee", price: 8.99, qty: 1, organic: false },
-];
-const fixtureSubs: Record<string, Sub> = {
-  milk: { name: "365 Organic Almond Milk, 64oz", price: 4.49, organic: true, why: "same category (dairy-alt), organic" },
-  eggs: { name: "Organic Free-Range Large Eggs, dozen", price: 5.99, organic: true, why: "same category (eggs), organic" },
-  coffee: { name: "Organic Peru Ground Coffee, 25oz", price: 12.49, organic: true, why: "same category (coffee), organic" },
-};
+// A short search query from a long Amazon title (first few meaningful words) — used to find an
+// organic alternative to a real cart line.
+function shortTerm(title: string): string {
+  return title.replace(/[^\w\s]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !/^\d+$/.test(w)).slice(0, 4).join(" ");
+}
 
 // --- state (in-memory; one cart for the demo) ---
 let cart: Item[] = [];
 let SUBS: Record<string, Sub> = {};
 let built = false;
 
-// Build the cart from REAL amazon listings: for each catalog line, the base product and its
-// organic swap are top live search results (real name, price, ASIN). Falls back to the fixture
-// (clearly flagged) if amazon is unreachable from the pod.
+// Read the OWNER'S REAL cart from the oauth3 core's amazon plugin, then find an organic
+// alternative for each non-organic line. Throws (honestly) if no jar is synced or Amazon
+// blocks the read — never invents a cart.
 async function buildRealCart(): Promise<void> {
-  const items: Item[] = [];
+  const r = await fetch(`${OAUTH3_BASE}/api/amazon/items`, {
+    headers: { authorization: `Bearer ${OAUTH3_TOKEN}` },
+    signal: AbortSignal.timeout(90000),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || d.error) throw new Error(d.error || d.reason || `amazon items ${r.status}`);
+  const raw = (Array.isArray(d) ? d : d.data || d.items || []) as Array<
+    { id: string; title: string; meta?: { asin?: string; price?: string | number; qty?: number } }
+  >;
+  const items: Item[] = raw.map((it) => ({
+    id: it.meta?.asin || it.id,
+    name: it.title.replace(/&#0?39;/g, "'").replace(/&amp;/g, "&").replace(/Opens in a new tab/gi, "").replace(/\s+/g, " ").trim().slice(0, 72),
+    cat: "cart",
+    price: +String(it.meta?.price ?? "0").replace(/[^0-9.]/g, "") || 0,
+    qty: Number(it.meta?.qty) || 1,
+    organic: /organic/i.test(it.title),
+    asin: it.meta?.asin || it.id,
+  }));
+  if (items.length === 0) throw new Error("your Amazon cart is empty — add something to it, then refresh");
   const subs: Record<string, Sub> = {};
-  for (const c of CATALOG) {
-    const [base, org] = await Promise.all([amazonSearch(c.base), amazonSearch(`${c.organic} organic`)]);
-    const b = base.find((p) => p.price > 0.5 && p.name.length > 18);
-    const o = org.find((p) => /organic/i.test(p.name) && p.price > 0.5) || org.find((p) => p.price > 0.5);
-    if (!b || !o) continue;
-    items.push({ id: c.id, name: b.name.slice(0, 78), cat: c.cat, price: b.price, qty: c.qty, organic: false, asin: b.asin });
-    subs[c.id] = { name: o.name.slice(0, 78), price: o.price, organic: true, asin: o.asin, why: `same category (${c.cat}), organic · real amazon listing` };
+  for (const it of items) {
+    if (it.organic) continue;
+    const org = await amazonSearch(`${shortTerm(it.name)} organic`).catch(() => []);
+    const o = org.find((p) => /organic/i.test(p.name) && p.price > 0.5 && p.asin !== it.asin);
+    if (o) subs[it.id] = { name: o.name.slice(0, 78), price: o.price, organic: true, asin: o.asin, why: "organic alternative · real amazon listing" };
   }
-  if (items.length < 3) throw new Error("too few amazon results");
   cart = items;
   SUBS = subs;
-  cartSource = "amazon";
+  cartSource = "amazon-jar";
+  cartError = "";
 }
 async function ensureCart(): Promise<void> {
   if (built) return;
   built = true;
-  try { await buildRealCart(); } catch (_e) { cart = fixtureCart(); SUBS = fixtureSubs; cartSource = "fixture"; }
+  try { await buildRealCart(); }
+  catch (e) { cart = []; SUBS = {}; cartSource = "unconnected"; cartError = String((e as Error).message || e); }
 }
 const revoked = new Set<string>();
 interface GrantRec { token: string; scope: string; created: number }
@@ -107,7 +114,13 @@ function checkCap(t: string): { ok: true } | { ok: false; reason: string } {
   return { ok: true };
 }
 
-export default async function handler(req: Request, _ctx: { env: Record<string, string>; dataDir: string }): Promise<Response> {
+let configured = false;
+export default async function handler(req: Request, ctx: { env: Record<string, string>; dataDir: string }): Promise<Response> {
+  if (!configured) {
+    if (ctx.env?.OAUTH3_BASE) OAUTH3_BASE = ctx.env.OAUTH3_BASE.replace(/\/$/, "");
+    if (ctx.env?.OAUTH3_TOKEN) OAUTH3_TOKEN = ctx.env.OAUTH3_TOKEN;
+    configured = true;
+  }
   const url = new URL(req.url);
   const path = url.pathname.replace(/^\/cart-share/, "") || "/";
 
@@ -116,7 +129,7 @@ export default async function handler(req: Request, _ctx: { env: Record<string, 
   }
   if (req.method === "GET" && path === "/health") {
     await ensureCart();
-    return json({ ok: true, build: BUILD, source: cartSource, items: cart.length });
+    return json({ ok: true, build: BUILD, source: cartSource, error: cartError || undefined, items: cart.length });
   }
   if (req.method === "GET" && path === "/debug") {
     const out: Record<string, unknown> = {};
@@ -137,14 +150,14 @@ export default async function handler(req: Request, _ctx: { env: Record<string, 
     receipt.length = 0;
     checkedOut = false;
     await ensureCart();
-    return json({ source: cartSource, items: cart.length });
+    return json({ source: cartSource, error: cartError || undefined, items: cart.length });
   }
 
   await ensureCart();
 
   // owner view of the cart + receipt + grant state
   if (req.method === "GET" && path === "/cart") {
-    return json({ source: cartSource, cart, total: +cart.reduce((s, i) => s + i.price * i.qty, 0).toFixed(2), receipt, checkedOut, shared: !!grant && !revoked.has(grant.token) });
+    return json({ source: cartSource, error: cartError || undefined, cart, total: +cart.reduce((s, i) => s + i.price * i.qty, 0).toFixed(2), receipt, checkedOut, shared: !!grant && !revoked.has(grant.token) });
   }
 
   // OWNER: mint a scoped, revocable substitute-only capability for a friend.
