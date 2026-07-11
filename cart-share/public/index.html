@@ -81,15 +81,19 @@ async function owner(){
   $('sub').innerHTML="This is <b>your real Amazon cart</b> — read through OAuth3 from your logged-in amazon.com session (your cookies stay sealed in the TEE; this app never sees them). A friend gets a <b>scoped, revocable, substitute-only capability</b> to swap items for organic equivalents; you get a receipt of every swap and check out yourself.";
   await drawOwner();
 }
+// The scoped token lives ONLY here, in this tab's memory — never persisted, never shown. We
+// reuse it across retries so that after a one-time step-up approval, "Connect again" completes
+// with the SAME token (minting a fresh one each time would re-trigger step-up forever).
+let amzToken=null;
 async function doConnect(){
-  if(!window.oauth3){renderConnect('OAuth3 extension not detected on this page — enable it (it holds your sealed Amazon session), then Connect.');return}
-  const b=$('connect'); if(b){b.disabled=true;b.textContent='Approve in the extension…'}
+  if(!amzToken&&!window.oauth3){renderConnect('OAuth3 extension not detected on this page — enable it (it holds your sealed Amazon session), then Connect.');return}
+  const b=$('connect'); if(b){b.disabled=true;b.textContent=amzToken?'Reading your cart…':'Approve in the extension…'}
   try{
-    const token=await window.oauth3.connect({plugin:PLUGIN,app:APP,node:NODE});
-    const r=await j('POST','/connect',null,{authorization:'Bearer '+token});
-    if(r.source!=='amazon-jar'){renderConnect(r.error||'read failed');return}
+    if(!amzToken) amzToken=await window.oauth3.connect({plugin:PLUGIN,app:APP,node:NODE});
+    const r=await j('POST','/connect',null,{authorization:'Bearer '+amzToken});
+    if(r.source!=='amazon-jar'){ if(!/challenge|step.?up/i.test(r.error||'')) amzToken=null; renderConnect(r.error||'read failed');return}
     await drawOwner();
-  }catch(e){renderConnect(String(e&&e.message||e))}
+  }catch(e){amzToken=null;renderConnect(String(e&&e.message||e))}
 }
 function renderConnect(err){
   $('view').innerHTML='<div class=card><h2>connect your amazon · scoped &amp; revocable</h2>'
