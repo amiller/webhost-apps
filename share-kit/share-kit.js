@@ -6,10 +6,20 @@
  * expressing it differently (or not at all). share-kit is the small shared UI that makes
  * that shape visible and consistent, so learning one app teaches all of them.
  *
- * It exports THREE pieces (plus the observable ShareHandle that wires them together):
+ * It exports the capability-SHARE pieces (plus the observable ShareHandle that wires them
+ * together), AND the CONNECT half that every relying-party app needs to obtain the scoped
+ * token in the first place:
  *   1. ShareKit.shareAction(el, {label, onShare})       — the journey-labeled button
  *   2. ShareKit.capabilityReceipt(el, handle)            — link + scope sentence + revoke + status pill
  *   3. ShareKit.recipientBanner(el, handleOrOpts)        — top strip on a shared view, honest end-states
+ *   4. ShareKit.oauth3Connect({plugin,app,node,onStatus,probe}) -> Promise<token>
+ *      runs the connect handshake via window.oauth3; if `probe` is given, runs the gated
+ *      read and treats a 409 challenge_pending / step-up as RETRYABLE (polls
+ *      GET /api/challenge/:id, capped ~20×4s, mirroring otterpilot's proven #61 recover),
+ *      re-running the probe on approval; every other failure is TERMINAL and re-thrown so
+ *      the app renders the REAL error (no raw dead-end, no mock/mask).
+ *      ShareKit.oauth3Read(node, path, token) -> Promise<body> is the gated-read primitive
+ *      the probe calls; it throws the step-up marker on 409 challenge_pending.
  *
  * DESIGN SYSTEM: share-kit is a *component* layer, not a token layer — exactly like the
  * pod's components.css. It CONSUMES the host app's pod design tokens (--ink1/--ink2/
@@ -25,7 +35,7 @@
  */
 (function () {
   "use strict";
-  var VERSION = "0.1.0";
+  var VERSION = "0.2.0";
 
   var CSS = [
 /* base — consumes host tokens; scoped so it never touches host styles */
@@ -238,6 +248,144 @@
     return h || {};
   }
 
+  /*
+   * 4) OAUTH3 CONNECT — the shared connect handshake + gated-read recovery.
+   *
+   * Every relying-party app on the pod needs the same thing: ask the OAuth3 wallet for a
+   * scoped token, then read through it. They were each hand-rolling it five different ways —
+   * and timeline-peek DEAD-ENDED on a step-up, rendering the raw `challenge_pending` string
+   * in pink with no recovery. This is the one shared path. Two pieces:
+   *
+   *   oauth3Connect({plugin, app, node, onStatus, probe}) -> Promise<token>
+   *     - runs window.oauth3.connect() (the wallet/extension carries consent + approval and
+   *       hands back a bare token string). If no wallet is present, throws a readable terminal
+   *       error (NOT a silent stall).
+   *     - if `probe(token)` is given, runs it AFTER connect. A probe that rejects with the
+   *       step-up marker (409 challenge_pending + challengeId, see oauth3Read) is RETRYABLE:
+   *       onStatus("waiting-approval") fires, the challenge is polled (capped ~20×4s), and the
+   *       probe is re-run on approval. denied/expired/unknown/timeout, and EVERY other probe
+   *       error, is TERMINAL — re-thrown so the app surfaces the real message. No mock, no
+   *       mask, no raw dead-end.
+   *     - onStatus(state, detail) lets the app render the states: "connecting" → "approved" →
+   *       "reading" → ("waiting-approval" → "reading")*. Resolves with the token once a probe
+   *       (if any) passes; with no probe, resolves right after connect.
+   *
+   *   oauth3Read(node, path, token) -> Promise<body>
+   *     - the gated-read primitive the probe calls (e.g. "/api/twitter/feed"). 409
+   *       challenge_pending + challengeId throws the RETRYABLE marker; any other non-2xx
+   *       throws a TERMINAL Error carrying the node's real {error}; 2xx returns the parsed
+   *       body. A network failure throws a terminal "couldn't reach the oauth3 node" error.
+   *
+   * The step-up challenge poll mirrors otterpilot's proven recover pattern (webhost-apps
+   * #61/#62): the server holds a guarded read for out-of-band approval (RFC 0005) and the
+   * app bounces back automatically on approval instead of going down.
+   */
+  function oauth3Read(node, path, token) {
+    return (async function () {
+      node = String(node || "").replace(/\/$/, "");
+      var r;
+      try {
+        r = await fetch(node + path, { headers: { Authorization: "Bearer " + token } });
+      } catch (e) {
+        var ne = new Error("couldn't reach the oauth3 node (" + ((e && e.message) || e) + ")");
+        ne.terminal = true; throw ne;
+      }
+      var body = null;
+      try { body = await r.json(); } catch (_) { body = null; }
+      if (r.ok) return body || {};
+      // step-up (RFC 0005): a 409 with {error:'challenge_pending', challengeId} is retryable.
+      if (r.status === 409 && body && body.error === "challenge_pending" && body.challengeId) {
+        var se = new Error("challenge_pending");
+        se.oauth3StepUp = true; se.challengeId = body.challengeId; throw se;
+      }
+      // everything else is terminal — surface the node's real error, never mask it.
+      var te = new Error((body && (body.error || body.message)) || (path + " " + r.status));
+      te.status = r.status; te.terminal = true; throw te;
+    })();
+  }
+
+  // Poll GET {node}/api/challenge/:id until decided, or the cap is hit (~20×4s ≈ 80s).
+  // Returns "approved" | "denied" | "expired" | "unknown" | "timeout". onTick(status, n)
+  // lets the caller keep a "waiting…" banner live each round. Network blips are treated as
+  // pending (keep polling) so a transient drop doesn't kill an otherwise-recoverable read.
+  function pollChallenge(node, id, token, onTick) {
+    node = String(node || "").replace(/\/$/, "");
+    var attempts = 20, delay = 4000;
+    return new Promise(function (resolve) {
+      var n = 0;
+      (async function loop() {
+        while (n < attempts) {
+          n++;
+          var st = "pending";
+          try {
+            var r = await fetch(node + "/api/challenge/" + encodeURIComponent(id),
+              { headers: { Authorization: "Bearer " + token } });
+            if (r.status === 404) { if (onTick) onTick("unknown", n); return resolve("unknown"); }
+            var j = null; try { j = await r.json(); } catch (_) {}
+            st = (j && (j.status || (j.data && j.data.status))) || (r.ok ? "pending" : "unknown");
+          } catch (e) { st = "pending"; }
+          if (onTick) onTick(st, n);
+          if (st === "approved" || st === "denied" || st === "expired" || st === "unknown") return resolve(st);
+          await new Promise(function (rr) { setTimeout(rr, delay); });
+        }
+        resolve("timeout");
+      })();
+    });
+  }
+
+  function oauth3Connect(opts) {
+    opts = opts || {};
+    var node = String(opts.node || "").replace(/\/$/, "");
+    var onStatus = typeof opts.onStatus === "function" ? opts.onStatus : function () {};
+    var probe = typeof opts.probe === "function" ? opts.probe : null;
+    var MAX_PROBE_ROUNDS = 3;
+    return (async function () {
+      if (typeof window === "undefined" || !window.oauth3 || typeof window.oauth3.connect !== "function") {
+        var we = new Error("No OAuth3 wallet found — install the oauth3 extension and reload.");
+        we.terminal = true; throw we;
+      }
+      onStatus("connecting", { plugin: opts.plugin });
+      var got;
+      try {
+        got = await window.oauth3.connect({ plugin: opts.plugin, app: opts.app, subject: opts.subject, node: node });
+      } catch (e) {
+        var ce = new Error(String((e && e.message) || e)); ce.terminal = true; throw ce;
+      }
+      // The wallet resolves with a bare token string (provider-inject.js). Be defensive about
+      // an object {token}/{error} shape too in case a future wallet returns one.
+      var token = (got && typeof got === "object") ? (got.error ? null : got.token) : got;
+      if (!token || typeof token !== "string") {
+        var ne = new Error((got && got.error) || "connect returned no token (approval denied or cancelled)");
+        ne.terminal = true; throw ne;
+      }
+      onStatus("approved", { plugin: opts.plugin });
+      if (!probe) return token; // pure-handshake mode
+
+      for (var i = 0; i < MAX_PROBE_ROUNDS; i++) {
+        onStatus("reading", { round: i + 1 });
+        try {
+          await probe(token);
+          return token; // read passed — token is known-good
+        } catch (e) {
+          if (e && e.oauth3StepUp && e.challengeId) {
+            onStatus("waiting-approval", { challengeId: e.challengeId, round: i + 1 });
+            var decision = await pollChallenge(node, e.challengeId, token, function (st, k) {
+              onStatus("waiting-approval", { challengeId: e.challengeId, round: i + 1, poll: st, attempt: k });
+            });
+            if (decision === "approved") continue; // retry the probe
+            var de = new Error("step-up " + decision +
+              " — the read needs approval that didn't come through. Try Connect again.");
+            de.terminal = true; throw de;
+          }
+          throw e; // terminal — the app renders the honest, real error
+        }
+      }
+      // The read kept re-triggering step-up past the retry cap — honest terminal fail.
+      var ex = new Error("the read kept requiring step-up approval — try Connect again.");
+      ex.terminal = true; throw ex;
+    })();
+  }
+
   window.ShareKit = {
     VERSION: VERSION,
     CSS: CSS,
@@ -246,6 +394,8 @@
     shareAction: shareAction,
     capabilityReceipt: capabilityReceipt,
     recipientBanner: recipientBanner,
+    oauth3Connect: oauth3Connect,
+    oauth3Read: oauth3Read,
     esc: esc
   };
 })();
