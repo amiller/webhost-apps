@@ -720,9 +720,90 @@ async function loadFeed(token){
 // terminal error — NOT the old raw "challenge_pending" pink dead-end. The twitter backend
 // (browser-SPI) is down on staging, so a green feed isn't achievable there; acceptance for
 // #66 is this graceful HANDLING, not a green feed.
+
+// ---- no-extension wallet fallback (#9) -----------------------------------
+// With the extension, ShareKit.oauth3Connect() (below) carries the whole flow via
+// window.oauth3.connect(). Without the extension (e.g. a phone / clean profile) we instead
+// self-provision an Ed25519 did:key wallet in THIS browser, sign into the node via
+// POST /api/login (the "Continue in this browser" path), then run the connect handshake and
+// approve it with that wallet session. This app only ever sees the scoped token; the wallet's
+// credentials stay in this browser. Every step surfaces its real error — nothing is masked.
+const DK = "oauth3_didkey", SK = "oauth3_session";
+const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const b64 = (u) => btoa(String.fromCharCode(...u));
+const b64uDec = (s) => { s = s.replace(/-/g, "+").replace(/_/g, "/"); return Uint8Array.from(atob(s + "=".repeat((4 - s.length % 4) % 4)), c => c.charCodeAt(0)); };
+const b58e = (b) => { const d = [0]; for (const x of b) { let c = x; for (let j = 0; j < d.length; j++) { c += d[j] << 8; d[j] = c % 58; c = (c / 58) | 0; } while (c) { d.push(c % 58); c = (c / 58) | 0; } } let s = ""; for (const x of b) { if (x === 0) s += "1"; else break; } for (let k = d.length - 1; k >= 0; k--) s += B58[d[k]]; return s; };
+
+// Ed25519 keypair kept in localStorage; the public side becomes a did:key. The private key
+// never leaves the browser — the node only ever sees DID + signature.
+async function walletKey(){
+  let jwk = JSON.parse(localStorage.getItem(DK) || "null");
+  if(!jwk){
+    const kp = await crypto.subtle.generateKey({ name:"Ed25519" }, true, ["sign","verify"]);
+    jwk = await crypto.subtle.exportKey("jwk", kp.privateKey);
+    localStorage.setItem(DK, JSON.stringify(jwk));
+  }
+  const priv = await crypto.subtle.importKey("jwk", jwk, { name:"Ed25519" }, false, ["sign"]);
+  const did = "did:key:z" + b58e(Uint8Array.from([0xed, 0x01, ...b64uDec(jwk.x)]));
+  return { priv, did };
+}
+
+// Sign into the node with the self-provisioned wallet. Reuses a still-valid session if one
+// is already in localStorage; otherwise signs a fresh challenge. Throws the real error.
+async function walletSignIn(){
+  const stored = localStorage.getItem(SK);
+  if(stored){
+    try{
+      const me = await (await fetch(NODE + "/api/me", { headers: { Authorization: "Bearer " + stored } })).json();
+      if(me && me.signedIn) return stored;
+    }catch(_){ /* session invalid/unreachable — fall through and re-sign-in */ }
+  }
+  const { priv, did } = await walletKey();
+  const { challenge } = await (await fetch(NODE + "/api/login/challenge")).json();
+  const sig = b64(new Uint8Array(await crypto.subtle.sign({ name:"Ed25519" }, priv, new TextEncoder().encode(challenge))));
+  const r = await fetch(NODE + "/api/login", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ did, challenge, signature: sig }) });
+  const body = await r.json().catch(() => ({}));
+  if(!r.ok) throw new Error(body.error || ("login " + r.status));
+  localStorage.setItem(SK, body.session);
+  return body.session;
+}
+
+// connect handshake without the extension: request → approve with the wallet session →
+// poll for the scoped token. The user already consented by clicking Connect, so the freshly-
+// minted wallet session approves the grant on its own subject. Surfaces the real error.
+async function connectViaWallet(){
+  const session = await walletSignIn();
+  const cr = await fetch(NODE + "/api/connect", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ plugin:"twitter", app:"timeline-peek" }) });
+  const c = await cr.json().catch(() => ({}));
+  if(!cr.ok) throw new Error(c.error || ("connect " + cr.status));
+  const ar = await fetch(NODE + "/api/connect/" + c.requestId + "/approve", { method:"POST", headers:{ "Content-Type":"application/json", Authorization:"Bearer " + session }, body:"{}" });
+  if(!ar.ok){ const e = await ar.json().catch(() => ({})); throw new Error(e.error || ("approve " + ar.status)); }
+  const deadline = Date.now() + 30_000;
+  while(Date.now() < deadline){
+    const s = await (await fetch(NODE + "/api/connect/" + c.requestId)).json().catch(() => ({}));
+    if(s.status === "approved" && s.token) return s.token;
+    if(s.status === "denied") throw new Error("connect denied by user");
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  throw new Error("connect timed out");
+}
+
+// owner-mode connect: EXTENSION-FIRST via ShareKit.oauth3Connect (byte-identical to #66/#68),
+// with the #9 no-extension wallet fallback so phones/clean profiles no longer hit the old
+// "install the oauth3 extension" dead-end. Only the no-window.oauth3 branch differs from #66.
 async function onConnect(){
   const n = $("note"); n.className="note"; n.textContent="";
-  if(!window.oauth3){ n.className="note err"; n.textContent="No OAuth3 wallet found — install the oauth3 extension and reload."; return; }
+  if(!window.oauth3){
+    // No extension (#9): self-provision a wallet here instead of the old dead-end.
+    $("go").disabled = true;
+    try{
+      n.textContent = "Self-provisioning a wallet in this browser…";
+      const token = await connectViaWallet();
+      n.textContent = "Reading your feed with the scoped token…";
+      await loadFeed(token);
+    }catch(e){ n.className="note err"; n.textContent = humanizeError(e); $("go").disabled=false; }
+    return;
+  }
   $("go").disabled = true;
   try{
     await ShareKit.oauth3Connect({
@@ -824,6 +905,12 @@ if(DEMO){
   $("note").textContent = "Loading shared feed…";
   loadFeed(shareToken).catch(e => { const n=$("note"); n.className="note err"; n.textContent = String(e.message||e); });
 } else {
+  // No extension detected (mobile / clean profile): relabel Connect so the #9 wallet
+  // fallback is discoverable instead of the old dead-end. Extension path keeps its label.
+  if(!window.oauth3){
+    $("go").textContent = "Sign in with OAuth3";
+    $("note").textContent = "No OAuth3 extension detected — Connect will sign you in with a wallet kept in this browser.";
+  }
   $("go").addEventListener("click", onConnect);
 }
 </script>
