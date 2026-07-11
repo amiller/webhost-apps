@@ -1,0 +1,19 @@
+=== issue #9 wallet-path re-verification — 2026-07-11T18:53:58Z ===
+=== base = current staging node, webhost /_api/version below ===
+
+:: webhost /_api/version (gateway) :: {"version":"dev","commit":"a18c3c2a"}
+:: self-provisioned did:key :: did:key:z6MkfFjbYvnqskTq19fHo8pSGW9VLq7ZRu69wo2cZLGaZiYg
+:: challenge len :: 48
+:: POST /api/login -> HTTP 200 :: {"ok":true,"subject":"did:key:z6MkfFjbYvnqskTq19fHo8pSGW9VLq7ZRu69wo2cZLGaZiYg","session":"sess-dd0575d05e2147b4adf1ffdf3ea3835bf268f682f3f447109b81a5ea554f4328"}
+:: GET /api/me (signedIn) :: true subject=did:key:z6MkfFjbYvnqskTq19fHo8pSGW9VLq7ZRu69wo2cZLGaZiYg
+:: POST /api/connect -> HTTP 200 :: {"requestId":"req-d54f784f6d9649ac8e2d85a49ef83d1e","approveUrl":"https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network/oauth3/approve/req-d54f784f6d9649ac8e2d85a49ef83d1e"}
+:: POST /approve -> HTTP 200 :: {"ok":true,"status":"approved"}
+:: poll[0] status=approved :: tok-twitter-ec68…
+:: scoped token :: tok-twitter-ec68a32ebd2c…
+:: GET /api/twitter/feed -> HTTP 409 :: {"error":"no jar synced for twitter"}
+DONE. feed HTTP 409 — auth honored: true | jar present: false
+
+=== screenshot-blocker re-check (envoy bridge, same time) ===
+screenshot -> success=False error='timeout' result_len=0
+dataset job still running: 3591614 /bin/sh -c flock -n /home/amiller/.dataset.lock bash -lc 'cd /home/amiller/projects/oram-research && DATASET_DIR=/home/amiller/projects/oram-research ENVOY_CONTAINER=envoy-browser python3 build_dataset.py' >> /home/amiller/projects/oram-research/dataset.log 2>&1
+neko /api/screenshot -> HTTP 404

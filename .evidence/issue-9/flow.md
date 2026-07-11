@@ -64,3 +64,47 @@ Seeding the twitter jar is an operator/ingest step (the prod jar is operator-run
 2. Screenshot the **"Sign in with OAuth3"** landing (proves no dead-end).
 3. Click → screenshot the wallet self-provision → token mint → feed read.
 4. (For *real tweets*) seed the twitter jar for the signed-in subject, then screenshot the feed.
+
+---
+
+## Re-verification — 2026-07-11 (this iteration, operator-ask drain)
+
+The node has moved on since the record above (staging gateway `/_api/version` is now
+`commit a18c3c2a`, newer than when the original transcript was taken). I re-ran the wallet
+path against the **current** node to confirm the regression fix is still live and the flow
+still completes end-to-end. Raw transcript (two independent runs, fresh wallet each time):
+`.evidence/issue-9/reverify-2026-07-11.txt`. Summary:
+
+- `GET /oauth3/api/login/challenge` → `200 {challenge}` (len 48).
+- Self-provisioned Ed25519 `did:key:z6MkfFjb…` → `POST /oauth3/api/login` → **`200`**
+  `{ok:true, subject, session:"sess-…"}`.
+- `GET /oauth3/api/me` (Bearer session) → `{signedIn:true, subject:<same did>}`.
+- `POST /oauth3/api/connect` `{plugin:twitter, app:timeline-peek}` → `200 {requestId, approveUrl}`.
+- `POST /oauth3/api/connect/<id>/approve` (Bearer session) → `200 {status:"approved"}`.
+- Poll `/oauth3/api/connect/<id>` → `status=approved`, scoped token `tok-twitter-ec68a32e…`.
+- `GET /oauth3/api/twitter/feed` (Bearer token) → **`409 {"error":"no jar synced for twitter"}`**
+  — i.e. the scoped token is **honored** (a 401 would mean unauthorized); 409 is the real value
+  state for a freshly self-provisioned subject whose twitter jar is not seeded. Confirmed across
+  two runs with distinct dids/subjects/tokens.
+
+Also re-confirmed the deployed page itself: `GET /timeline-peek/` serves title `Home / Timeline
+Peek` with `Sign in with OAuth3` + `connectViaWallet` present (count = 1 / 2) and **both** dead-end
+strings (`install the oauth3 extension`, `No OAuth3 wallet found`) **absent** (count = 0). The fix
+survived the staging drift.
+
+### Screenshot blocker — STILL active (true external blocker)
+The envoy bridge `screenshot` tool still returns `{success:false, error:"timeout"}` (~10 s internal
+cap, independent of the client budget) while `oram-research/build_dataset.py` (PID 3591614/3591615,
+lock `~/.dataset.lock`) continues to saturate the single shared envoy browser (parked on
+`eprint.iacr.org`). Alternatives re-checked at the same timestamp: neko `/api/screenshot` →
+`404`; container framebuffer capture — none available (no `scrot`/`import`/`xwd`/`ffmpeg`/PIL in the
+`envoy-browser` container, and I will not `apt install` into the operator's container);
+`browser-box` is CDP chromium — **banned** by LESSONS. I did not kill the dataset build (operator's
+active research job).
+
+### Label decision (honest)
+Per the spec, a user-visible change requires Tier 2 (rendered screenshots) for `ready-to-merge`.
+The functional proof is real and now re-confirmed on the current node, but I did **not** capture a
+rendered screenshot, so the PR **stays `needs-e2e`** — not faked, not flipped. Flip to
+`ready-to-merge` only when step 1-3 under "To finish Tier 2" above are driven against a free
+envoy browser.
