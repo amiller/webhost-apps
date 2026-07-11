@@ -115,7 +115,15 @@ async function drawOwner(){
     +'<button class="big ghost" id=logout>Log out</button>'
     +'</div><div id=linkbox></div>'
     +'<div class=card><h2>receipt — what your friend swapped</h2>'+rec+'</div>';
-  const sh=$('share'); if(sh&&!c.shared)sh.onclick=async()=>{const g=await j('POST','/share');$('linkbox').innerHTML='<div class=note>share this link with your friend:</div><div class=link>'+location.origin+g.link+'</div><div class=row style=margin-top:10px><button class="big ghost" id=asfriend>Open the friend view →</button></div>';$('asfriend').onclick=()=>location.href=g.link;drawOwner()};
+  const sh=$('share'); if(sh&&!c.shared)sh.onclick=async()=>{await j('POST','/share');await drawOwner();};
+  // When shared, render the scoped friend link persistently (the earlier code wiped it on redraw).
+  if(c.shared&&c.link){const full=location.origin+c.link;
+    $('linkbox').innerHTML='<div class=card><h2>friend link · scoped capability <span class=mono>'+(c.scope||'')+'</span></h2><div style="padding:11px 13px">'
+      +'<div class=note style="margin-bottom:8px">Send this to your friend. It lets them ONLY swap items for organic within a price band — <b>no checkout, no address, no payment</b>. Revoke any time.</div>'
+      +'<div class=link id=flink>'+full+'</div>'
+      +'<div class=row style="margin-top:10px"><button class="big" id=copylink>Copy link</button><button class="big ghost" id=asfriend>Open friend view →</button></div></div></div>';
+    $('copylink').onclick=async()=>{try{await navigator.clipboard.writeText(full);$('copylink').textContent='Copied ✓'}catch{const r=document.createRange();r.selectNode($('flink'));getSelection().removeAllRanges();getSelection().addRange(r);$('copylink').textContent='Press ⌘/Ctrl+C'}};
+    $('asfriend').onclick=()=>location.href=c.link;}
   const rv=$('revoke'); if(rv)rv.onclick=async()=>{await j('POST','/revoke');drawOwner()};
   const co=$('checkout'); if(co&&!c.checkedOut)co.onclick=async()=>{await j('POST','/checkout');drawOwner()};
   // Log out: drop the in-tab token and clear the app's cached cart back to the Connect screen.

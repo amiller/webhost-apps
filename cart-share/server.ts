@@ -162,7 +162,8 @@ export default async function handler(req: Request, ctx: { env: Record<string, s
 
   // owner view of the cart + receipt + grant state
   if (req.method === "GET" && path === "/cart") {
-    return json({ source: cartSource, error: cartError || undefined, cart, total: +cart.reduce((s, i) => s + i.price * i.qty, 0).toFixed(2), receipt, checkedOut, shared: !!grant && !revoked.has(grant.token) });
+    const shared = !!grant && !revoked.has(grant.token);
+    return json({ source: cartSource, error: cartError || undefined, cart, total: +cart.reduce((s, i) => s + i.price * i.qty, 0).toFixed(2), receipt, checkedOut, shared, link: shared ? `/cart-share/?cap=${grant!.token}` : undefined, scope: shared ? grant!.scope : undefined });
   }
 
   // OWNER: mint a scoped, revocable substitute-only capability for a friend.
