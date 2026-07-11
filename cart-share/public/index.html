@@ -112,11 +112,14 @@ async function drawOwner(){
     +'<div class=row>'
     +(c.shared?'<button class="big ghost" id=share disabled>friend invited ✓</button><button class="big pink" id=revoke>Revoke capability</button>':'<button class="big" id=share>Invite a friend to organic-ify it</button>')
     +'<button class="big" id=checkout '+(c.checkedOut?'disabled':'')+'>'+(c.checkedOut?'checked out ✓':'Check out (owner)')+'</button>'
+    +'<button class="big ghost" id=logout>Log out</button>'
     +'</div><div id=linkbox></div>'
     +'<div class=card><h2>receipt — what your friend swapped</h2>'+rec+'</div>';
   const sh=$('share'); if(sh&&!c.shared)sh.onclick=async()=>{const g=await j('POST','/share');$('linkbox').innerHTML='<div class=note>share this link with your friend:</div><div class=link>'+location.origin+g.link+'</div><div class=row style=margin-top:10px><button class="big ghost" id=asfriend>Open the friend view →</button></div>';$('asfriend').onclick=()=>location.href=g.link;drawOwner()};
   const rv=$('revoke'); if(rv)rv.onclick=async()=>{await j('POST','/revoke');drawOwner()};
   const co=$('checkout'); if(co&&!c.checkedOut)co.onclick=async()=>{await j('POST','/checkout');drawOwner()};
+  // Log out: drop the in-tab token and clear the app's cached cart back to the Connect screen.
+  const lo=$('logout'); if(lo)lo.onclick=async()=>{amzToken=null;await j('POST','/reset');await drawOwner()};
 }
 
 if(cap){friend();}else{owner();}

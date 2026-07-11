@@ -16,11 +16,13 @@ CVM="${CVM:-https://pod.dstack.soc1024.com}"
 OAUTH3_BASE="${OAUTH3_BASE:-https://pod.dstack.soc1024.com/oauth3}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
-if [ -z "${TEE_DAEMON_TOKEN:-}" ] && [ -f "$HOME/.tee-daemon-staging.env" ]; then
-  # shellcheck disable=SC1091
-  source "$HOME/.tee-daemon-staging.env"
+# Daemon token: env override, else the prod deploy-notes env (CVM defaults to prod). For a
+# staging deploy pass TEE_DAEMON_TOKEN / CVM explicitly.
+ENVF="${ENVF:-$HOME/projects/hermes-agent/deploy-notes/.env.hermes-prod}"
+if [ -z "${TEE_DAEMON_TOKEN:-}" ] && [ -f "$ENVF" ]; then
+  TEE_DAEMON_TOKEN=$(grep -m1 '^TEE_DAEMON_TOKEN=' "$ENVF" | cut -d= -f2-)
 fi
-: "${TEE_DAEMON_TOKEN:?no TEE_DAEMON_TOKEN — set it or source ~/.tee-daemon-staging.env}"
+: "${TEE_DAEMON_TOKEN:?no TEE_DAEMON_TOKEN — set it or ensure $ENVF exists}"
 
 MANIFEST=$(OAUTH3_BASE="$OAUTH3_BASE" python3 - <<'PY'
 import json, os
