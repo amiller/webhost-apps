@@ -501,6 +501,10 @@ ShareKit.init();   // inject the share-kit <style> once (consumes the pod tokens
 
 let after = 0, segs = [], live = false, lastSlide = "", lastTitle = "";
 let pollTimer = null, followBanner = null;
+// step-up (RFC 0005): when /live returns challenge-pending we pause the live poll and
+// poll the challenge instead, resuming the feed the moment the owner approves — so a
+// core restart that re-triggers first-use step-up no longer takes otterpilot down (#61).
+let challengeId = null, challengeTimer = null;
 
 const shareToken = new URLSearchParams(location.search).get("token");
 const FOLLOW = !!shareToken;
@@ -548,6 +552,15 @@ async function poll() {
       live = false; renderSlides([], false);
       meet.innerHTML = '<span class="dot"></span>' + (d.message || "Otter isn't connected") +
         (d.reading_as ? ' · reading as ' + d.reading_as : '');
+    } else if (d.state === "challenge-pending") {
+      // Otter read is held for step-up approval. Surface a legible, actionable status
+      // (NEVER the raw node 409) and hand off to the challenge poller, which resumes the
+      // live feed on approval. Stop hitting /live while we wait — it would just re-trip
+      // the same challenge. (#61)
+      live = false; renderSlides([], false);
+      const id = d.challenge_id;
+      if (id && id !== challengeId) startChallengePoll(id);
+      return;
     } else if (d.state || d.error) {
       live = false; renderSlides([], false);
       meet.innerHTML = '<span class="dot"></span>' + (d.message || d.error || "couldn't reach otter");
@@ -580,6 +593,51 @@ async function poll() {
   } catch (e) {
     meet.innerHTML = '<span class="dot"></span>server unreachable';
   }
+}
+
+// Poll the step-up challenge status through otterpilot's /challenge/:id proxy and RESUME
+// the live feed the moment the owner approves. This is the recover half of #61: a core
+// restart re-triggers first-use step-up on the standing token, and rather than go down,
+// otterpilot shows the approve-prompt and bounces back automatically on approval.
+// denied/expired/unknown are honest terminal states (follow mode flips the banner to gone).
+async function pollChallenge(id) {
+  try {
+    const headers = FOLLOW ? { Authorization: "Bearer " + shareToken } : {};
+    const r = await fetch("challenge/" + encodeURIComponent(id), { headers });
+    const d = await r.json();
+    if (d.status === "approved") {
+      stopChallengePoll();
+      challengeId = null;
+      meet.innerHTML = '<span class="dot live"></span>approved — resuming the live feed…';
+      poll();
+      if (!pollTimer) pollTimer = setInterval(poll, 8000);
+    } else if (d.status === "denied" || d.status === "expired" || d.status === "unknown") {
+      stopChallengePoll();
+      challengeId = null;
+      live = false; renderSlides([], false);
+      meet.innerHTML = '<span class="dot"></span>step-up ' +
+        (d.status === "unknown" ? "challenge expired" : d.status) +
+        " — re-mint the otter token";
+      if (FOLLOW && followBanner) followBanner.set({ status: "gone" });
+    }
+    // pending: keep polling; the banner below stays up.
+  } catch (e) {
+    // network blip — keep the challenge poll alive; the banner still says "waiting".
+  }
+}
+function startChallengePoll(id) {
+  challengeId = id;
+  stopChallengePoll();
+  // pause /live while we wait on approval — it would just re-trip the same challenge.
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  live = false; renderSlides([], false);
+  meet.innerHTML = '<span class="dot"></span>Otter read needs step-up approval — approve it in your OAuth3 console (challenge ' +
+    String(id).slice(0, 14) + '…). Waiting for approval…';
+  pollChallenge(id);
+  challengeTimer = setInterval(function () { pollChallenge(id); }, 4000);
+}
+function stopChallengePoll() {
+  if (challengeTimer) { clearInterval(challengeTimer); challengeTimer = null; }
 }
 
 // recap is owner-only — follow mode hides the button + section entirely.

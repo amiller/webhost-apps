@@ -45,17 +45,24 @@ function clientToken(req: Request, url: URL): string {
 }
 
 // otterpilot must not echo the node's raw HTTP error into the meeting header — that IS the
-// bug: prod showed `node /otter/live 409: {"error":"no jar synced for otter"}`. So nodeLive
-// returns a CATEGORIZED outcome the header renders as a truthful status, never an alarm:
+// bug: prod showed `node /otter/live 409: {"error":"no jar synced for otter"}` (and, per #61,
+// `409 {"error":"challenge_pending",...}`). So nodeLive returns a CATEGORIZED outcome the
+// header renders as a truthful status, never an alarm:
 //   ok               — {data} from the node (a live meeting, or {live:false} when none runs)
 //   no-otter         — 409 'no jar synced' / 'not logged in': Otter isn't connected for the
 //                      subject this token reads as (a setup/rebind problem — root cause of
-//                      the prod 409). Truthful status, NOT masked as 'no live meeting'.
+//                      the original prod 409). Truthful status, NOT masked as 'no live meeting'.
+//   challenge-pending — 409 'challenge_pending' (RFC 0005 step-up): the oauth3 core held this
+//                      read for out-of-band approval. Carries the challengeId so the page can
+//                      poll /challenge/:id and RESUME the moment the owner approves, instead
+//                      of going down. This is the #61 prod-down cause: a standing server-app
+//                      token re-triggers first-use step-up on every core restart, so the app
+//                      must handle it (legible approve-prompt + recover), never alarm on it.
 //   auth             — 401/403: token rejected (revoked/stale).
 //   node-unreachable / error — anything else, surfaced short.
 type LiveOutcome =
   | { ok: true; data: any }
-  | { ok: false; state: "no-otter" | "auth" | "node-unreachable" | "error"; detail: string };
+  | { ok: false; state: "no-otter" | "auth" | "challenge-pending" | "node-unreachable" | "error"; detail: string; challengeId?: string };
 
 async function nodeLive(after: number, tok?: string): Promise<LiveOutcome> {
   const t = tok || TOKEN;
@@ -69,8 +76,18 @@ async function nodeLive(after: number, tok?: string): Promise<LiveOutcome> {
   if (r.ok) return { ok: true, data: (await r.json()).data };
   const body = await r.text().catch(() => "");
   if (r.status === 401 || r.status === 403) return { ok: false, state: "auth", detail: "Otter token was rejected — re-mint it" };
-  if (r.status === 409 && /no jar synced|not logged in/i.test(body)) {
-    return { ok: false, state: "no-otter", detail: /not logged in/i.test(body) ? "Otter session isn't logged in" : "Otter isn't connected to this instance yet" };
+  if (r.status === 409) {
+    // Step-up (RFC 0005) is checked BEFORE the no-otter 409: both are 409 but only the
+    // step-up body carries `error: "challenge_pending"` + a challengeId. Parse, don't
+    // regex — the challengeId is what lets the page recover, so read it precisely.
+    let parsed: any = null;
+    try { parsed = JSON.parse(body); } catch (_) { /* not JSON — falls through to no-otter */ }
+    if (parsed && parsed.error === "challenge_pending" && parsed.challengeId) {
+      return { ok: false, state: "challenge-pending", detail: "Otter read is waiting on step-up approval", challengeId: parsed.challengeId };
+    }
+    if (/no jar synced|not logged in/i.test(body)) {
+      return { ok: false, state: "no-otter", detail: /not logged in/i.test(body) ? "Otter session isn't logged in" : "Otter isn't connected to this instance yet" };
+    }
   }
   return { ok: false, state: "error", detail: "otter node returned " + r.status };
 }
@@ -149,7 +166,31 @@ export default async function handler(req: Request, ctx: { env: Record<string, s
       return json(d);
     }
     // truthful, categorized state for the header — never the raw node HTTP error.
-    return json({ live: false, state: res.state, message: res.detail, reading_as: readingAs(tok) });
+    // challenge_id rides along only for the challenge-pending state (the page polls it).
+    return json({ live: false, state: res.state, message: res.detail, reading_as: readingAs(tok), challenge_id: res.challengeId });
+  }
+
+  // Step-up challenge status proxy (RFC 0005). The browser can't reach the node's
+  // /api/challenge/:id directly (CORS, and a follower holds no bearer for the node), so
+  // otterpilot relays it and normalizes the three outcomes the core emits — approved
+  // (retry will succeed), pending (keep polling), denied/expired (terminal) — plus
+  // unknown for a missing/expunged challenge. The live poller uses this to RESUME the
+  // feed automatically once the owner approves, instead of going down on a step-up (#61).
+  if (req.method === "GET" && path.startsWith("/challenge/")) {
+    const id = decodeURIComponent(path.slice("/challenge/".length));
+    if (!id) return json({ status: "unknown", detail: "no challenge id" });
+    let r: Response;
+    try {
+      r = await fetch(`${NODE}/api/challenge/${encodeURIComponent(id)}`, {
+        headers: { Authorization: `Bearer ${clientToken(req, url) || TOKEN}` },
+      });
+    } catch (e) {
+      return json({ status: "unknown", detail: "couldn't reach the oauth3 node (" + ((e as Error)?.message || e) + ")" });
+    }
+    if (r.status === 404) return json({ status: "unknown", detail: "challenge not found — it expired or was already decided" });
+    const j = await r.json().catch(() => null);
+    const status = (j && (j.status || (j.data && j.data.status))) || (r.ok ? "pending" : "unknown");
+    return json({ status, expiresAt: (j && j.expiresAt) || undefined, raw: j });
   }
 
   // Frame relay: browser -> /frame?u=<b64url(imageurl)> -> node /otter/frame (bearer) -> bytes.
