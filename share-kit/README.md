@@ -5,7 +5,8 @@ all one primitive — *share a scoped, revocable capability over something that'
 without handing over the credential* — and share-kit is the small shared UI that makes
 that shape visible and consistent, so learning one app teaches all of them.
 
-It exports **three pieces** (plus the `ShareHandle` that wires them together):
+It exports **three pieces** (plus the `ShareHandle` that wires them together), and the
+**connect half** every relying-party app needs to obtain the scoped token in the first place:
 
 1. **`ShareKit.shareAction(el, {label, onShare, onShared})`** — the primary button,
    labeled by the *journey* (`Share my feed →`, `Let someone edit this event →`,
@@ -16,6 +17,16 @@ It exports **three pieces** (plus the `ShareHandle` that wires them together):
 3. **`ShareKit.recipientBanner(el, handleOrOpts)`** — top strip on a shared view:
    *"You're viewing \<owner>'s shared \<thing> · \<capability>"*, with an **honest
    end-state** when revoked / expired / gone (anti-hollow-green, applied to UX).
+4. **`ShareKit.oauth3Connect({plugin, app, node, onStatus, probe})`** → `Promise<token>` —
+   the shared connect handshake. Runs `window.oauth3.connect()`; if a `probe(token)` is
+   given it then runs the gated read and treats a **409 `challenge_pending` / step-up as
+   retryable** — fires `onStatus("waiting-approval")`, polls `GET /api/challenge/:id`
+   (capped ~20×4s, mirroring otterpilot's proven #61 recover), and re-runs the probe on
+   approval. **Every other failure is terminal and re-thrown** so the app renders the REAL
+   error — no raw dead-end, no mock/mask. `ShareKit.oauth3Read(node, path, token)` is the
+   gated-read primitive the probe calls (throws the step-up marker on 409 `challenge_pending`,
+   a terminal `Error` carrying the node's real `{error}` otherwise). This is the fix for the
+   bug where timeline-peek dead-ended on a raw `challenge_pending` string.
 
 ```js
 ShareKit.init();                                   // inject <style> once
@@ -76,8 +87,11 @@ path 404s), so a shared kit can't be `<script src=` from a sibling file — it h
 *inside* the app's one `index.html`. (That's how every static app here is already written:
 self-contained, no build.)
 
-`inline.sh` inlines the canonical `share-kit/share-kit.js` into a marked block in an app's
-`index.html`, so re-running it picks up kit updates without hand-merging:
+The SAME `inline.sh` inlines both halves (share UI + connect helper), so an app that only
+needs `oauth3Connect` still inlines the canonical file once and uses just that piece — the
+share-UI CSS is scoped under `.sk` and inert until an app calls it. `inline.sh` wraps the
+canonical `share-kit/share-kit.js` into a marked block in an app's `index.html`, so re-running
+it picks up kit updates without hand-merging:
 
 ```bash
 ./share-kit/inline.sh timeline-peek     # inlines/updates the <!--share-kit:inline--> block
@@ -90,8 +104,14 @@ can't be closed early by the HTML parser.
 
 ## Adopted so far
 
-- **timeline-peek** — first adopter (this PR). Read-side: owner mints a feed share link
-  with the receipt + revoke; recipient view shows the banner, with the honest revoked/gone
-  state when the feed rejects the token.
-- **calendar-share**, **otterpilot** — to follow (#14, #17), built against this kit so the
-  suite is consistent by construction.
+- **timeline-peek** — first connect-half adopter (this PR). Its owner-mode Connect button
+  now goes through `ShareKit.oauth3Connect` with a `probe` that reads
+  `/api/twitter/feed` via `ShareKit.oauth3Read`: a step-up shows "waiting for approval…"
+  and recovers on approval; a down twitter backend (browser-SPI) surfaces an honest,
+  readable error instead of the old raw `challenge_pending` dead-end. (The share-UI half
+  is inlined too and available for the `?token=` share mode in a follow-up.)
+- **otterpilot** — inlines the share-UI half for its owner-side "Share this live meeting"
+  receipt + the follow recipient banner; its live poll has its own proven challenge-recover
+  loop (server-side token, #61/#62).
+- **calendar-share** — to follow, built against this kit so the suite is consistent by
+  construction.
