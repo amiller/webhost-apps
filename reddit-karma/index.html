@@ -1,26 +1,27 @@
 <!doctype html>
 <meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<title>Reddit Karma</title>
+<title>Reddit Saved</title>
 <!--
   A sample OAuth3 relying-party app. It initiates the OAuth3 login flow (Connect) and
-  renders the connected Reddit account's karma — total, with comment / post breakdown —
-  read through a scoped, revocable token from the OAuth3 node. The app never sees the
-  Reddit cookie; the TEE pod does the authenticated read and hands back only the karma.
+  renders the connected Reddit account's SAVED POSTS — recent saved submissions with their
+  subreddits + a count — read through a scoped, revocable token from the OAuth3 node. The
+  app never sees the Reddit cookie; the TEE pod does the authenticated read.
 
-  It consumes the Reddit API plugin (oauth3-server#83), whose karma endpoint is expected
-  at  GET /oauth3/api/reddit/account  (Bearer <scoped token>)  returning
-  { data: { name, total_karma, comment_karma, link_karma, created_utc } }.
-  If the live read fails for any reason (plugin not registered, endpoint missing, network,
-  denial), the real error + status go into the evidence block, and a plain error state
-  renders in the card — no numbers, never fake karma.
+  It consumes the Reddit API plugin (oauth3-server#83). The shipped read route is
+  GET /oauth3/api/reddit/items  (Bearer <scoped token>)  returning
+  { plugin:"reddit", data:[{id,title,date,meta:{subreddit,...}}] }.
+  (The /account karma route was never shipped and 404s — see issue #64.)
+  If the live read fails for any reason (plugin not registered, no reddit jar synced,
+  network, denial), the real error + status go into the evidence block, and a plain error
+  state renders in the card — no posts, never fake content.
 
   Two login paths, same as timeline-peek / calendar-share:
    • extension  — window.oauth3.connect({plugin:"reddit"}) carries the whole flow.
    • wallet     — no extension (phone, clean profile): self-provision an Ed25519 did:key
                   wallet in this browser, sign into the node, run the connect handshake.
   Either way this app only ever sees the scoped token. Real errors are surfaced, never
-  masked — a failed connect/read does NOT silently become "0 karma".
+  masked — a failed connect/read does NOT silently become an empty list.
 -->
 <style>
 /* pod design system · constructivist overprint · grape-acid inking (webhost register) */
@@ -112,9 +113,9 @@ footer{color:var(--faint);font:12px var(--mono);text-align:center;padding:24px 0
 <div class=wrap>
   <header>
     <p class=label>oauth3 · sample app · reddit</p>
-    <h1 class=display>Reddit Karma</h1>
-    <div class=sub id=sub>Your karma, read through a scoped token — never your cookie.</div>
-    <div style=margin-top:10px><span class=pill>🔒 scoped <span class=chip style=background:transparent;padding:0>reddit:karma</span> · cookies never leave the TEE</span></div>
+    <h1 class=display>Reddit Saved</h1>
+    <div class=sub id=sub>Your saved posts, read through a scoped token — never your cookie.</div>
+    <div style=margin-top:10px><span class=pill>🔒 scoped <span class=chip style=background:transparent;padding:0>reddit:saved</span> · cookies never leave the TEE</span></div>
     <div class=acts>
       <button id=go class=btn>Connect with OAuth3</button>
     </div>
@@ -122,11 +123,11 @@ footer{color:var(--faint);font:12px var(--mono);text-align:center;padding:24px 0
     <div id=note class=note></div>
   </header>
   <div id=view></div>
-  <footer id=foot hidden>A sample OAuth3 relying-party app. The OAuth3 node holds the Reddit session; this app only ever sees the scoped token — and can do nothing but read karma with it. The owner can revoke the link any time.</footer>
+  <footer id=foot hidden>A sample OAuth3 relying-party app. The OAuth3 node holds the Reddit session; this app only ever sees the scoped token — and can do nothing but read your saved posts with it. The owner can revoke the link any time.</footer>
 </div>
 <script>
 const NODE = location.origin + "/oauth3";
-const PLUGIN = "reddit", APP = "reddit-karma", BUILD = "b2";
+const PLUGIN = "reddit", APP = "reddit-karma", BUILD = "b3";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (s == null ? "" : String(s)).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const fmtNum = (n) => Number(n||0).toLocaleString();
@@ -147,76 +148,78 @@ async function diag() {
   $("diag").innerHTML = "build " + BUILD + " · instance: " + inst + plugin + " · " + ext;
 }
 
-// ---- render the karma card + an honest evidence block ----
-// created_utc may arrive as a unix epoch (seconds, Reddit's raw shape) or an ISO string.
-function accountAge(v) {
-  if (v == null || v === "") return "—";
+// ---- render the saved-posts card + an honest evidence block ----
+// date may arrive as a unix epoch (seconds, Reddit's raw shape) or an ISO string.
+function fmtDate(v) {
+  if (v == null || v === "") return "";
   const d = typeof v === "number" ? new Date(v * 1000) : new Date(v);
-  if (isNaN(d)) return "—";
-  const days = (Date.now() - d.getTime()) / 864e5;
-  if (days < 30) return "< 1 mo";
-  const mos = days / 30.44;
-  return mos < 12 ? Math.floor(mos) + " mo" : Math.floor(mos / 12) + " yr";
+  if (isNaN(d)) return "";
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
-function renderKarma(k, ev) {
+// Reddit items arrive as {id,title,date,meta:{subreddit,...}} (response key `data`).
+function renderItems(items, ev) {
+  const list = Array.isArray(items) ? items : [];
   $("foot").hidden = false;
+  const rows = list.slice(0, 25).map((it) => {
+    const sub = (it.meta && it.meta.subreddit) || "?";
+    return '<li style="margin:0 0 9px"><span class=chip>r/' + esc(sub) + '</span> <span style="color:var(--text)">' + esc(it.title || "(untitled)") + '</span>' +
+      (fmtDate(it.date) ? ' <span style="color:var(--faint);font:12px var(--mono)">' + esc(fmtDate(it.date)) + '</span>' : '') + '</li>';
+  }).join("");
   $("view").innerHTML =
     '<div class=card>' +
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">' +
-        '<div><b class=title>u/' + esc(k.name) + '</b>' +
-        '<div class=ev-meta>account age ' + esc(accountAge(k.created_utc)) + ' · <span class=chip>reddit:karma</span></div></div>' +
+        '<div><b class=title>Saved posts</b>' +
+        '<div class=ev-meta><b>' + list.length + '</b> saved · <span class=chip>reddit:saved</span></div></div>' +
         '<span class="stamp ok">live</span>' +
       '</div>' +
-      '<div class=big><span class=num>' + esc(fmtNum(k.total_karma)) + '</span><span class=cap>total karma</span></div>' +
       '<div class=halftone></div>' +
-      '<div class=break>' +
-        '<div class=stat><span class=kv>comment karma</span><b>' + esc(fmtNum(k.comment_karma)) + '</b></div>' +
-        '<div class=stat><span class=kv>post karma</span><b>' + esc(fmtNum(k.link_karma)) + '</b></div>' +
-      '</div>' +
+      (list.length ? '<ul style="list-style:none;padding:0;margin:6px 0 0">' + rows + '</ul>'
+                  : '<p style="margin:10px 0 0;color:var(--faint);font:13px var(--mono)">No saved posts on this account.</p>') +
     '</div>' +
     evidence(ev);
 }
 function evidence(ev) {
   const rows = [];
   rows.push('<span class=k>source</span><span class=hit>' + esc(ev.source) + '</span>');
-  rows.push('<span class=k>endpoint</span>GET ' + esc(ev.endpoint || (NODE + "/api/" + PLUGIN + "/account")));
+  rows.push('<span class=k>endpoint</span>GET ' + esc(ev.endpoint || (NODE + "/api/" + PLUGIN + "/items")));
   if (ev.status != null) rows.push('<span class=k>status</span>' + esc(ev.status));
   if (ev.token) rows.push('<span class=k>token</span>' + esc(ev.token));
   if (ev.reason) rows.push('<span class=k>reason</span>' + esc(ev.reason));
   return '<div class=block>' + rows.join("\n") + '</div>';
 }
 
-// ---- render a plain error state in the card area (no numbers, never fake karma) ----
+// ---- render a plain error state in the card area (no posts, never fake content) ----
 // The evidence panel below carries the real error + status; the card itself shows no data.
 function renderError(ev) {
   $("foot").hidden = false;
   $("view").innerHTML =
     '<div class=card>' +
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">' +
-        '<div><b class=title>No karma to show</b>' +
-        '<div class=ev-meta>connect or read failed · <span class=chip>reddit:karma</span></div></div>' +
+        '<div><b class=title>No saved posts to show</b>' +
+        '<div class=ev-meta>connect or read failed · <span class=chip>reddit:saved</span></div></div>' +
         '<span class="stamp err">error</span>' +
       '</div>' +
-      '<p style="margin:14px 0 0;color:var(--warn);font:13px/1.6 var(--mono)">The connect or read failed — no karma is shown, never fake numbers. See the evidence below for the real error and HTTP status.</p>' +
+      '<p style="margin:14px 0 0;color:var(--warn);font:13px/1.6 var(--mono)">The connect or read failed — no posts are shown, never fake content. See the evidence below for the real error and HTTP status.</p>' +
     '</div>' +
     evidence(ev);
 }
 
-// ---- live read: GET /api/reddit/account with the scoped token. Throws the real error. ----
-async function fetchKarma(token) {
-  const endpoint = "/api/" + PLUGIN + "/account"; // oauth3-server#84's shipped route
+// ---- live read: GET /api/reddit/items with the scoped token. Throws the real error. ----
+// The shipped route is /items (oauth3-server#83). /account was never shipped and 404s.
+// Response shape: {plugin, data:[{id,title,date,meta:{subreddit,...}}]} — key is `data`.
+async function fetchItems(token) {
+  const endpoint = "/api/" + PLUGIN + "/items"; // the shipped reddit route
   const r = await fetch(NODE + endpoint, { headers: { Authorization: "Bearer " + token } });
   const body = await r.json().catch(() => ({}));
-  if (!r.ok) { const err = new Error(body.error || ("account " + r.status)); err.status = r.status; err.body = body; throw err; }
-  const a = body.account || {};
-  const f = (k) => ((a.fields || []).find((x) => x.key === k) || {}).value;
-  if (f("total_karma") == null) { const err = new Error("account response missing total_karma field"); err.status = r.status; err.body = body; throw err; }
-  return { karma: { name: a.id || "?", total_karma: f("total_karma"), comment_karma: f("comment_karma") || 0, link_karma: f("link_karma") || 0, created_utc: null }, status: r.status };
+  if (!r.ok) { const err = new Error(body.error || ("items " + r.status)); err.status = r.status; err.body = body; throw err; }
+  const data = body.data;
+  if (!Array.isArray(data)) { const err = new Error("items response missing `data` array"); err.status = r.status; err.body = body; throw err; }
+  return { items: data, status: r.status };
 }
 
-// ---- connect: extension path, else wallet self-provision. Then read karma. ----
-//   On ANY failure (plugin not registered, karma endpoint 404, network, denial) we
-//   render a plain error state in the card — no numbers, never fake karma. The real
+// ---- connect: extension path, else wallet self-provision. Then read saved posts. ----
+//   On ANY failure (plugin not registered, no reddit jar synced, network, denial) we
+//   render a plain error state in the card — no posts, never fake content. The real
 //   error + status go into the evidence block, which is never masked.
 async function onConnect() {
   setNote(""); const viaExt = !!window.oauth3; $("go").disabled = true;
@@ -234,10 +237,10 @@ async function onConnect() {
     $("go").disabled = false; return;
   }
   $("go").hidden = true;
-  setNote("Reading your karma with the scoped token…");
+  setNote("Reading your saved posts with the scoped token…");
   try {
-    const { karma, status } = await fetchKarma(token);
-    renderKarma(karma, { source: "live", status, token: token.slice(0, 12) + "…" });
+    const { items, status } = await fetchItems(token);
+    renderItems(items, { source: "live", status, token: token.slice(0, 12) + "…" });
     setNote("");
   } catch (e) {
     renderError({ source: "error", status: e.status, token: token.slice(0, 12) + "…", reason: "read failed: " + String(e.message || e) });
