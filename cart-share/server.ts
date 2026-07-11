@@ -40,8 +40,11 @@ async function amazonSearch(term: string): Promise<AzProd[]> {
 // v2: the cart is the OWNER'S REAL Amazon cart, read through the oauth3 core's amazon plugin
 // (GET /api/amazon/items — the plugin reads /gp/cart with the owner's synced jar). No fixtures,
 // no guest search. Organic SUGGESTIONS are still a live search (an organic alternative per line).
-let OAUTH3_BASE = "https://pod.dstack.soc1024.com/oauth3";
-let OAUTH3_TOKEN = ""; // bearer to read the owner's cart via /api/amazon/items (set from env)
+//
+// TOKENLESS: this app holds NO standing credential. The owner's browser gets a scoped, revocable
+// amazon read token from the oauth3 extension (window.oauth3.connect) and hands it to POST /connect
+// for one build. Nobody mints or pastes a token; nothing secret lives in the deploy env.
+let OAUTH3_BASE = "https://pod.dstack.soc1024.com/oauth3"; // the oauth3 node URL (not a secret)
 const PRICE_BAND = 1.5; // an organic substitute may cost at most +150% of the original
 let cartSource: "amazon-jar" | "unconnected" = "unconnected";
 let cartError = "";
@@ -55,14 +58,13 @@ function shortTerm(title: string): string {
 // --- state (in-memory; one cart for the demo) ---
 let cart: Item[] = [];
 let SUBS: Record<string, Sub> = {};
-let built = false;
 
-// Read the OWNER'S REAL cart from the oauth3 core's amazon plugin, then find an organic
-// alternative for each non-organic line. Throws (honestly) if no jar is synced or Amazon
-// blocks the read — never invents a cart.
-async function buildRealCart(): Promise<void> {
+// Read the OWNER'S REAL cart from the oauth3 core's amazon plugin using the scoped token the
+// owner's browser just obtained via the extension, then find an organic alternative for each
+// non-organic line. Throws (honestly) if the read is gated/blocked — never invents a cart.
+async function buildRealCart(token: string): Promise<void> {
   const r = await fetch(`${OAUTH3_BASE}/api/amazon/items`, {
-    headers: { authorization: `Bearer ${OAUTH3_TOKEN}` },
+    headers: { authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(90000),
   });
   const d = await r.json().catch(() => ({}));
@@ -92,11 +94,15 @@ async function buildRealCart(): Promise<void> {
   cartSource = "amazon-jar";
   cartError = "";
 }
-async function ensureCart(): Promise<void> {
-  if (built) return;
-  built = true;
-  try { await buildRealCart(); }
+// Build the cart from the owner's scoped token (from POST /connect). On any failure, stay
+// honestly "unconnected" with the reason — never invent a cart.
+async function connectCart(token: string): Promise<void> {
+  try { await buildRealCart(token); }
   catch (e) { cart = []; SUBS = {}; cartSource = "unconnected"; cartError = String((e as Error).message || e); }
+}
+function resetCart(): void {
+  cart = []; SUBS = {}; cartSource = "unconnected"; cartError = "";
+  revoked.clear(); grant = null; receipt.length = 0; checkedOut = false;
 }
 const revoked = new Set<string>();
 interface GrantRec { token: string; scope: string; created: number }
@@ -118,7 +124,6 @@ let configured = false;
 export default async function handler(req: Request, ctx: { env: Record<string, string>; dataDir: string }): Promise<Response> {
   if (!configured) {
     if (ctx.env?.OAUTH3_BASE) OAUTH3_BASE = ctx.env.OAUTH3_BASE.replace(/\/$/, "");
-    if (ctx.env?.OAUTH3_TOKEN) OAUTH3_TOKEN = ctx.env.OAUTH3_TOKEN;
     configured = true;
   }
   const url = new URL(req.url);
@@ -128,8 +133,15 @@ export default async function handler(req: Request, ctx: { env: Record<string, s
     return new Response(await readStatic("index.html"), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
   }
   if (req.method === "GET" && path === "/health") {
-    await ensureCart();
     return json({ ok: true, build: BUILD, source: cartSource, error: cartError || undefined, items: cart.length });
+  }
+  // OWNER connect: the browser got a scoped amazon read token from the oauth3 extension and hands
+  // it here for ONE build. No token is stored; the app holds no standing credential.
+  if (req.method === "POST" && path === "/connect") {
+    const token = (req.headers.get("authorization") || "").replace(/^Bearer /i, "").trim();
+    if (!token) return json({ error: "no scoped token — connect Amazon in the OAuth3 extension" }, 401);
+    await connectCart(token);
+    return json({ source: cartSource, error: cartError || undefined, items: cart.length });
   }
   if (req.method === "GET" && path === "/debug") {
     const out: Record<string, unknown> = {};
@@ -142,18 +154,11 @@ export default async function handler(req: Request, ctx: { env: Record<string, s
     }
     return json(out);
   }
-  // rebuild the cart from live amazon
+  // clear the session — owner reconnects via the extension to rebuild
   if (req.method === "POST" && path === "/refresh") {
-    built = false;
-    revoked.clear();
-    grant = null;
-    receipt.length = 0;
-    checkedOut = false;
-    await ensureCart();
+    resetCart();
     return json({ source: cartSource, error: cartError || undefined, items: cart.length });
   }
-
-  await ensureCart();
 
   // owner view of the cart + receipt + grant state
   if (req.method === "GET" && path === "/cart") {
@@ -212,14 +217,9 @@ export default async function handler(req: Request, ctx: { env: Record<string, s
     return json({ ok: true, total: +cart.reduce((s, i) => s + i.price * i.qty, 0).toFixed(2) });
   }
 
-  // reset the demo (rebuild from live amazon)
+  // reset the demo — clear to unconnected; owner reconnects via the extension
   if (req.method === "POST" && path === "/reset") {
-    built = false;
-    revoked.clear();
-    grant = null;
-    receipt.length = 0;
-    checkedOut = false;
-    await ensureCart();
+    resetCart();
     return json({ ok: true, source: cartSource });
   }
 

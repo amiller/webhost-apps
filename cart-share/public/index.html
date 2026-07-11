@@ -71,16 +71,40 @@ function renderItems(items){
 }
 
 // ---------- OWNER VIEW ----------
+// TOKENLESS: this app never holds a credential. The owner's browser asks the OAuth3 extension
+// for a scoped, revocable amazon read token (window.oauth3.connect → one approval) and hands it
+// to POST /connect for a single build. Nothing is minted by hand; no token lives in the deploy.
+const NODE=location.origin+'/oauth3', PLUGIN='amazon', APP='cart-share';
+const esc=s=>String(s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+const niceErr=e=>/challenge|step.?up/i.test(e)?'a one-time step-up approval is pending — approve it in your OAuth3 console, then Connect again':/401|unauthorized|no such|token/i.test(e)?'the scoped token was rejected — reconnect Amazon in the extension':e;
 async function owner(){
   $('sub').innerHTML="This is <b>your real Amazon cart</b> — read through OAuth3 from your logged-in amazon.com session (your cookies stay sealed in the TEE; this app never sees them). A friend gets a <b>scoped, revocable, substitute-only capability</b> to swap items for organic equivalents; you get a receipt of every swap and check out yourself.";
   await drawOwner();
 }
+async function doConnect(){
+  if(!window.oauth3){renderConnect('OAuth3 extension not detected on this page — enable it (it holds your sealed Amazon session), then Connect.');return}
+  const b=$('connect'); if(b){b.disabled=true;b.textContent='Approve in the extension…'}
+  try{
+    const token=await window.oauth3.connect({plugin:PLUGIN,app:APP,node:NODE});
+    const r=await j('POST','/connect',null,{authorization:'Bearer '+token});
+    if(r.source!=='amazon-jar'){renderConnect(r.error||'read failed');return}
+    await drawOwner();
+  }catch(e){renderConnect(String(e&&e.message||e))}
+}
+function renderConnect(err){
+  $('view').innerHTML='<div class=card><h2>connect your amazon · scoped &amp; revocable</h2>'
+    +'<div style="padding:13px"><p class=note style="margin:0 0 11px">'
+    +(err?'⚠ '+esc(niceErr(err)):'One approval in the OAuth3 extension mints a read-only token for your cart. Your cookies never leave the TEE; this app holds no standing credential.')
+    +'</p><button class="big" id=connect>Connect Amazon via OAuth3</button></div></div>';
+  $('connect').onclick=doConnect;
+}
 async function drawOwner(){
   const c=await j('GET','/cart');
+  if(c.source!=='amazon-jar'){renderConnect(c.error);return}
   const items=c.cart.map(i=>'<div class=item><div class=nm><b>'+i.name+'</b>'+(i.organic?'<span class=org>organic ✓</span>':'')+'<span class=q> · qty '+i.qty+'</span></div><div class=pr>'+money(i.price)+'</div></div>').join('');
   const rec=c.receipt.length?c.receipt.map(r=>'<div class=rec><span class=d>'+r.from.split(",")[0]+' → '+r.to.split(",")[0]+'</span> <span class=delta>('+(r.delta>=0?'+':'')+money(r.delta).replace("$-","-$")+')</span> <span class=note>by friend</span></div>').join(''):'<div class=rec><span class=note>no swaps yet</span></div>';
   $('view').innerHTML=
-    (c.source==="amazon-jar"?('<div class=card><h2>your cart · YOUR REAL AMAZON CART (via OAuth3)</h2>'+items+'<div class=total><span>total</span><span>'+money(c.total)+'</span></div></div>'):('<div class=card><h2>your cart · not connected</h2><div class=rec><span class=note>'+(c.error||'connect your Amazon in the OAuth3 extension to load your real cart')+'</span></div></div>'))
+    '<div class=card><h2>your cart · YOUR REAL AMAZON CART (via OAuth3)</h2>'+items+'<div class=total><span>total</span><span>'+money(c.total)+'</span></div></div>'
     +'<div class=row>'
     +(c.shared?'<button class="big ghost" id=share disabled>friend invited ✓</button><button class="big pink" id=revoke>Revoke capability</button>':'<button class="big" id=share>Invite a friend to organic-ify it</button>')
     +'<button class="big" id=checkout '+(c.checkedOut?'disabled':'')+'>'+(c.checkedOut?'checked out ✓':'Check out (owner)')+'</button>'

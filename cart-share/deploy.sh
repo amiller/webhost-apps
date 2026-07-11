@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Deploy cart-share to a pod tee-daemon as a deno source tarball.
 #
-# cart-share reads the owner's REAL Amazon cart via OAUTH3_TOKEN (a scoped amazon:read cart
-# token bound to the owner's identity subject). That token is a SECRET — it is never stored in
-# this repo; pass it in the environment at deploy time. OAUTH3_BASE defaults to the prod oauth3.
+# TOKENLESS: cart-share holds NO oauth3 credential. The owner's browser gets a scoped, revocable
+# amazon read token from the OAuth3 extension at runtime (window.oauth3.connect → POST /connect).
+# So this deploy carries NO secret — the only token here is the daemon token to upload the tarball.
+# OAUTH3_BASE (the oauth3 node URL, not a secret) defaults to the prod oauth3.
 #
-#   OAUTH3_TOKEN=<scoped-cart-read-token> TEE_DAEMON_TOKEN=<daemon> bash deploy.sh
-#   CVM=<staging-url> OAUTH3_TOKEN=... TEE_DAEMON_TOKEN=... bash deploy.sh   # staging
+#   TEE_DAEMON_TOKEN=<daemon> bash deploy.sh
+#   CVM=<staging-url> TEE_DAEMON_TOKEN=... bash deploy.sh          # staging
 #
 # Prod (pod.dstack.soc1024.com) is OPERATOR-RUN: no prod daemon token lives on the dev box.
 set -euo pipefail
@@ -20,9 +21,8 @@ if [ -z "${TEE_DAEMON_TOKEN:-}" ] && [ -f "$HOME/.tee-daemon-staging.env" ]; the
   source "$HOME/.tee-daemon-staging.env"
 fi
 : "${TEE_DAEMON_TOKEN:?no TEE_DAEMON_TOKEN — set it or source ~/.tee-daemon-staging.env}"
-: "${OAUTH3_TOKEN:?no OAUTH3_TOKEN — pass the scoped cart-read token (never hardcode it)}"
 
-MANIFEST=$(OAUTH3_BASE="$OAUTH3_BASE" OAUTH3_TOKEN="$OAUTH3_TOKEN" python3 - <<'PY'
+MANIFEST=$(OAUTH3_BASE="$OAUTH3_BASE" python3 - <<'PY'
 import json, os
 print(json.dumps({
   "name": "cart-share",
@@ -30,7 +30,7 @@ print(json.dumps({
   "entry": "server.ts",
   "mode": "dev",
   "listen": {"port": 8080, "protocol": "http"},
-  "env": {"OAUTH3_BASE": os.environ["OAUTH3_BASE"], "OAUTH3_TOKEN": os.environ["OAUTH3_TOKEN"]},
+  "env": {"OAUTH3_BASE": os.environ["OAUTH3_BASE"]},
 }))
 PY
 )
