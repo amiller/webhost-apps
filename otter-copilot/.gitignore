@@ -15,3 +15,5 @@ matrix_spool/
 nio_store/
 otter_web/data/
 *crosssign_private_keys*
+__pycache__/
+*.pyc
