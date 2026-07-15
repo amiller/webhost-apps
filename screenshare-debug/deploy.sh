@@ -17,6 +17,7 @@ export OAUTH3_NODE="${OAUTH3_NODE:-https://pod.dstack.soc1024.com/oauth3}"
 MANIFEST=$(python3 - <<'PY'
 import json,os
 print(json.dumps({"name":"screenshare-debug","runtime":"deno","entry":"server.ts","mode":"dev",
+  "public":True,  # RFC 0016: list on the pod landing + serve anonymously
   "listen":{"port":8080,"protocol":"http"},"env":{"OAUTH3_NODE":os.environ["OAUTH3_NODE"]}}))
 PY
 )
