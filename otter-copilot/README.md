@@ -1,4 +1,4 @@
-# Otter Copilot
+# otterpilot
 
 Piggybacks a logged-in Otter.ai session to pull transcripts + screenshare frames and serve a
 live "what were we talking about?" recap. Otter has **no public API** on Pro/lower tiers, so
@@ -18,8 +18,11 @@ Built June 2026 right after IC3 camp and rescued into this monorepo 2026-07-15 f
 It pairs with the interleave "brainrot box" as a combined unit — both watch the room's live
 speech and drive confidential inference (NEAR / Gemini vision here; NEAR + Chutes there).
 The conversation graph, decisions rail, and replay harness below are the working reference for
-what conclave and shaperotatorOS should absorb: this app has the features the from-scratch
-oauth3 recap app (`../otterpilot`) never grew.
+what conclave and shaperotatorOS should absorb. This app takes the **otterpilot** name: the
+existing `../otterpilot` deno app forked from an early cut of this same `otter_web` code and
+never grew these features — but it has the right credential architecture (scoped revocable
+token to the oauth3 node instead of a raw cookie). The two merge into one app; see
+`docs/otterpilot-merge-spec.md`.
 
 Excluded from the rescue (still in the private tree only): meeting data under `eval/` and
 `docs/tina-*`/`docs/kelsen-*`, matrix crypto stores, `bot_creds.json`, `.env.local`, and all
