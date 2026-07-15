@@ -1,0 +1,6 @@
+# Overlay rebuild: reuse the cached teexai-otter image (libolm + pip deps already baked)
+# and just refresh the Python code. Avoids re-pulling python:3.10-slim from Docker Hub.
+FROM ghcr.io/amiller/teexai-otter:latest
+WORKDIR /app
+COPY otter_session.py otter_sync.py otter_live.py otter_watch.py otter_wake.py ./
+COPY otter_web/ otter_web/

@@ -1,0 +1,1109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Otter Copilot</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+         background: #0b0c10; color: #d7dae0; display: flex; flex-direction: column; height: 100vh; }
+  header { padding: 12px 18px; border-bottom: 1px solid #1e2029; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  header b { color: #8ad; font-size: 16px; cursor: pointer; }
+  header .meet { color: #6b7080; font-size: 13px; margin-right: auto; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #2a2e3b; display: inline-block; margin-right: 6px; vertical-align: -1px; }
+  .dot.live { background: #2b6; animation: blink .9s infinite; } @keyframes blink { 50% { opacity: .25; } }
+  button { border: 0; border-radius: 7px; padding: 9px 16px; font: inherit; font-weight: 700; cursor: pointer; }
+  #recap { background: #c9a227; color: #1a1500; font-size: 15px; }
+  #recap:active { transform: translateY(1px); }
+  #recap:disabled { opacity: .5; cursor: default; }
+  select { background: #15171f; border: 1px solid #2a2e3b; color: #cdd2da; border-radius: 6px; padding: 8px; font: inherit; }
+  #back { background: #15171f; color: #9aa0ad; font-size: 13px; display: none; }
+
+  /* intro + identity strip (always visible) */
+  #intro { padding: 14px 24px 4px; border-bottom: 1px solid #16181f; }
+  #intro .lead { color: #c3c8d2; font-size: 13.5px; max-width: 880px; }
+  #intro .lead b { color: #8ad; }
+  #intro .idrow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; font-size: 12.5px; }
+  .badge2 { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 6px; letter-spacing: .04em; }
+  .badge2.owner { background: #0c2c1a; color: #2eea7e; }
+  .badge2.shared { background: #1a2330; color: #6fb0e8; }
+  .badge2.guest { background: #2a1a1a; color: #e08a8a; }
+  #ownerLink { display: flex; gap: 6px; align-items: center; background: #12141c; border: 1px solid #1e2029; border-radius: 7px; padding: 4px 6px 4px 10px; max-width: 100%; }
+  #ownerLink code { color: #9aa0ad; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
+  #ownerLink button, #liveBar button, .smallbtn { background: #1f2330; color: #9aa0ad; font-size: 11px; font-weight: 600; padding: 4px 10px; }
+  #ownerLink button:hover, .smallbtn:hover { color: #cdd2da; }
+  #helpToggle { background: none; color: #6fb0e8; padding: 0; font-size: 12px; font-weight: 600; text-decoration: underline; }
+  #help { display: none; margin-top: 10px; background: #0e1017; border: 1px solid #1e2029; border-radius: 8px; padding: 12px 16px; font-size: 12.5px; color: #aeb4c0; max-width: 880px; }
+  #help.show { display: block; }
+  /* connections panel */
+  .conns { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+  .conn { background: #0e1017; border: 1px solid #1e2029; border-radius: 9px; padding: 10px 13px; min-width: 230px; flex: 1 1 230px; max-width: 320px; }
+  .conn .top { display: flex; gap: 8px; align-items: center; }
+  .conn .sdot { width: 9px; height: 9px; border-radius: 50%; background: #3a3030; flex: none; }
+  .conn.on .sdot { background: #2eea7e; box-shadow: 0 0 6px #2eea7e88; }
+  .conn.locked .sdot { background: #5a4a1a; }
+  .conn .name { font-size: 12.5px; font-weight: 700; color: #cdd2da; }
+  .conn .tag { font-size: 9.5px; font-weight: 700; letter-spacing: .05em; color: #c9a227; border: 1px solid #3a3320; border-radius: 5px; padding: 1px 5px; margin-left: auto; text-transform: uppercase; }
+  .conn .who { font-size: 11.5px; color: #8a909c; margin-top: 5px; word-break: break-all; }
+  .conn .who b { color: #6fb0e8; font-weight: 600; }
+  .conn .err { color: #e08a8a; font-size: 10.5px; margin-top: 4px; white-space: pre-wrap; }
+  .conn .cal { font-size: 11px; color: #8a909c; margin-top: 6px; line-height: 1.7; }
+  .conn .cal b { color: #6fb0e8; font-weight: 600; } .conn .cal a { color: #2eea7e; }
+  .gemwrap { margin-top: 8px; border-top: 1px solid #1a1c24; padding-top: 8px; }
+  .gembtn { background: #1f2330; color: #9aa0ad; font-size: 11px; font-weight: 600; padding: 4px 10px; }
+  .gembtn:hover { color: #cdd2da; }
+  .gem { margin-top: 6px; font-size: 11px; color: #8a909c; }
+  .gemrow { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 3px 0; }
+  .gem .gimp { background: #14241a; color: #2eea7e; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 5px; }
+  .gem .gimp:disabled { opacity: .7; }
+  .conn .cta { margin-top: 8px; }
+  .conn .cta button { background: #1f2330; color: #cdd2da; font-size: 11px; font-weight: 600; padding: 5px 11px; }
+  .conn .cta button:hover { background: #283041; }
+  .onboard { display: none; margin-top: 8px; border-top: 1px solid #1a1c24; padding-top: 8px; font-size: 11.5px; color: #aeb4c0; }
+  .onboard.show { display: block; }
+  .onboard h5 { margin: 8px 0 3px; color: #c9a227; font-size: 10px; letter-spacing: .07em; text-transform: uppercase; }
+  .onboard code, .onboard .url { display: block; background: #15171f; border: 1px solid #23262f; border-radius: 6px; padding: 6px 8px; color: #9fd0a8; font-size: 10.5px; margin: 3px 0; word-break: break-all; }
+  .onboard ol { margin: 4px 0 4px 16px; padding: 0; } .onboard li { margin: 2px 0; }
+  .onboard .cp { background: #1f2330; color: #9aa0ad; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 5px; }
+  #help h4 { margin: 10px 0 4px; color: #c9a227; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+  #help h4:first-child { margin-top: 0; }
+  #help b { color: #cdd2da; }
+  #help ul { margin: 4px 0; padding-left: 18px; }
+
+  /* live indicator on the list */
+  #liveBar { margin: 14px 24px 0; padding: 11px 15px; border-radius: 9px; border: 1px solid #1e2029; background: #10131b; font-size: 13px; color: #9aa0ad; display: none; }
+  #liveBar.show { display: flex; align-items: center; gap: 10px; }
+  #liveBar.islive { border-color: #195232; background: #0c1a12; color: #d7f0e1; cursor: pointer; }
+  #liveBar.islive:hover { border-color: #2b6; }
+
+  /* conversations list */
+  #list { flex: 1; overflow-y: auto; padding: 8px 24px 20px; display: none; }
+  #list.show { display: block; }
+  #list h2 { color: #c9a227; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; margin: 18px 0 14px; }
+  .card { background: #12141c; border: 1px solid #1e2029; border-radius: 9px; padding: 14px 16px; margin: 0 0 10px; cursor: pointer; transition: border-color .12s; }
+  .card:hover { border-color: #3a4150; }
+  .card .t { font-size: 15px; color: #e6e9ef; display: flex; align-items: center; gap: 8px; }
+  .card .t .share { margin-left: auto; background: #1f2330; color: #9aa0ad; font-size: 11px; font-weight: 600; padding: 4px 10px; }
+  .card .t .share:hover { color: #cdd2da; }
+  .card .meta { color: #6b7080; font-size: 12px; margin-top: 5px; }
+  .card .meta .pill { color: #9aa0ad; margin-right: 12px; }
+  .card .meta .pill b { color: #c9a227; }
+  .card .meta .pill.good b { color: #ff5ea8; }
+  .badge { background: #143; color: #2b6; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 5px; letter-spacing: .05em; }
+  .badge.live { background: #0c2c1a; color: #2eea7e; }
+
+  /* big explanatory panels (empty / guest states) */
+  .panel { background: #10131b; border: 1px solid #1e2029; border-radius: 11px; padding: 22px 24px; max-width: 640px; margin: 8px 0 18px; }
+  .panel h3 { margin: 0 0 8px; color: #e6e9ef; font-size: 16px; }
+  .panel p { color: #aeb4c0; font-size: 13.5px; margin: 0 0 12px; }
+  .panel .big { background: #c9a227; color: #1a1500; font-size: 14px; }
+  .panel .big:disabled { opacity: .5; cursor: default; }
+  .panel input { background: #15171f; border: 1px solid #2a2e3b; color: #cdd2da; border-radius: 7px; padding: 9px 11px; font: inherit; font-size: 13px; width: 280px; max-width: 60%; }
+  .panel .signin { background: #1f2a3a; color: #cfe2f7; }
+  .panel .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .progress { margin-top: 12px; font-size: 13px; color: #9aa0ad; }
+  .progress .barwrap { height: 6px; background: #1e2029; border-radius: 4px; margin-top: 7px; overflow: hidden; }
+  .progress .bar { height: 100%; background: #2bb673; width: 0; transition: width .3s; }
+  .progress .errs { color: #d09a4a; font-size: 12px; margin-top: 6px; }
+
+  /* shared read-only banner */
+  #sharedBanner { display: none; margin: 0; padding: 9px 24px; background: #11161f; border-bottom: 1px solid #1c2734; color: #9fc0e0; font-size: 12.5px; }
+  #sharedBanner.show { display: block; }
+
+  /* conversation view */
+  .main { flex: 1; display: grid; grid-template-columns: 1fr 420px; min-height: 0; }
+  .main.hide { display: none; }
+  .feed { flex: 1; overflow-y: auto; padding: 16px 22px; }
+  .feed .u { margin: 0 0 11px; color: #c3c8d2; }
+  .feed .u .spk { color: #5f6b85; margin-right: 8px; font-size: 12px; }
+  .feed .u.mark { border-left: 2px solid #c9a227; padding-left: 10px; }
+  .feed .u.mark.good { border-left-color: #ff5ea8; }
+  .feed .u .tag { font-size: 10px; letter-spacing: .05em; text-transform: uppercase; margin-left: 8px; color: #c9a227; }
+  .feed .u.good .tag { color: #ff5ea8; }
+  .side { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+  .side h3 { margin: 0; padding: 11px 18px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #c9a227; border-bottom: 1px solid #16181f; }
+  #slides { padding: 10px 14px; border-bottom: 1px solid #16181f; display: none; flex: 0 0 auto; max-height: 38%; overflow-y: auto; }
+  #slides.has { display: block; }
+  #slides .big { width: 100%; max-height: 180px; object-fit: contain; border-radius: 6px; border: 1px solid #232734; display: block; }
+  #slides .row { display: flex; gap: 6px; margin-top: 6px; overflow-x: auto; }
+  #slides .row img { height: 46px; border-radius: 4px; border: 1px solid #232734; cursor: pointer; opacity: .65; }
+  #slides .row img:hover { opacity: 1; }
+  #slides .cap { color: #5f6470; font-size: 10px; margin-top: 4px; }
+  #audience { padding: 12px 18px; border-bottom: 1px solid #16181f; font-size: 13px; }
+  #audience .row1 { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  #audience .sug { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 5px; letter-spacing: .05em; text-transform: uppercase; }
+  #audience .sug.private { background: #2a1a1a; color: #e08a8a; }
+  #audience .sug.cohort { background: #1a2330; color: #6fb0e8; }
+  #audience .sug.public { background: #0c2c1a; color: #2eea7e; }
+  #audience .conf { color: #6b7080; font-size: 11px; }
+  #audience .rat { color: #c3c8d2; margin: 4px 0 6px; }
+  #audience .red { color: #d09a4a; font-size: 12px; margin: 2px 0; }
+  #audience .red b { color: #c0524a; text-transform: uppercase; font-size: 9px; letter-spacing: .06em; margin-right: 5px; }
+  #audience .accept { display: flex; gap: 6px; margin-top: 8px; }
+  #audience .accept button { background: #15171f; color: #9aa0ad; font-size: 12px; padding: 5px 11px; font-weight: 600; }
+  #audience .accept button.on { background: #1f2330; color: #cdd2da; outline: 1px solid #3a4150; }
+  #correct { padding: 10px 18px; border-bottom: 1px solid #16181f; font-size: 12.5px; }
+  #correct .row { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+  #correct .cid { color: #5f6b85; min-width: 52px; font-size: 11px; }
+  #correct input { background: #15171f; border: 1px solid #2a2e3b; color: #cdd2da; border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 12px; flex: 1; min-width: 0; }
+  #correct button { background: #1f2330; color: #9aa0ad; font-size: 11px; font-weight: 600; padding: 5px 10px; }
+  #correct button:hover { color: #cdd2da; }
+  #correct .sec { color: #6b7080; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; margin: 9px 0 3px; }
+  #correct .arrow { color: #5f6b85; }
+  #correct .fix { color: #c3c8d2; margin: 2px 0; }
+  #correct .fix b { color: #c9a227; }
+  #out { padding: 16px 20px; white-space: pre-wrap; font-size: 14.5px; line-height: 1.6; color: #e6e9ef; flex: 0 0 auto; }
+  #out .ph { color: #5f6470; }
+  #out .when { color: #6b7080; font-size: 11px; margin-bottom: 10px; }
+  .err { color: #c0524a; }
+  .ph { color: #5f6470; }
+  .left { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid #1e2029; }
+  .tabs { display: flex; gap: 6px; padding: 8px 12px; border-bottom: 1px solid #16181f; }
+  .tab { background: #15171f; color: #9aa0ad; font-weight: 600; padding: 6px 12px; font-size: 13px; }
+  .tab.active { background: #1f2330; color: #cdd2da; }
+  #graphWrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  #cy { flex: 1; min-height: 0; overflow: auto; }
+  .tlrow { display: flex; }
+  .tllabel { position: sticky; left: 0; z-index: 2; flex: 0 0 170px; min-height: 54px; padding: 7px 10px; font-size: 11px; font-weight: 700; color: #10131c; display: flex; flex-direction: column; justify-content: center; cursor: pointer; box-shadow: 2px 0 0 #0b0c10; }
+  .tllabel .sub { font-weight: 500; font-size: 10px; opacity: .85; margin-top: 2px; }
+  .tllabel.ctl { background: #15171f !important; color: #9aa0ad; font-weight: 600; }
+  .tllane { position: relative; height: 54px; flex: 0 0 auto; border-bottom: 1px solid #14161d; }
+  .tldot { position: absolute; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: #8a8f9c; cursor: pointer; }
+  .tldot.question { background: #4a90d9; }
+  .tldot.decision { background: #2bb673; width: 14px; height: 14px; margin: -7px 0 0 -7px; border: 2px solid #0d0f16; }
+  .tldot.action_item { background: #2bb673; border-radius: 2px; }
+  .tldot.divergence { background: #c0524a; }
+  .tldot.good { box-shadow: 0 0 0 3px #ff5ea8; }
+  .tldot:hover { outline: 2px solid #cdd2da; z-index: 3; }
+  #graphCap { border-top: 1px solid #16181f; padding: 8px 16px; background: #0d0f16; font-size: 11px; color: #9aa0ad; }
+  #flow { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  #cyflow { flex: 1; min-height: 0; }
+  #flowFoot { border-top: 1px solid #16181f; padding: 9px 16px 11px; background: #0d0f16; }
+  #flowLegend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11px; color: #9aa0ad; }
+  #flowLegend .lk { display: inline-flex; align-items: center; gap: 5px; }
+  #flowLegend .sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+  #flowFoot .cap { color: #6b7080; font-size: 11.5px; margin-top: 7px; font-style: italic; }
+  #decisions { padding: 8px 16px; max-height: 24%; overflow-y: auto; border-bottom: 1px solid #16181f; }
+  #decisions .d { margin: 0 0 7px; font-size: 13px; color: #cdd2da; }
+  #decisions .d b { color: #c9a227; text-transform: uppercase; font-size: 10px; letter-spacing: .06em; margin-right: 5px; }
+  #decisions .d.good b { color: #ff5ea8; }
+  #reflectBar { padding: 9px 16px; background: #11131c; border-bottom: 1px solid #16181f; font-size: 12.5px; color: #cdd2da; }
+  #reflectBar .arch { display: inline-block; background: #1d2740; color: #8fb4ff; border: 1px solid #2c3a5e; border-radius: 999px; padding: 2px 10px; font-weight: 700; font-size: 11px; letter-spacing: .03em; }
+  #reflectBar .crux { margin-left: 9px; color: #e7eaf0; }
+  #reflectBar .crux b { color: #c9a227; text-transform: uppercase; font-size: 10px; letter-spacing: .06em; margin-right: 5px; }
+  #reflectBar .thru { margin-top: 5px; color: #9aa0ad; font-size: 11.5px; font-style: italic; }
+  #reflectBar .eras { margin-top: 6px; display: flex; gap: 5px; flex-wrap: wrap; }
+  #reflectBar .era { background: #0d0f16; border: 1px solid #222634; border-radius: 4px; padding: 1px 7px; font-size: 10px; color: #7e8493; }
+  #reflectBar .era.now { color: #8fb4ff; border-color: #2c3a5e; }
+  #party { position: fixed; inset: 0; pointer-events: none; display: flex; align-items: center; justify-content: center; z-index: 99; }
+  #party .ball { font-size: 84px; opacity: 0; transform: scale(.3); }
+  #party.go .ball { animation: pop 1.6s ease-out forwards; }
+  #party .txt { position: absolute; bottom: 24%; color: #ff8fc6; font-weight: 700; font-size: 18px; opacity: 0; }
+  #party.go .txt { animation: rise 1.6s ease-out forwards; }
+  @keyframes pop { 0% { opacity: 0; transform: scale(.3) rotate(-20deg); } 25% { opacity: 1; transform: scale(1.25) rotate(10deg); } 55% { transform: scale(1) rotate(-6deg); } 100% { opacity: 0; transform: scale(1.1) rotate(0); } }
+  @keyframes rise { 0% { opacity: 0; transform: translateY(20px); } 30% { opacity: 1; } 100% { opacity: 0; transform: translateY(-30px); } }
+</style>
+<script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+</head>
+<body>
+<header>
+  <b id="home">Otter Copilot</b>
+  <span class="meet" id="meet"></span>
+  <button id="back">← all conversations</button>
+  <button id="hdrImport" class="smallbtn" style="display:none">⬇ import past meetings</button>
+  <select id="win" title="how far back to recap" style="display:none">
+    <option value="40">last bit</option>
+    <option value="120" selected>~last few min</option>
+    <option value="400">longer</option>
+  </select>
+  <button id="recap" style="display:none">what were we talking about?</button>
+</header>
+
+<!-- always-visible intro + identity strip -->
+<div id="intro">
+  <div class="lead">
+    <b>Otter Copilot</b> watches your live Otter meetings, builds a topic graph, flags decisions and
+    good points, can post recaps to your Matrix room, and keeps your past transcripts here.
+  </div>
+  <div class="idrow">
+    <span id="whoami"></span>
+    <div id="ownerLink" style="display:none">
+      <span style="color:#6b7080">your owner link:</span>
+      <code id="ownerLinkText"></code>
+      <button id="copyOwner">copy</button>
+    </div>
+    <button id="helpToggle">how it works / help</button>
+  </div>
+  <div id="connections" class="conns"></div>
+  <div id="help">
+    <h4>What you're looking at</h4>
+    <div>Each meeting becomes a transcript plus a live <b>topic graph</b>. Green nodes are decisions and
+      action items; pink-bordered nodes are "good points". Click a topic to get a one-paragraph recap.</div>
+    <h4>Who can see what (three access tiers)</h4>
+    <ul>
+      <li><b>Owner</b> — you, holding the owner token. You see every meeting (live and past) and all controls.</li>
+      <li><b>Shared transcript link</b> — a single read-only transcript you hand out. No token, no other meetings.</li>
+      <li><b>Public / guest</b> — anyone with the URL. Sees only meetings you've explicitly marked public.</li>
+    </ul>
+    <h4>Your sign-in link is your key</h4>
+    <div>There's no password — your sign-in link <b>is</b> your access (anyone with it becomes owner, so keep it
+      private). <button id="copyOwner2" class="smallbtn" style="display:none">copy my sign-in link</button> Bookmark it so you can get back in.</div>
+    <h4>Sharing a single meeting</h4>
+    <div>Open a meeting and press <b>share</b> to copy a read-only link to that one transcript. Use the
+      <b>audience</b> card to mark a meeting private / cohort / public.</div>
+  </div>
+</div>
+
+<!-- live indicator (owner, list view) -->
+<div id="liveBar"></div>
+
+<!-- shared read-only banner -->
+<div id="sharedBanner">📄 Shared read-only transcript. You're viewing a single meeting that the owner shared with you — owner controls are hidden.</div>
+
+<div id="party"><span class="ball">🎉</span><span class="txt">good point!</span></div>
+
+<div id="list" class="show"></div>
+
+<div class="main hide">
+  <div class="left">
+    <div class="tabs">
+      <button class="tab active" id="tabFeed">transcript</button>
+      <button class="tab" id="tabGraph">graph</button>
+      <button class="tab" id="tabFlow" style="display:none">workflow</button>
+    </div>
+    <div id="reflectBar" style="display:none"></div>
+    <div class="feed" id="feed"></div>
+    <div id="graphWrap" style="display:none">
+      <div id="cy"></div>
+      <div id="graphCap">topics in this meeting — tap one to recap that thread; tap again to expand its moments.</div>
+    </div>
+    <div id="flow" style="display:none">
+      <div id="cyflow"></div>
+      <div id="flowFoot">
+        <div id="flowLegend"></div>
+        <div class="cap">the cue workflow your copilot runs on each meeting.</div>
+      </div>
+    </div>
+  </div>
+  <section class="side">
+    <div id="slides">
+      <img class="big" id="slideBig" />
+      <div class="row" id="slideRow"></div>
+      <div class="cap" id="slideCap"></div>
+    </div>
+    <h3 id="correctHdr" style="display:none">✎ corrections — fix speaker names &amp; mis-hears</h3>
+    <div id="correct" style="display:none"></div>
+    <h3>audience — who is this fit to share with?</h3>
+    <div id="audience"><span class="ph">proposes a sharing tier (private / cohort / public). You accept.</span></div>
+    <h3>decisions &amp; good points</h3>
+    <div id="decisions"><span class="ph">decisions, action items &amp; good points collect here.</span></div>
+    <h3>recap</h3>
+    <div id="out"><span class="ph">Open a conversation and hit recap for "what were we talking about?"</span></div>
+  </section>
+</div>
+
+<script>
+const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+// ---------- access model: owner / view / public ----------
+let ownerToken = null, viewMode = null, userToken = null;  // viewMode = {otid, sig}
+(function bootAuth() {
+  const h = location.hash || '';
+  let m;
+  if ((m = h.match(/^#owner=(.+)$/))) {
+    ownerToken = decodeURIComponent(m[1]);
+    localStorage.setItem('otter_owner_token', ownerToken);
+  } else if ((m = h.match(/^#view=([^.]+)\.([0-9a-f]+)$/))) {
+    viewMode = { otid: m[1], sig: m[2] };
+  } else {
+    ownerToken = localStorage.getItem('otter_owner_token');
+  }
+  if (h.startsWith('#owner=')) history.replaceState(null, '', location.pathname + location.search);  // hide the token only; keep #c=/#view so a refresh restores your place
+  // every non-owner visitor gets a stable user token (their handle for connecting mechanisms)
+  if (!ownerToken && !viewMode) {
+    userToken = localStorage.getItem('otter_user_token');
+    if (!userToken) { userToken = (crypto.randomUUID && crypto.randomUUID()) || String(Math.random()).slice(2); localStorage.setItem('otter_user_token', userToken); }
+  }
+})();
+// the app may be mounted under a prefix on the CVM (e.g. /otter/), so resolve API/asset
+// paths relative to the page dir instead of the server root.
+const API_BASE = location.pathname.replace(/[^/]*$/, '');
+function apiUrl(path) { return API_BASE + String(path).replace(/^\//, ''); }
+function api(path, opts) {
+  opts = opts || {};
+  const headers = Object.assign({}, opts.headers);
+  if (ownerToken) headers['X-Auth-Token'] = ownerToken;
+  else if (userToken) headers['X-User-Token'] = userToken;
+  return fetch(apiUrl(path), Object.assign({}, opts, { headers }));
+}
+
+const listEl = document.getElementById('list'), mainEl = document.querySelector('.main');
+const feed = document.getElementById('feed'), out = document.getElementById('out');
+const meet = document.getElementById('meet'), btn = document.getElementById('recap'), win = document.getElementById('win');
+const back = document.getElementById('back'), home = document.getElementById('home');
+const slides = document.getElementById('slides'), slideBig = document.getElementById('slideBig');
+const slideRow = document.getElementById('slideRow'), slideCap = document.getElementById('slideCap');
+const dec = document.getElementById('decisions');
+const tabFeed = document.getElementById('tabFeed'), tabGraph = document.getElementById('tabGraph'), tabFlow = document.getElementById('tabFlow');
+const liveBar = document.getElementById('liveBar'), hdrImport = document.getElementById('hdrImport');
+
+// ---------- identity strip (always rendered) ----------
+function renderIdentity() {
+  const who = document.getElementById('whoami');
+  const linkWrap = document.getElementById('ownerLink');
+  document.getElementById('helpToggle').onclick = () => document.getElementById('help').classList.toggle('show');
+  const cp = document.getElementById('copyOwner2');
+  if (cp) cp.onclick = () => {
+    navigator.clipboard.writeText(ownerLinkUrl());
+    cp.textContent = 'copied!'; setTimeout(() => cp.textContent = 'copy my sign-in link', 1500);
+  };
+  if (linkWrap) linkWrap.style.display = 'none';  // never show the token inline
+  if (viewMode) {
+    who.innerHTML = '<span class="badge2 shared">shared transcript</span> <span style="color:#6b7080">read-only single meeting</span>';
+  } else if (ownerToken) {
+    who.innerHTML = '<span class="badge2 owner">✓ signed in as owner</span>';
+    if (cp) cp.style.display = 'inline-block';
+  } else {
+    who.innerHTML = '<span class="badge2 guest">guest / public</span> <span style="color:#6b7080">not signed in</span>';
+  }
+}
+function ownerLinkUrl() { return location.origin + API_BASE + '#owner=' + ownerToken; }
+
+// ---------- connections panel ----------
+function onboardUrl() { return location.origin + apiUrl('/onboard/otter') + '?u=' + encodeURIComponent(userToken || ''); }
+function otterOnboardHtml(isOwner) {
+  if (isOwner) return '<div class="onboard" id="ob-otter">This server\'s Otter session is logged out. '
+    + 'Re-authenticate the server cookie: sign into otter.ai in the server\'s Chrome profile, or set '
+    + '<code>OTTER_SESSIONID</code> + <code>OTTER_CSRFTOKEN</code> (sealed mode), then reload.</div>';
+  const u = esc(onboardUrl());
+  return '<div class="onboard" id="ob-otter">'
+    + '<div>Otter has no public API — connect by handing this app your logged-in otter.ai cookie. Two ways:</div>'
+    + '<h5>Otter Pilot extension (one click)</h5>'
+    + '<ol><li>Load <code>extensions/otter-pilot</code> in Chrome (chrome://extensions → Developer mode → Load unpacked).</li>'
+    + '<li>Stay signed into otter.ai, open the extension, paste this URL, click <b>Send my Otter login</b>:</li></ol>'
+    + '<div class="url" id="obUrl">' + u + '</div><button class="cp" data-cp="' + u + '">copy URL</button>'
+    + '<h5>Or: capture script (local)</h5><code>python3 onboard_otter.py "' + u + '"</code></div>';
+}
+function googleAuthUrl() { return apiUrl('/google/auth') + '?' + (ownerToken ? 'token=' + encodeURIComponent(ownerToken) : 'u=' + encodeURIComponent(userToken || '')); }
+function connCard(m, isOwner) {
+  const on = !!m.connected, locked = !!m.locked;
+  const tag = m.owner_only ? '<span class="tag">owner</span>' : '';
+  let body = on
+    ? '<div class="who">✓ <b>' + esc(m.identity || 'connected') + '</b></div>'
+    : '<div class="who">not connected' + (m.detail ? ' — ' + esc(m.detail) : '') + '</div>';
+  if (on && m.id === 'google') body += '<div class="cal" data-cal="1"><span class="ph">loading calendar…</span></div>'
+    + '<div class="gemwrap"><button class="gembtn" data-gem-scan="1">📝 scan Gemini notes</button><div class="gem"></div></div>';
+  if (m.error) body += '<div class="err">' + esc(m.error) + '</div>';
+  let cta = '', onboard = '';
+  if (!on && !locked) {
+    if (m.id === 'otter') { onboard = otterOnboardHtml(isOwner); cta = '<div class="cta"><button data-ob="ob-otter">connect Otter →</button></div>'; }
+    else if (m.id === 'google' && !m.detail) cta = '<div class="cta"><button data-go="1">connect Google →</button></div>';
+  }
+  return '<div class="conn ' + (on ? 'on' : '') + (locked ? ' locked' : '') + '">'
+    + '<div class="top"><span class="sdot"></span><span class="name">' + esc(m.label) + '</span>' + tag + '</div>'
+    + body + cta + onboard + '</div>';
+}
+async function loadConnections() {
+  const host = document.getElementById('connections');
+  if (!host) return;
+  let d;
+  try { d = await (await api('/connections')).json(); }
+  catch (e) { host.innerHTML = '<div class="conn"><div class="err">connections: ' + esc(String(e)) + '</div></div>'; return; }
+  if (d.error) { host.innerHTML = '<div class="conn"><div class="err">' + esc(d.error) + '</div></div>'; return; }
+  host.innerHTML = (d.mechanisms || []).map(m => connCard(m, !!d.owner)).join('');
+  host.querySelectorAll('[data-ob]').forEach(b => b.onclick = () => document.getElementById(b.dataset.ob).classList.toggle('show'));
+  host.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { location.href = googleAuthUrl(); });
+  host.querySelectorAll('[data-gem-scan]').forEach(b => b.onclick = () => scanGemini(b));
+  host.querySelectorAll('.cp').forEach(b => b.onclick = () => { navigator.clipboard.writeText(b.dataset.cp); b.textContent = 'copied!'; setTimeout(() => b.textContent = 'copy URL', 1500); });
+  if (host.querySelector('.cal')) loadCalendar();
+}
+async function loadCalendar() {
+  const slot = document.querySelector('#connections .cal');
+  if (!slot) return;
+  let d;
+  try { d = await (await api('/calendar')).json(); }
+  catch (e) { slot.innerHTML = '<span class="err">' + esc(String(e)) + '</span>'; return; }
+  if (d.error) { slot.innerHTML = '<span class="err">' + esc(d.error) + '</span>'; return; }
+  if (!d.length) { slot.textContent = 'no meetings in the next 24h'; return; }
+  slot.innerHTML = d.slice(0, 3).map(e => {
+    const t = e.start ? new Date(e.start) : null;
+    const when = t && !isNaN(t) ? t.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : esc(e.start || '');
+    return '📅 <b>' + esc(when) + '</b> · ' + esc(e.summary) + (e.hangout ? ' · <a href="' + esc(e.hangout) + '" target="_blank">join</a>' : '');
+  }).join('<br>');
+}
+const escA = s => esc(s).replace(/"/g, '&quot;');
+async function scanGemini(btn) {
+  const slot = btn.parentElement.querySelector('.gem');
+  slot.innerHTML = '<span class="ph">scanning…</span>';
+  let d;
+  try { d = await (await api('/gemini')).json(); }
+  catch (e) { slot.innerHTML = '<span class="err">' + esc(String(e)) + '</span>'; return; }
+  if (d.error) { slot.innerHTML = '<span class="err">' + esc(d.error) + '</span>'; return; }
+  if (!d.length) { slot.textContent = 'no Gemini notes found (last 30 days)'; return; }
+  slot.innerHTML = d.map(n => '<div class="gemrow"><span>' + esc(n.date || '') + ' · ' + esc(n.title) + '</span>'
+    + '<button class="gimp" data-fid="' + escA(n.file_id) + '" data-title="' + escA(n.title) + '" data-date="' + escA(n.date || '') + '">import</button></div>').join('');
+  slot.querySelectorAll('.gimp').forEach(x => x.onclick = () => importGemini(x));
+}
+async function importGemini(x) {
+  x.textContent = 'importing…'; x.disabled = true;
+  let d;
+  try { d = await (await api('/gemini/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ file_id: x.dataset.fid, title: x.dataset.title, date: x.dataset.date }) })).json(); }
+  catch (e) { x.textContent = 'error'; x.title = String(e); x.disabled = false; return; }
+  if (d.error) { x.textContent = 'error'; x.title = d.error; x.disabled = false; return; }
+  x.textContent = '✓ imported (' + d.n_nodes + ' nodes)';
+  if (!cur) loadList();
+}
+
+// view: 'list' or otid; cur = {otid, live}
+let cur = null, after = 0, segs = [], lastSlide = '';
+let timers = [];
+function clearTimers() { timers.forEach(clearInterval); timers = []; }
+
+// ---------- live indicator (owner, while on the list) ----------
+async function pollLive() {
+  if (cur || viewMode || !ownerToken) return;
+  liveBar.classList.add('show');
+  try {
+    const r = await api('/live?after=0'); const d = await r.json();
+    if (d.error) { liveBar.className = 'show'; liveBar.textContent = '⚠ ' + d.error; return; }
+    if (d.live) {
+      liveBar.className = 'show islive';
+      liveBar.innerHTML = '<span class="dot live"></span><b style="color:#2eea7e">● LIVE: ' +
+        esc(d.title || 'meeting') + '</b> <span style="color:#9fc8ac">— click to follow</span>';
+      liveBar.dataset.otid = d.otid || '';
+      liveBar.onclick = () => open(d.otid, true);
+    } else {
+      liveBar.className = 'show'; liveBar.onclick = null;
+      liveBar.innerHTML = '<span class="dot"></span>No live meeting right now. Start an Otter and it appears ' +
+        'here automatically (usually within a few seconds).';
+    }
+  } catch (e) { liveBar.className = 'show'; liveBar.textContent = 'live check failed: ' + e; }
+}
+
+// ---------- backfill (import past Otter meetings) ----------
+let backfillTimer = null;
+async function startBackfill(progressEl) {
+  if (progressEl) progressEl.innerHTML = '<span class="ph">starting import…</span>';
+  try {
+    const r = await api('/backfill?limit=12', { method: 'POST' }); const d = await r.json();
+    if (d.error) { if (progressEl) progressEl.innerHTML = '<span class="err">' + esc(d.error) + '</span>'; return; }
+    pollBackfill(progressEl);
+  } catch (e) { if (progressEl) progressEl.innerHTML = '<span class="err">import failed: ' + e + '</span>'; }
+}
+function renderBackfill(d, progressEl) {
+  if (!progressEl) return;
+  const pct = d.total ? Math.round(100 * d.done / d.total) : 0;
+  let h = '';
+  if (d.running) h += 'Importing ' + d.done + '/' + d.total + (d.current ? ': ' + esc(d.current) + '…' : '…');
+  else if (d.total) h += '✓ Imported ' + d.done + '/' + d.total + ' meetings.';
+  else h += 'Nothing new to import — every past Otter meeting is already here.';
+  h += '<div class="barwrap"><div class="bar" style="width:' + pct + '%"></div></div>';
+  if ((d.errors || []).length) h += '<div class="errs">' + d.errors.length + ' failed: ' +
+    d.errors.map(e => esc(e.title || e.otid) + ' (' + esc(e.error) + ')').join('; ') + '</div>';
+  progressEl.innerHTML = h;
+}
+async function pollBackfill(progressEl) {
+  clearInterval(backfillTimer);
+  const tick = async () => {
+    try {
+      const r = await api('/backfill/status'); const d = await r.json();
+      renderBackfill(d, progressEl);
+      if (!d.running) { clearInterval(backfillTimer); backfillTimer = null; if (!cur && ownerToken) loadList(); }
+    } catch (e) {}
+  };
+  await tick();
+  backfillTimer = setInterval(tick, 1500);
+}
+hdrImport.onclick = () => {
+  loadList();  // make sure we're on the list, where the progress area lives
+  setTimeout(() => {
+    let pe = document.getElementById('hdrImportProgress');
+    if (!pe) { pe = document.createElement('div'); pe.id = 'hdrImportProgress'; pe.className = 'progress';
+      pe.style.margin = '10px 24px 0'; liveBar.after(pe); }
+    startBackfill(pe);
+  }, 50);
+};
+
+// ---------- conversations list ----------
+async function loadList() {
+  cur = null; clearTimers();
+  if (!viewMode && location.hash.indexOf('c=') !== -1) history.replaceState(null, '', location.pathname + location.search);
+  listEl.classList.add('show'); mainEl.classList.add('hide');
+  back.style.display = 'none'; btn.style.display = 'none'; win.style.display = 'none'; meet.textContent = '';
+  home.textContent = 'Otter Copilot';
+  hdrImport.style.display = ownerToken && !viewMode ? 'inline-block' : 'none';
+  listEl.innerHTML = '<p class="ph" style="padding-top:14px">Loading your conversations… checking for a live meeting…</p>';
+  pollLive();
+  timers.push(setInterval(pollLive, 8000));
+  const r = await api('/conversations'); const d = await r.json();
+  if (cur) return;  // navigated away while loading
+  if (d.error) { listEl.innerHTML = '<p class="err" style="padding-top:14px">Couldn\'t load conversations: ' + esc(d.error) + '</p>'; return; }
+  const live = d.filter(c => c.live), past = d.filter(c => !c.live);
+  let html = '';
+  if (live.length) html += '<h2>live now</h2>' + live.map(card).join('');
+  if (!past.length && !live.length) {
+    html += emptyOwnerPanel();
+  } else {
+    html += '<h2>past conversations</h2>' + (past.length ? past.map(card).join('') : '<span class="ph">none stored yet.</span>');
+  }
+  listEl.innerHTML = html;
+  wireCards();
+  const imp = document.getElementById('emptyImport');
+  if (imp) imp.onclick = () => { imp.disabled = true; startBackfill(document.getElementById('emptyProgress')); };
+  timers.push(setInterval(() => { if (!cur) loadList(); }, 12000));  // auto-refresh so a newly-started meeting shows up
+}
+function emptyOwnerPanel() {
+  return '<div class="panel"><h3>No conversations yet</h3>' +
+    '<p>This copilot fills up two ways: (1) start an Otter meeting and it appears here live automatically, or ' +
+    '(2) import the meetings already in your Otter account.</p>' +
+    '<div class="row"><button id="emptyImport" class="big">⬇ Import my past Otter meetings</button></div>' +
+    '<div id="emptyProgress" class="progress"></div></div>';
+}
+function wireCards() {
+  for (const el of listEl.querySelectorAll('.card')) el.onclick = e => {
+    if (e.target.classList.contains('share')) return;
+    open(el.dataset.otid, el.dataset.live === '1');
+  };
+  for (const s of listEl.querySelectorAll('.share')) s.onclick = ev => { ev.stopPropagation(); shareLink(s.dataset.otid, s); };
+}
+function card(c) {
+  const badge = c.live ? '<span class="badge live">● LIVE</span>' : '';
+  const when = c.started_at || c.date || '';
+  const shareBtn = viewMode ? '' : `<button class="share" data-otid="${esc(c.otid)}">share</button>`;
+  return `<div class="card" data-otid="${esc(c.otid)}" data-live="${c.live ? 1 : 0}">
+    <div class="t">${esc(c.title)} ${badge}${shareBtn}</div>
+    <div class="meta">${when ? '<span class="pill">' + esc(when) + '</span>' : ''}
+      <span class="pill"><b>${c.n_segments}</b> segments</span>
+      <span class="pill"><b>${c.n_decisions}</b> decisions</span>
+      <span class="pill good"><b>${c.n_good}</b> good</span></div></div>`;
+}
+async function shareLink(otid, el) {
+  const r = await api('/sharelink?otid=' + encodeURIComponent(otid)); const d = await r.json();
+  if (d.error) { el.textContent = d.error; return; }
+  await navigator.clipboard.writeText(d.url);
+  const o = el.textContent; el.textContent = 'copied!'; setTimeout(() => el.textContent = o, 1500);
+}
+
+// ---------- open a conversation ----------
+function open(otid, live) {
+  cur = { otid, live }; clearTimers();
+  if (!viewMode) history.replaceState(null, '', '#c=' + encodeURIComponent(otid));  // keep the open meeting in the URL across refresh
+  listEl.classList.remove('show'); mainEl.classList.remove('hide');
+  liveBar.classList.remove('show');
+  back.style.display = viewMode ? 'none' : 'inline-block';
+  after = 0; segs = []; lastSlide = ''; feed.innerHTML = '<span class="ph">loading transcript…</span>'; lastSig = ''; expanded = null; focusT = null; gnodes = []; nodeMap = {}; lastCorrectSig = '';
+  correctEl.style.display = correctHdr.style.display = 'none';
+  partyInit = false; goodSeen = new Set();
+  out.innerHTML = '<span class="ph">loading…</span>';
+  document.getElementById('audience').innerHTML = '<span class="ph">proposing a sharing tier…</span>';
+  tabFlow.style.display = (ownerToken && !viewMode) ? 'inline-block' : 'none';
+  flowLoaded = false;
+  switchView('feed');
+  if (live) startLive(); else loadStored(otid);
+}
+back.onclick = loadList;
+home.onclick = () => { if (!viewMode) loadList(); };
+async function openHash(otid) {  // restore the meeting named in #c= on refresh, resuming live-follow if it's live
+  try {
+    const cs = await (await api('/conversations')).json();
+    const c = Array.isArray(cs) && cs.find(x => x.otid === otid);
+    if (c) { open(otid, !!c.live); return; }
+    // stale otid (e.g. a live placeholder that became a permanent hash) — pick up the current live meeting if any
+    const lv = await (await api('/live?after=0')).json();
+    if (lv && lv.live && lv.otid) { open(lv.otid, true); return; }
+    loadList();
+  } catch (e) { loadList(); }
+}
+
+// ---------- stored (past) conversation ----------
+async function loadStored(otid, sig) {
+  let url = '/transcript?otid=' + encodeURIComponent(otid);
+  if (sig) url += '&sig=' + encodeURIComponent(sig);
+  const r = await api(url); const d = await r.json();
+  if (d.error) { feed.innerHTML = '<span class="err">' + esc(d.error) + '</span>'; return; }
+  meet.innerHTML = '<span class="dot"></span>' + esc(d.title);
+  home.textContent = d.title;
+  btn.style.display = 'none'; win.style.display = 'none';
+  const marks = nodeMarks(d);
+  feed.innerHTML = d.segments.map(s => segHtml(s, marks)).join('') || '<span class="ph">no transcript stored.</span>';
+  renderDecisions(d); lastGraph = d;
+  gnodes = d.nodes; nodeMap = {}; for (const n of d.nodes) nodeMap[n.id] = n;
+  out.innerHTML = '<span class="ph">Stored conversation. Open the graph tab and tap a topic to recap it.</span>';
+  renderCorrect(otid, d.clusters, d.speakers, d.corrections);
+  initAudience(otid, d.visibility);
+}
+
+// ---------- audience proposer (owner only) ----------
+const audienceEl = document.getElementById('audience');
+function acceptRow(otid, current, proposal) {
+  const tiers = ['private', 'cohort', 'public'];
+  return '<div class="accept">' + tiers.map(t =>
+    `<button data-vis="${t}" class="${t === current ? 'on' : ''}">${t}</button>`).join('') +
+    '</div>';
+}
+function renderAudience(otid, current, p) {
+  let h = `<div class="row1"><span class="sug ${esc(p.suggested)}">${esc(p.suggested)}</span>` +
+    `<span class="conf">conf ${(+p.confidence || 0).toFixed(2)} · now: <b>${esc(current)}</b></span></div>`;
+  h += '<div class="rat">' + esc(p.rationale || '') + '</div>';
+  for (const r of (p.redactions || [])) h += '<div class="red"><b>redact</b>' + esc(r) + '</div>';
+  h += acceptRow(otid, current, p);
+  audienceEl.innerHTML = h;
+  for (const b of audienceEl.querySelectorAll('.accept button'))
+    b.onclick = () => setVisibility(otid, b.dataset.vis, p);
+}
+async function initAudience(otid, current) {
+  if (viewMode) { audienceEl.style.display = 'none'; return; }  // owner-only card
+  audienceEl.style.display = 'block';
+  // on-demand (saves an AI call per open): show current tier + a button that proposes when asked
+  audienceEl.innerHTML = '<div class="row1">now: <b>' + esc(current || 'private') + '</b></div>'
+    + '<button class="smallbtn" id="propBtn">propose who to share with (1 AI call)</button>';
+  document.getElementById('propBtn').onclick = async () => {
+    audienceEl.innerHTML = '<span class="ph">proposing a sharing tier…</span>';
+    try {
+      const r = await api('/audience?otid=' + encodeURIComponent(otid)); const p = await r.json();
+      if (p.error) { audienceEl.innerHTML = '<span class="err">' + esc(p.error) + '</span>'; return; }
+      renderAudience(otid, current, p);
+      audienceEl._proposal = p;
+    } catch (e) { audienceEl.innerHTML = '<span class="err">audience failed: ' + e + '</span>'; }
+  };
+}
+async function setVisibility(otid, vis, p) {
+  try {
+    const r = await api('/visibility?otid=' + encodeURIComponent(otid), {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ visibility: vis }) });
+    const d = await r.json();
+    if (d.error) { audienceEl.insertAdjacentHTML('beforeend', '<div class="err">' + esc(d.error) + '</div>'); return; }
+    renderAudience(otid, d.visibility, p || audienceEl._proposal || {});
+  } catch (e) { audienceEl.insertAdjacentHTML('beforeend', '<div class="err">' + e + '</div>'); }
+}
+// ---------- corrections (owner only) ----------
+const correctEl = document.getElementById('correct'), correctHdr = document.getElementById('correctHdr');
+let correctOtid = null;
+function renderCorrect(otid, clusters, speakers, corrections) {
+  if (viewMode || !ownerToken) { correctEl.style.display = correctHdr.style.display = 'none'; return; }
+  correctOtid = otid;
+  correctEl.style.display = 'block'; correctHdr.style.display = 'block';
+  let h = '<div class="sec">speaker names</div>';
+  if (!(clusters || []).length) h += '<span class="ph">no speaker clusters seen yet.</span>';
+  for (const cid of (clusters || [])) h += `<div class="row"><span class="cid">${esc(cid)}</span>` +
+    `<input data-cid="${esc(cid)}" value="${esc((speakers || {})[cid] || '')}" placeholder="name" />` +
+    `<button data-savecid="${esc(cid)}">save</button></div>`;
+  h += '<div class="sec">text fixes (wrong → right)</div>';
+  for (const c of (corrections || [])) h += `<div class="fix"><b>${esc(c.wrong)}</b> <span class="arrow">→</span> ${esc(c.right)}</div>`;
+  h += '<div class="row"><input id="fixWrong" placeholder="wrong" /><span class="arrow">→</span>' +
+    '<input id="fixRight" placeholder="right" /><button id="fixAdd">add</button></div>';
+  correctEl.innerHTML = h;
+  for (const b of correctEl.querySelectorAll('[data-savecid]')) b.onclick = () => {
+    const inp = correctEl.querySelector(`input[data-cid="${b.dataset.savecid}"]`);
+    postCorrect({ speakers: { [b.dataset.savecid]: inp.value.trim() } });
+  };
+  document.getElementById('fixAdd').onclick = () => {
+    const w = document.getElementById('fixWrong').value.trim(), r = document.getElementById('fixRight').value.trim();
+    if (w) postCorrect({ corrections: [{ wrong: w, right: r }] });
+  };
+}
+async function postCorrect(payload) {
+  const r = await api('/correct?otid=' + encodeURIComponent(correctOtid), {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+  const d = await r.json();
+  if (d.error) { correctEl.insertAdjacentHTML('beforeend', '<div class="err">' + esc(d.error) + '</div>'); return; }
+  // re-pull the transcript so names/text re-render everywhere, then refresh the panel
+  if (cur && cur.live) { pollGraph(); }
+  else { await loadStored(correctOtid, viewMode ? viewMode.sig : undefined); }
+}
+function nodeMarks(d) {
+  const good = new Set(d.good || []), m = {};
+  for (const n of d.nodes) m[n.id] = { kind: n.kind, good: good.has(n.id) };
+  return m;
+}
+function segHtml(s, marks) {
+  const m = marks[s.uuid];
+  let cls = 'u', tag = '';
+  if (m && (m.good || m.kind === 'decision' || m.kind === 'action_item')) {
+    cls += ' mark' + (m.good ? ' good' : '');
+    tag = '<span class="tag">' + (m.good ? '✨ good' : (m.kind === 'action_item' ? '⭐ action' : '⭐ decision')) + '</span>';
+  }
+  return `<p class="${cls}"><span class="spk">${esc(s.speaker)}</span>${esc(s.text)}${tag}</p>`;
+}
+
+// ---------- live conversation (follow in real time) ----------
+function startLive() {
+  meet.innerHTML = '<span class="dot live"></span>following live…';
+  feed.innerHTML = '<span class="ph">Following the live meeting… new lines stream in as people speak.</span>';
+  btn.style.display = 'inline-block'; win.style.display = 'inline-block';
+  poll(); pollGraph();
+  timers.push(setInterval(poll, 8000), setInterval(pollGraph, 8000));
+}
+function renderSlides(images, isLive) {
+  if (!isLive) { slides.classList.remove('has'); return; }
+  slides.classList.add('has');
+  if (!images.length) {
+    slideBig.style.display = 'none'; slideRow.innerHTML = '';
+    slideCap.textContent = 'no screenshots yet — Otter only captures the shared screen when OtterPilot joins the call (not in record mode)';
+    return;
+  }
+  slideBig.style.display = 'block';
+  const newest = images[images.length - 1].src;
+  if (newest !== lastSlide) { slideBig.src = apiUrl(newest); lastSlide = newest; }
+  slideRow.innerHTML = '';
+  for (const im of images.slice().reverse()) {
+    const t = document.createElement('img'); t.src = apiUrl(im.src);
+    t.onclick = () => { slideBig.src = apiUrl(im.src); };
+    slideRow.appendChild(t);
+  }
+  slideCap.textContent = images.length + ' screenshot' + (images.length > 1 ? 's' : '') + ' captured';
+}
+async function endLiveFollow(msg) {  // the followed meeting ended — settle into its finalized transcript
+  if (!cur) return;
+  clearTimers();
+  const otid = cur.otid;
+  cur = { otid, live: false };
+  await loadStored(otid);  // re-renders feed + graph from the saved (decoded) state
+  meet.innerHTML = '<span class="dot"></span>' + esc(home.textContent || 'meeting') +
+    ' <span style="color:#c9a227;font-size:11px">· just ended — final transcript</span>';
+}
+async function poll() {
+  if (!cur || !cur.live) return;
+  try {
+    const r = await api('/live?after=' + after); const d = await r.json();
+    if (d.error || !d.live) return endLiveFollow(d.error || 'meeting ended');
+    if (d.otid && d.otid !== cur.otid) {
+      // the live session got its permanent otid (numeric placeholder → hash), or a new meeting took over
+      cur.otid = d.otid;
+      if (!viewMode) history.replaceState(null, '', '#c=' + encodeURIComponent(d.otid));
+      after = 0; segs = []; feed.innerHTML = '';
+    }
+    meet.innerHTML = '<span class="dot live"></span>' + (d.title || 'live meeting');
+    home.textContent = d.title || 'live meeting';
+    for (const s of d.segments) {
+      segs.push(s.text);
+      feed.insertAdjacentHTML('beforeend', `<p class="u" data-uuid="${esc(s.uuid)}"><span class="spk">${esc(s.speaker)}</span>${esc(s.text)}</p>`);
+    }
+    if (d.segments.length) feed.scrollTop = feed.scrollHeight;
+    after = d.max_order;
+    renderSlides(d.images || [], true);
+  } catch (e) { meet.innerHTML = '<span class="dot"></span>server unreachable'; }
+}
+
+// ---------- graph (shared by live + stored) ----------
+let cy = null, gnodes = [], nodeMap = {}, lastGraph = null, graphVisible = false, lastSig = '', lastCorrectSig = '', expanded = null, graphAll = false, focusT = null;
+function ensureCy() {
+  if (cy) return cy;
+  cy = cytoscape({ container: document.getElementById('cy'),
+    wheelSensitivity: 0.08, minZoom: 0.25, maxZoom: 4,
+    style: [
+      { selector: 'node.lane', css: {
+          'shape': 'round-rectangle', 'label': 'data(label)', 'background-color': 'data(col)',
+          'background-opacity': 0.92, 'color': '#10131c', 'font-size': '11px', 'font-weight': 'bold',
+          'text-wrap': 'wrap', 'text-max-width': '150px', 'text-valign': 'center', 'text-halign': 'center',
+          'width': 168, 'height': 56, 'padding': '6px' } },
+      { selector: 'node.lane.ctl', css: { 'background-color': '#15171f', 'color': '#9aa0ad', 'border-width': 1, 'border-color': '#3a4150', 'font-weight': 'normal' } },
+      { selector: 'node.seg', css: { 'background-color': '#8a8f9c', 'width': 11, 'height': 11, 'label': '' } },
+      { selector: 'node.seg.question', css: { 'background-color': '#4a90d9' } },
+      { selector: 'node.seg.decision', css: { 'background-color': '#2bb673', 'width': 17, 'height': 17, 'border-width': 2, 'border-color': '#0d0f16' } },
+      { selector: 'node.seg.action_item', css: { 'background-color': '#2bb673', 'shape': 'diamond', 'width': 17, 'height': 17 } },
+      { selector: 'node.seg.divergence', css: { 'background-color': '#c0524a' } },
+      { selector: 'node.seg.good', css: { 'border-width': 3, 'border-color': '#ff5ea8' } },
+      { selector: 'node.seg.row', css: { 'label': 'data(label)', 'font-size': '12px', 'color': '#cdd2da', 'text-halign': 'right', 'text-valign': 'center', 'text-margin-x': 7, 'text-wrap': 'wrap', 'text-max-width': '620px', 'z-index': 10 } },
+      { selector: 'node:selected', css: { 'border-width': 3, 'border-color': '#cdd2da' } },
+      { selector: 'edge', css: { 'width': 1, 'line-color': '#23283a', 'curve-style': 'bezier', 'target-arrow-shape': 'none', 'opacity': 0.45 } },
+    ] });
+  cy.on('tap', 'node.lane', e => {
+    const dt = e.target.data();
+    if (dt.minor) { graphAll = true; lastSig = ''; renderGraph(lastGraph); }
+    else if (dt.combine) { graphAll = false; lastSig = ''; renderGraph(lastGraph); }
+    else if (dt.back) { focusT = null; lastSig = ''; renderGraph(lastGraph); }
+    else { focusT = dt.tid; clusterRecap(dt.tid, dt.tlabel); lastSig = ''; renderGraph(lastGraph); }
+  });
+  cy.on('tap', 'node.seg', e => showNode(e.target.id()));
+  return cy;
+}
+const TCOLORS = ['#c9a227', '#4a90d9', '#2bb673', '#c0524a', '#9b59b6', '#e67e22', '#1ab9c4', '#d96fb0', '#7f8c5a', '#5d6d9e'];
+function laneLabel(t, d, good, decs) {
+  const tn = d.nodes.filter(n => n.topic_id === t.id);
+  const nG = tn.filter(n => good.has(n.id)).length, nD = tn.filter(n => decs.has(n.id)).length;
+  const parts = [t.node_ids.length + ' segs']; if (nD) parts.push('🟢' + nD); if (nG) parts.push('✨' + nG);
+  return t.label + '\n(' + parts.join(' ') + ')';
+}
+function laneSub(t, d, good, decs) {
+  const tn = d.nodes.filter(n => n.topic_id === t.id);
+  const nG = tn.filter(n => good.has(n.id)).length, nD = tn.filter(n => decs.has(n.id)).length;
+  const parts = [t.node_ids.length + ' segs']; if (nD) parts.push('🟢' + nD); if (nG) parts.push('✨' + nG);
+  return parts.join(' ');
+}
+// HTML grid: topic labels are a FROZEN sticky left column; the dot timeline scrolls horizontally.
+function renderGraph(d) {
+  const cyEl = document.getElementById('cy');
+  const good = new Set(d.good || []), decs = new Set(d.decisions || []);
+  nodeMap = {}; d.nodes.forEach(n => nodeMap[n.id] = n);
+  const order = {}; let oi = 0;
+  for (const n of d.nodes) if (!(n.topic_id in order)) order[n.topic_id] = oi++;
+  const topics = d.topics.slice().sort((a, b) => (order[a.id] ?? 99) - (order[b.id] ?? 99));
+  const colOf = {}; topics.forEach((t, i) => colOf[t.id] = TCOLORS[i % TCOLORS.length]);
+  const sig = JSON.stringify([topics.map(t => [t.id, t.node_ids.length]), graphAll]);
+  if (sig === lastSig) return; lastSig = sig;
+
+  const MAX = 8, merge = {};
+  let lanesT;
+  if (!graphAll && topics.length > MAX) {
+    const big = new Set(topics.slice().sort((a, b) => b.node_ids.length - a.node_ids.length).slice(0, MAX).map(t => t.id));
+    const major = topics.filter(t => big.has(t.id)), minor = topics.filter(t => !big.has(t.id));
+    minor.forEach(t => merge[t.id] = '__minor__');
+    const mseg = minor.flatMap(t => t.node_ids);
+    lanesT = major.map(t => ({ id: t.id, tid: t.id, tlabel: t.label, name: t.label, sub: laneSub(t, d, good, decs), col: colOf[t.id] }));
+    lanesT.push({ id: '__minor__', minor: true, name: '+ ' + minor.length + ' smaller topics', sub: mseg.length + ' segs — tap to split' });
+  } else if (graphAll && topics.length > MAX) {
+    lanesT = [{ id: '__combine__', combine: true, name: '← combine small topics', sub: '' },
+              ...topics.map(t => ({ id: t.id, tid: t.id, tlabel: t.label, name: t.label, sub: laneSub(t, d, good, decs), col: colOf[t.id] }))];
+  } else {
+    lanesT = topics.map(t => ({ id: t.id, tid: t.id, tlabel: t.label, name: t.label, sub: laneSub(t, d, good, decs), col: colOf[t.id] }));
+  }
+  const total = Math.max(1, d.nodes.length);
+  const TW = Math.max(1100, Math.min(8000, total * 9));  // timeline width (px) — scroll horizontally for later in the meeting
+  const dots = {}; lanesT.forEach(t => dots[t.id] = []);
+  d.nodes.forEach((n, i) => {
+    const lid = merge[n.topic_id] || n.topic_id; if (!(lid in dots)) return;
+    const left = (i / total * TW).toFixed(0);
+    const title = esc(n.speaker + ': ' + (n.text || '')).replace(/"/g, '&quot;');
+    dots[lid].push('<span class="tldot ' + n.kind + (good.has(n.id) ? ' good' : '') + '" style="left:' + left + 'px" data-id="' + n.id + '" title="' + title + '"></span>');
+  });
+  let html = '';
+  lanesT.forEach(t => {
+    const ctl = t.minor || t.combine;
+    html += '<div class="tlrow"><div class="tllabel' + (ctl ? ' ctl' : '') + '" style="' + (ctl ? '' : 'background:' + t.col) + '"'
+      + ' data-tid="' + (t.tid || '') + '" data-minor="' + (t.minor ? 1 : 0) + '" data-combine="' + (t.combine ? 1 : 0) + '" data-tlabel="' + esc(t.tlabel || '').replace(/"/g, '&quot;') + '">'
+      + esc(t.name) + '<span class="sub">' + esc(t.sub) + '</span></div>'
+      + '<div class="tllane" style="width:' + TW + 'px">' + (dots[t.id] || []).join('') + '</div></div>';
+  });
+  cyEl.innerHTML = html;
+  cyEl.onclick = (e) => {
+    const dot = e.target.closest('.tldot'); if (dot) { showNode(dot.dataset.id); return; }
+    const lab = e.target.closest('.tllabel'); if (!lab) return;
+    if (lab.dataset.minor === '1') { graphAll = true; lastSig = ''; renderGraph(lastGraph); }
+    else if (lab.dataset.combine === '1') { graphAll = false; lastSig = ''; renderGraph(lastGraph); }
+    else if (lab.dataset.tid) clusterRecap(lab.dataset.tid, lab.dataset.tlabel);
+  };
+  document.getElementById('graphCap').textContent = 'topics frozen on the left · scroll right = later in the meeting · hover a dot for its phrase, tap to read · tap a topic to recap'
+    + (topics.length > MAX ? ' · small topics grouped — tap to split' : '');
+}
+function showNode(id) {
+  const n = nodeMap[id]; if (!n) return;
+  out.innerHTML = '<div class="when">' + n.kind + ' · ' + n.speaker + '</div>' + esc(n.text);
+}
+async function clusterRecap(tid, label) {
+  if (viewMode) { out.innerHTML = '<div class="when">topic · ' + esc(label) + '</div><span class="ph">Recap is owner-only. This is a shared read-only transcript.</span>'; return; }
+  const text = gnodes.filter(n => n.topic_id === tid).map(n => n.speaker + ': ' + n.text).join('\n');
+  if (!text) return;
+  out.innerHTML = '<span class="ph">thinking…</span>';
+  try {
+    const r = await api('/recap', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, use_slide: false }) });
+    const j = await r.json();
+    out.innerHTML = '<div class="when">cluster · ' + esc(label) + '</div>' + (j.error ? '<span class="err">' + j.error + '</span>' : esc(j.summary));
+  } catch (e) { out.innerHTML = '<span class="err">recap failed: ' + e + '</span>'; }
+}
+const reflectBar = document.getElementById('reflectBar');
+function renderReflect(d) {
+  const r = d.reflection || {};
+  if (!r.archetype) { reflectBar.style.display = 'none'; return; }
+  const tl = d.archetype_tl || [];
+  const eras = tl.map((e, i) => '<span class="era' + (i === tl.length - 1 ? ' now' : '') + '">' + esc(e.archetype) + '</span>')
+    .join('<span style="color:#444">→</span>');
+  reflectBar.innerHTML =
+    '<span class="arch">🧭 ' + esc(r.archetype) + '</span>'
+    + (r.crux ? '<span class="crux"><b>crux</b>' + esc(r.crux) + '</span>' : '')
+    + (r.throughline ? '<div class="thru">' + esc(r.throughline) + '</div>' : '')
+    + (eras ? '<div class="eras">' + eras + '</div>' : '');
+  reflectBar.style.display = 'block';
+}
+function renderDecisions(d) {
+  renderReflect(d);
+  const set = new Set(d.decisions), good = new Set(d.good || []);
+  const ds = d.nodes.filter(n => set.has(n.id) || good.has(n.id));
+  dec.innerHTML = ds.length ? ds.map(n => good.has(n.id)
+      ? '<p class="d good"><b>✨ good point</b>' + esc(n.speaker + ': ' + n.text) + '</p>'
+      : '<p class="d"><b>' + n.kind + '</b>' + esc(n.speaker + ': ' + n.text) + '</p>').join('')
+    : '<span class="ph">decisions, action items &amp; good points collect here.</span>';
+}
+
+// party-ball (live only)
+const party = document.getElementById('party');
+let goodSeen = new Set(), partyInit = false;
+function partyBall(ids) {
+  if (!partyInit) { goodSeen = new Set(ids); partyInit = true; return; }
+  const fresh = ids.filter(id => !goodSeen.has(id));
+  for (const id of ids) goodSeen.add(id);
+  if (!fresh.length) return;
+  party.classList.remove('go'); void party.offsetWidth; party.classList.add('go');
+}
+function markFeed(d) {
+  const marks = nodeMarks(d);
+  for (const p of feed.querySelectorAll('.u[data-uuid]')) {
+    const m = marks[p.dataset.uuid];
+    if (m && (m.good || m.kind === 'decision' || m.kind === 'action_item') && !p.classList.contains('mark')) {
+      p.classList.add('mark'); if (m.good) p.classList.add('good');
+      p.insertAdjacentHTML('beforeend', '<span class="tag">' + (m.good ? '✨ good' : '⭐ ' + m.kind) + '</span>');
+    }
+  }
+}
+async function pollGraph() {
+  if (!cur || !cur.live) return;
+  try {
+    const r = await api('/graph'); const d = await r.json();
+    if (d.error || !d.live) return;
+    gnodes = d.nodes; nodeMap = {}; for (const n of d.nodes) nodeMap[n.id] = n;
+    lastGraph = d; renderDecisions(d); partyBall(d.good || []); markFeed(d);
+    const csig = JSON.stringify([d.clusters, d.speakers, d.corrections]);
+    if (csig !== lastCorrectSig) { lastCorrectSig = csig; renderCorrect(cur.otid, d.clusters, d.speakers, d.corrections); }
+    if (graphVisible) renderGraph(d);
+  } catch (e) {}
+}
+
+// recap button (live)
+btn.onclick = async () => {
+  const n = parseInt(win.value, 10);
+  const text = segs.slice(-n).join(' ');
+  if (!text.trim()) { out.innerHTML = '<span class="ph">No transcript captured yet.</span>'; return; }
+  btn.disabled = true; out.innerHTML = '<span class="ph">thinking…</span>';
+  try {
+    const r = await api('/recap', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) });
+    const d = await r.json();
+    if (d.error) out.innerHTML = '<span class="err">' + esc(d.error) + '</span>';
+    else out.innerHTML = '<div class="when">' + new Date().toLocaleTimeString() +
+      (d.used_slide ? ' · read the current slide 🖼️' : '') + '</div>' + esc(d.summary);
+  } catch (e) { out.innerHTML = '<span class="err">recap failed: ' + e + '</span>'; }
+  btn.disabled = false;
+};
+
+// ---------- workflow view (owner only): the cue/detector pipeline ----------
+const FLOW_COLOR = { observation: '#6fb0e8', cue: '#c9a227', decoder: '#b07ed9', kind: '#8a8f9c', action: '#2bb673' };
+let cyflow = null, flowLoaded = false;
+function ensureCyflow() {
+  if (cyflow) return cyflow;
+  cyflow = cytoscape({ container: document.getElementById('cyflow'),
+    style: [
+      { selector: 'node', css: { 'label': 'data(label)', 'color': '#e6e9ef', 'font-size': '10px', 'text-wrap': 'wrap',
+        'text-max-width': '130px', 'text-valign': 'center', 'text-halign': 'center', 'shape': 'roundrectangle',
+        'background-color': 'data(color)', 'background-opacity': 0.18, 'border-width': 1.5, 'border-color': 'data(color)',
+        'width': 'label', 'height': 'label', 'padding': '9px' } },
+      { selector: 'node.planned', css: { 'border-style': 'dashed', 'background-opacity': 0.06, 'color': '#7a808d' } },
+      { selector: 'node.fired', css: { 'border-width': 3 } },
+      { selector: 'edge', css: { 'width': 1.2, 'line-color': '#2f3442', 'target-arrow-color': '#2f3442',
+        'target-arrow-shape': 'triangle', 'arrow-scale': 0.8, 'curve-style': 'bezier' } },
+    ] });
+  return cyflow;
+}
+function flowLabel(n) {
+  let l = n.label;
+  if (n.count) l += '  ×' + n.count;
+  if (n.fired) l += '  ✓';
+  if (n.status === 'planned') l += '\n(planned)';
+  else if (n.sub) l += '\n' + n.sub;
+  return l;
+}
+function renderFlow(d) {
+  ensureCyflow();
+  const els = [];
+  for (const n of d.nodes) {
+    let cls = n.type + (n.status === 'planned' ? ' planned' : '') + (n.fired ? ' fired' : '');
+    els.push({ data: { id: n.id, label: flowLabel(n), color: FLOW_COLOR[n.type] || '#8a8f9c' }, classes: cls });
+  }
+  for (const e of d.edges) els.push({ data: { id: 'fe_' + e.source + '_' + e.target, source: e.source, target: e.target } });
+  cyflow.json({ elements: els });
+  cyflow.layout({ name: 'breadthfirst', directed: true, orientation: 'horizontal', spacingFactor: 1.05,
+    padding: 24, animate: false }).run();
+  cyflow.fit(undefined, 30);
+  const leg = [['observation', 'observation'], ['cue', 'trigger / cue'], ['decoder', 'decoder'],
+               ['kind', 'node kind'], ['action', 'action']];
+  document.getElementById('flowLegend').innerHTML = leg.map(([t, lbl]) =>
+    '<span class="lk"><span class="sw" style="background:' + FLOW_COLOR[t] + '"></span>' + lbl + '</span>').join('') +
+    '<span class="lk" style="color:#7a808d"><span class="sw" style="border:1px dashed #7a808d;background:transparent"></span>planned (cue-config, not wired)</span>' +
+    '<span class="lk">✓ = fired this meeting</span>';
+}
+async function loadFlow() {
+  if (!cur) return;
+  try {
+    const r = await api('/workflow?otid=' + encodeURIComponent(cur.otid)); const d = await r.json();
+    if (d.error) { document.getElementById('flowLegend').innerHTML = '<span class="err">' + esc(d.error) + '</span>'; return; }
+    flowLoaded = true; renderFlow(d);
+  } catch (e) { document.getElementById('flowLegend').innerHTML = '<span class="err">workflow failed: ' + e + '</span>'; }
+}
+
+// tabs
+function switchView(v) {
+  graphVisible = v === 'graph';
+  const flowV = v === 'flow';
+  feed.style.display = (v === 'feed') ? 'block' : 'none';
+  document.getElementById('graphWrap').style.display = graphVisible ? 'flex' : 'none';
+  document.getElementById('flow').style.display = flowV ? 'flex' : 'none';
+  tabFeed.classList.toggle('active', v === 'feed');
+  tabGraph.classList.toggle('active', graphVisible);
+  tabFlow.classList.toggle('active', flowV);
+  if (graphVisible && lastGraph) { lastSig = ''; renderGraph(lastGraph); }
+  if (flowV) { ensureCyflow(); cyflow.resize(); if (!flowLoaded) loadFlow(); else cyflow.fit(undefined, 30); }
+}
+tabFeed.onclick = () => switchView('feed');
+tabGraph.onclick = () => switchView('graph');
+tabFlow.onclick = () => switchView('flow');
+
+// ---------- guest / public landing ----------
+function guestLanding() {
+  document.title = 'Otter Copilot';
+  home.textContent = 'Otter Copilot';
+  hdrImport.style.display = 'none';
+  listEl.classList.add('show'); mainEl.classList.add('hide');
+  liveBar.classList.remove('show');
+  listEl.innerHTML = guestPanel();
+  // public conversations (visibility==public) still load, so guests can browse them
+  api('/conversations').then(r => r.json()).then(d => {
+    if (Array.isArray(d) && d.length) {
+      listEl.insertAdjacentHTML('beforeend', '<h2>public conversations</h2>' + d.map(card).join(''));
+      wireCards();
+    }
+  }).catch(() => {});
+  document.getElementById('guestSignin').onclick = doSignin;
+  document.getElementById('guestToken').addEventListener('keydown', e => { if (e.key === 'Enter') doSignin(); });
+}
+function guestPanel() {
+  return '<div class="panel"><h3>You\'re viewing as a guest</h3>' +
+    '<p>This is the owner\'s private meeting copilot. Guests only see meetings the owner has explicitly ' +
+    'marked <b>public</b>. A single meeting can also be shared with you via a special read-only link.</p>' +
+    '<p>If you\'re the owner, paste your owner token to sign in:</p>' +
+    '<div class="row"><input id="guestToken" type="password" placeholder="owner token" autocomplete="off" />' +
+    '<button id="guestSignin" class="signin">Sign in</button></div>' +
+    '<p style="margin-top:12px;font-size:12.5px;color:#6b7080">Tip: your owner link bookmarks the token for you ' +
+    '(it ends in <code style="color:#9aa0ad">#owner=…</code>), so you usually won\'t need to type it again.</p></div>';
+}
+function doSignin() {
+  const t = document.getElementById('guestToken').value.trim();
+  if (!t) return;
+  localStorage.setItem('otter_owner_token', t);
+  location.hash = '#owner=' + encodeURIComponent(t);
+  location.reload();
+}
+
+// ---------- shared read-only view ----------
+function viewLanding() {
+  document.getElementById('sharedBanner').classList.add('show');
+  cur = { otid: viewMode.otid, live: false };
+  listEl.classList.remove('show'); mainEl.classList.remove('hide');
+  liveBar.classList.remove('show');
+  back.style.display = 'none'; btn.style.display = 'none'; win.style.display = 'none'; hdrImport.style.display = 'none';
+  home.style.cursor = 'default'; home.onclick = null;
+  meet.innerHTML = '<span class="dot"></span>shared read-only view';
+  feed.innerHTML = '<span class="ph">loading shared transcript…</span>';
+  switchView('feed');
+  out.innerHTML = '<span class="ph">Shared conversation. Open the graph tab and tap a topic to view it.</span>';
+  loadStored(viewMode.otid, viewMode.sig);
+}
+
+// ---------- boot dispatch ----------
+renderIdentity();
+if (!viewMode) loadConnections();
+if (viewMode) viewLanding();
+else if (ownerToken) { const _cm = location.hash.match(/[#&]c=([^&]+)/); _cm ? openHash(decodeURIComponent(_cm[1])) : loadList(); }
+else guestLanding();
+</script>
+</body>
+</html>

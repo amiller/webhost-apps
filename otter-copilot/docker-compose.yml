@@ -1,0 +1,24 @@
+services:
+  otter:
+    image: ghcr.io/amiller/teexai-otter:latest
+    ports:
+      - "8137:8137"
+    environment:
+      # Sealed secrets injected by Phala — never baked into the image.
+      - OTTER_SESSION=sealed
+      - OTTER_SESSIONID=${OTTER_SESSIONID}
+      - OTTER_CSRFTOKEN=${OTTER_CSRFTOKEN}
+      - NEAR_API_KEY=${NEAR_API_KEY}
+      - MATRIX_HOMESERVER=${MATRIX_HOMESERVER}
+      - MATRIX_ROOM=${MATRIX_ROOM}
+      - MATRIX_USER=${MATRIX_USER}
+      - MATRIX_PASSWORD=${MATRIX_PASSWORD}
+      - HOST=0.0.0.0
+      - OTTER_OUT=/data/otter
+    volumes:
+      # On Phala this maps to a persistent *encrypted* volume (the sealing boundary).
+      - otter_data:/data
+    restart: unless-stopped
+
+volumes:
+  otter_data:

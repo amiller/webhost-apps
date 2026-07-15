@@ -1,0 +1,4 @@
+requests
+browser_cookie3
+websocket-client
+matrix-nio[e2e]

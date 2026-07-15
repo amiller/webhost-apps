@@ -1,0 +1,17 @@
+references/
+frames/
+audio/
+*.log
+otter_state.json
+*cookie*
+# capture OUTPUTS hold the full cookie jar; the .py itself is tracked
+otter_capture.har
+otter_capture.*.json
+*.har
+.env
+.env.local
+*.token
+matrix_spool/
+nio_store/
+otter_web/data/
+*crosssign_private_keys*
