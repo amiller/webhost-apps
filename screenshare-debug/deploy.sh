@@ -1,10 +1,7 @@
 # screenshare-debug — deploy to the pod tee-daemon as a deno source tarball.
 #
-# No secrets are required for the default (debug echo-sink) build — the consent grant is
-# signed with a server-generated key persisted in the app's dataDir. Optional env:
-#   OAUTH3_NODE   — the oauth3 node for identity (default the pod).
-#   AISHLEY_URL   — aishley's encrypted-to-enclave ingest base (enables the 2nd sink).
-#   AISHLEY_VERIFY— aishley's enclave attestation verify link (shown on the destination card).
+# No secrets are required. Optional env:
+#   OAUTH3_NODE — the oauth3 node for identity (default the pod; override for staging).
 #
 #   bash deploy.sh
 set -euo pipefail
@@ -17,14 +14,10 @@ fi
 : "${TEE_DAEMON_TOKEN:?no daemon token — set TEE_DAEMON_TOKEN or source ~/.tee-daemon-staging.env}"
 
 export OAUTH3_NODE="${OAUTH3_NODE:-https://pod.dstack.soc1024.com/oauth3}"
-export AISHLEY_URL="${AISHLEY_URL:-}" AISHLEY_VERIFY="${AISHLEY_VERIFY:-}"
 MANIFEST=$(python3 - <<'PY'
 import json,os
-env={"OAUTH3_NODE":os.environ["OAUTH3_NODE"]}
-if os.environ.get("AISHLEY_URL"): env["AISHLEY_URL"]=os.environ["AISHLEY_URL"]
-if os.environ.get("AISHLEY_VERIFY"): env["AISHLEY_VERIFY"]=os.environ["AISHLEY_VERIFY"]
 print(json.dumps({"name":"screenshare-debug","runtime":"deno","entry":"server.ts","mode":"dev",
-  "listen":{"port":8080,"protocol":"http"},"env":env}))
+  "listen":{"port":8080,"protocol":"http"},"env":{"OAUTH3_NODE":os.environ["OAUTH3_NODE"]}}))
 PY
 )
 
