@@ -1,0 +1,14 @@
+[0m[38;5;245mrunning 10 tests from ./tests/server_test.ts[0m
+otter cursor and dedup logic keeps only new orders ... [0m[32mok[0m [0m[38;5;245m(770µs)[0m
+judge JSON parse and threshold marks only score>=7 bangers ... [0m[32mok[0m [0m[38;5;245m(199µs)[0m
+/goodpoints returns the server-side ledger ... [0m[32mok[0m [0m[38;5;245m(6ms)[0m
+#90 idle: a stale viewer window stops the weave; a new /events poll resumes it ... [0m[32mok[0m [0m[38;5;245m(6ms)[0m
+#90 idle: a quiet meeting idles the otter lane too; /start resumes everything ... [0m[32mok[0m [0m[38;5;245m(1ms)[0m
+#90 /events refreshes the consumer heartbeat and exposes lane state ... [0m[32mok[0m [0m[38;5;245m(1ms)[0m
+#90 /diag reports the idle block ... [0m[32mok[0m [0m[38;5;245m(827µs)[0m
+#93 distill: brief updates from transcript segments with no banger ... [0m[32mok[0m [0m[38;5;245m(277µs)[0m
+#93 distill: a banger overrides the brief and holds it for one interval ... [0m[32mok[0m [0m[38;5;245m(225µs)[0m
+#93 distill: cadence throttle skips a too-soon second distill (force=false) ... [0m[32mok[0m [0m[38;5;245m(131µs)[0m
+
+[0m[32mok[0m | 10 passed | 0 failed [0m[38;5;245m(23ms)[0m
+

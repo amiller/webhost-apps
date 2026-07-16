@@ -13,6 +13,8 @@ interface Cfg {
   compositorModel: string;
   weaveIdleMs: number;
   otterIdleMs: number;
+  distillIntervalMs: number;
+  distillWindowMs: number;
 }
 
 interface Segment {
@@ -56,13 +58,55 @@ export interface StreamProvider {
   ): Promise<string>;
 }
 
-const TOOLSMITH_SYSTEM = `You build compact animated canvas layer tools for a realtime visual compositor.
-Return STRICT JSON only:
-{"name":"snake_name","desc":"one line","params":[{"name":"speed","default":1,"min":0,"max":3}],"draw":"(ctx,p,t,w,h,txt)=>{...}"}
-Use only CanvasRenderingContext2D, Path2D, Math, and the txt caption. No DOM, network, imports, or per-pixel loops.`;
+const TOOLSMITH_SYSTEM = `You are a coding agent that builds a library of small VISUAL LAYER TOOLS for a
+realtime canvas compositor. Each turn you create ONE new tool — or improve an existing one — that a
+faster model will attach, parameterize, and tweak live.
 
-const COMPOSITOR_SYSTEM = `You are a realtime VJ compositor. Pick 2-5 layer tools from the palette and tune parameters to match the brief. Return STRICT JSON only:
-{"layers":[{"tool":"name","params":{"speed":1.2}}]}`;
+A tool is a self-contained animated draw function for a 2D canvas:
+- signature: (ctx, p, t, w, h, txt) — ctx is CanvasRenderingContext2D, p is the params object, t is time
+  in seconds (USE t to animate continuously), w and h are canvas pixels, and txt is a live string of
+  recent room speech (a caption you MAY render).
+- declares 2-5 numeric params the compositor can tweak (speed, density, hue, scale, intensity, depth, ...),
+  each with a sensible default and min/max.
+- composites well over other layers — lean on ctx.globalAlpha for blendability.
+
+BUILD A VARIETY — do not just make particles and text. Rotate through these kinds:
+- ATMOSPHERE: starfields, drifting fog, aurora, rain, ripples, pulsing grids, sweeping beacons, neon contours.
+- 3D / SCENES: rotate points in XYZ and project to 2D (sx = w/2 + x*f/(f+z), sy = h/2 + y*f/(f+z), f≈300)
+  to draw wireframe or shaded SOLIDS (cube, icosahedron, torus), perspective tunnels/corridors,
+  depth-sorted point clouds, parallax horizons, isometric structures. Give them a depth or rotation param.
+- VECTOR / SVG: build little emblems, glyphs, sigils or line-art from SVG path data via Path2D —
+  const path = new Path2D("M12 2 L22 22 ..."); then ctx.fill(path) / ctx.stroke(path) under a transform,
+  animating the transform (translate/rotate/scale) over t.
+- TEXT: render txt (the live caption) as styled, animated typography (font, size, motion, color, layout).
+
+Respond with STRICT JSON only, no markdown fences:
+{"name":"snake_name","desc":"one line","params":[{"name":"speed","default":1,"min":0,"max":3}],"draw":"(ctx,p,t,w,h,txt)=>{ /* ... */ }"}
+
+Keep the draw body COMPACT — under ~40 lines, no nested named helpers, no comments.
+Use only the canvas 2D API (including Path2D) and Math. NO per-pixel loops, no getImageData/putImageData,
+no DOM, window, document, network, or imports.`;
+
+const COMPOSITOR_SYSTEM = `You are a realtime VJ compositor. You have a palette of visual layer tools built
+by a coding agent, and a BRIEF distilled from the live room (mood, tone, a creative direction). Each turn you
+output a COMPOSITION: an ordered stack of layers (back to front) chosen from the palette, each with parameter
+values.
+
+Be INTENTIONAL, not random. Realize the brief: let the TONE pick the palette and energy (calm→slow/sparse/cool,
+intense→fast/dense/hot) and let the DIRECTION decide what should move and what to emphasize. Pick layers that
+genuinely express it rather than nudging whatever was already on screen. Evolve from the previous composition so
+it stays alive, but the brief leads.
+
+Respond with STRICT JSON only, no markdown:
+{"layers":[{"tool":"name","params":{"speed":1.2,"hue":210}}]}
+
+Only use tool names from the palette. 2-5 layers.`;
+
+// #93: continuous transcript→visual-brief distillation. Runs on the cheap compositor model (~220 tok)
+// so the compositor steers by a LIVE brief between bangers instead of a stale one. Faithful to
+// interleave's distill() (reference: ~/goodpoint-source/server.pod.ts). A banger still overrides —
+// judgeRecent sets the brief + lastBangerAt, and distillBrief yields to a fresh banger for one interval.
+const DISTILL_SYSTEM = `From a live-room transcript (may have fragments/mis-hears), design a VISUAL BRIEF. First pick the few highlights that actually matter (the key phrases, the turn of the discussion) and read the tone (emotional register + energy). Then translate that into a concrete plan for abstract visuals. Output STRICT JSON: {"mood":"one evocative line (<=14 words) to steer visuals by","emphasis":"the single most important short phrase to show on screen (<=6 words)","tone":"emotional register + energy (<=8 words, e.g. 'hushed, reflective' or 'rising, electric')","direction":"a thoughtful effect plan grounded in the highlights + tone: what should move, how, what to emphasize (<=24 words)"}. Ignore filler and noise.`;
 
 const JUDGE_SYSTEM = `You judge a live meeting transcript for genuinely useful "good points".
 Return STRICT JSON only:
@@ -153,6 +197,9 @@ function requireCfg(env: Env): Cfg {
     compositorModel: get("COMPOSITOR_MODEL") || "unsloth/Mistral-Nemo-Instruct-2407-TEE",
     weaveIdleMs: Number(get("WEAVE_IDLE_MS")) || 3 * 60_000,
     otterIdleMs: Number(get("OTTER_IDLE_MS")) || 10 * 60_000,
+    // #93 continuous brief distillation: cadence + transcript lookback window
+    distillIntervalMs: Number(get("DISTILL_INTERVAL_MS")) || 20_000,
+    distillWindowMs: Number(get("DISTILL_WINDOW_MS")) || 60_000,
   };
   const missing = [
     ["OAUTH3_CORE", cfg.oauth3Core],
@@ -187,6 +234,10 @@ export class GoodpointRuntime {
   registry = new Map<string, ToolDef>();
   composition: unknown = { layers: [] };
   brief = { mood: "", emphasis: "", tone: "", direction: "" };
+  // #93 continuous brief distillation bookkeeping
+  lastDistillAt = 0;
+  lastBangerAt = 0;
+  distilling = false;
   events: { seq: number; ev: unknown }[] = [];
   seq = 0;
   // master on/off (set by /start or /app load). `running` stays as a back-compat read of this.
@@ -287,8 +338,56 @@ export class GoodpointRuntime {
       tone: point.why || "sharp, useful",
       direction: `Make the banger legible and steer the motion around: ${point.quote}`,
     };
+    // #93: a banger is the PRIORITY path for the brief — stamp it so the continuous distill stage
+    // (distillBrief) yields to the good point for one distill interval instead of overwriting it.
+    this.lastBangerAt = Date.now();
     this.push({ type: "goodpoint", point, brief: this.brief });
     return point;
+  }
+
+  /**
+   * #93 continuous transcript→visual-brief distillation. Distills recent speech into
+   * {mood, emphasis, tone, direction} on the compositor model (cheap, ~220 tok) so the compositor
+   * steers by a LIVE brief between bangers. A fresh banger is the priority path and holds the brief
+   * for one distill interval. Faithful to interleave's distill() (server.pod.ts).
+   */
+  async distillBrief(force = false): Promise<void> {
+    if (this.distilling) return;
+    const now = Date.now();
+    if (now - this.lastBangerAt < this.cfg.distillIntervalMs) return; // banger holds (priority path)
+    if (!force && now - this.lastDistillAt < this.cfg.distillIntervalMs) return; // cadence
+    const text = this.recentText(this.cfg.distillWindowMs);
+    if (text.length < 20) return;
+    this.distilling = true;
+    this.lastDistillAt = now;
+    try {
+      this.push({ type: "activity", who: "distill", state: "distilling" });
+      const raw = await this.streamComplete(
+        this.cfg.compositorModel,
+        DISTILL_SYSTEM,
+        `Transcript:\n${text}\n\nJSON:`,
+        220,
+        () => {},
+      );
+      const j = extractJson(raw) as { mood?: string; emphasis?: string; tone?: string; direction?: string } | null;
+      if (j && typeof j.mood === "string") {
+        this.brief = {
+          mood: String(j.mood).replace(/\s+/g, " ").trim().slice(0, 200),
+          emphasis: j.emphasis ? String(j.emphasis).replace(/\s+/g, " ").trim().slice(0, 80) : this.brief.emphasis,
+          tone: j.tone ? String(j.tone).replace(/\s+/g, " ").trim().slice(0, 80) : this.brief.tone,
+          direction: j.direction ? String(j.direction).replace(/\s+/g, " ").trim().slice(0, 240) : this.brief.direction,
+        };
+        this.push({ type: "brief", brief: this.brief, source: "distill" });
+      } else {
+        this.push({ type: "activity", who: "distill", state: "parse miss" });
+      }
+    } catch (e) {
+      if (!(e instanceof Error) || e.name !== "AbortError") {
+        this.push({ type: "activity", who: "distill", state: e instanceof Error ? e.message : String(e) });
+      }
+    } finally {
+      this.distilling = false;
+    }
   }
 
   smokeTest(tool: ToolDef): string | null {
@@ -444,7 +543,13 @@ export class GoodpointRuntime {
       while (!ac.signal.aborted) {
         try {
           const added = await this.pollOtter(ac.signal);
-          if (added.length) await this.judgeRecent();
+          if (added.length) {
+            await this.judgeRecent();
+            // #93: distill recent speech into a visual brief on the cheap compositor model so the
+            // compositor steers by a LIVE brief between bangers. distillBrief self-throttles (cadence)
+            // and yields to a fresh banger (the priority path). Fire-and-forget; guarded by `distilling`.
+            this.distillBrief().catch(() => {});
+          }
         } catch (e) {
           if (!ac.signal.aborted) this.push({ type: "status", text: e instanceof Error ? e.message : String(e) });
         }
@@ -544,6 +649,14 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
         segment_count: app.transcript.length,
       },
       ledger_count: app.ledger.length,
+      brief: app.brief,
+      distill: {
+        last_distill_at: app.lastDistillAt,
+        last_banger_at: app.lastBangerAt,
+        distilling: app.distilling,
+        distill_interval_ms: app.cfg.distillIntervalMs,
+        distill_window_ms: app.cfg.distillWindowMs,
+      },
       e2ee: {
         toolsmith_model: app.cfg.toolsmithModel,
         compositor_model: app.cfg.compositorModel,
@@ -570,6 +683,8 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
     app.seen.clear();
     app.cursor = 0;
     app.brief = { mood: "", emphasis: "", tone: "", direction: "" };
+    app.lastDistillAt = 0;
+    app.lastBangerAt = 0;
     app.events = [];
     app.seq = 0;
     return json({ ok: true });

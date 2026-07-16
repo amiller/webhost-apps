@@ -130,3 +130,65 @@ Deno.test("#90 /diag reports the idle block", async () => {
   assertEquals(body.idle.enabled, true);
   rt.stop();
 });
+
+// #93 continuous transcript→visual-brief distillation: offline tests with a MOCKED LLM prove the
+// brief updates from segments WITHOUT a banger, a banger still OVERRIDES + holds the brief, and the
+// cadence throttle skips a too-soon second distill. (Live staging LLM run is operator-gated — no
+// NEAR/CHUTES keys on the swarm box; the issue's acceptance explicitly permits a mocked LLM.)
+const distillJson = (mood: string) => JSON.stringify({ mood, emphasis: "e", tone: "t", direction: "d" });
+
+Deno.test("#93 distill: brief updates from transcript segments with no banger", async () => {
+  const streams = { complete: async () => distillJson("focused build energy") };
+  const rt = new GoodpointRuntime({ ...env, DISTILL_INTERVAL_MS: "30000", DISTILL_WINDOW_MS: "120000" }, undefined, streams);
+  mergeOtterSegments(
+    rt.transcript,
+    normalizeSegments({ segments: [{ order: 1, text: "let us land the verifiable subset today", t: Date.now() - 5000 }] }),
+    rt.seen,
+  );
+  assertEquals(rt.brief.mood, "");
+  await rt.distillBrief(true);
+  assertEquals(rt.brief.mood, "focused build energy");
+  assertEquals(rt.brief.tone, "t");
+  assert(rt.lastDistillAt > 0);
+});
+
+Deno.test("#93 distill: a banger overrides the brief and holds it for one interval", async () => {
+  let calls = 0;
+  const streams = { complete: async () => { calls++; return distillJson("distilled mood"); } };
+  const bangerQuote = "Ship the verifiable subset";
+  const judgeOverride = async (_text: string) => ({ good_point: true, quote: bangerQuote, why: "scope clarity", score: 9 });
+  const rt = new GoodpointRuntime({ ...env, DISTILL_INTERVAL_MS: "30000", DISTILL_WINDOW_MS: "120000" }, judgeOverride, streams);
+  mergeOtterSegments(
+    rt.transcript,
+    normalizeSegments({ segments: [{ order: 1, text: "we agree to ship the verifiable subset right now", t: Date.now() - 3000 }] }),
+    rt.seen,
+  );
+  const banger = await rt.judgeRecent(true);
+  assert(banger, "banger fired");
+  assertEquals(rt.brief.emphasis, bangerQuote);
+  assertEquals(rt.brief.mood, `good point: ${bangerQuote}`);
+  assert(rt.lastBangerAt > 0);
+  // distill must be HELD by the banger — it must not call the model, and the brief must not change
+  const beforeCalls = calls;
+  await rt.distillBrief(true);
+  assertEquals(calls, beforeCalls, "distill skipped: banger is the priority path");
+  assertEquals(rt.brief.emphasis, bangerQuote, "brief still the banger's");
+});
+
+Deno.test("#93 distill: cadence throttle skips a too-soon second distill (force=false)", async () => {
+  let calls = 0;
+  const streams = { complete: async () => { calls++; return distillJson(`m${calls}`); } };
+  const rt = new GoodpointRuntime({ ...env, DISTILL_INTERVAL_MS: "30000", DISTILL_WINDOW_MS: "120000" }, undefined, streams);
+  mergeOtterSegments(
+    rt.transcript,
+    normalizeSegments({ segments: [{ order: 1, text: "some recent speech that is long enough to distill well", t: Date.now() - 4000 }] }),
+    rt.seen,
+  );
+  await rt.distillBrief(false);
+  assertEquals(calls, 1);
+  assertEquals(rt.brief.mood, "m1");
+  // immediately again, well within the 30s interval -> skipped (no second model call)
+  await rt.distillBrief(false);
+  assertEquals(calls, 1, "second distill within the interval was skipped");
+  assertEquals(rt.brief.mood, "m1");
+});

@@ -1,0 +1,36 @@
+# goodpoint-box #93 — continuous transcript→visual-brief distillation (LLM MOCKED per acceptance)
+# restored: TOOLSMITH_SYSTEM variety directive (atmosphere/3D-projection/Path2D/typography)
+#           + COMPOSITOR_SYSTEM (intentional brief-led VJ) + DISTILL_SYSTEM + distillBrief() stage
+# rule      : distill updates the brief between bangers; a banger OVERRIDES + holds (priority path).
+
+[initial — empty brief]
+  brief     : {"mood":"","emphasis":"","tone":"","direction":""}
+  stamps    : lastDistillAt=0  lastBangerAt=0  distilling=false
+
+[after window 1 (rollout talk, NO banger) -> brief #0 (cautious optimism)]
+  brief     : {"mood":"cautious optimism about the rollout","emphasis":"ship the subset","tone":"measured, curious","direction":"slow upward drift, warm edges, sparse particles"}
+  stamps    : lastDistillAt=1784239149416  lastBangerAt=0  distilling=false
+
+[after window 2 (budget debate, NO banger) -> brief EVOLVED to #1 (heated/tense)]
+  brief     : {"mood":"heated debate over the budget","emphasis":"cut the scope","tone":"tense, fast","direction":"sharp red pulses, tight jitter, high density"}
+  stamps    : lastDistillAt=1784239149416  lastBangerAt=0  distilling=false
+
+[after window 3 (decision lands, NO banger) -> brief EVOLVED to #2 (relief/settled)]
+  brief     : {"mood":"relief — a decision landed","emphasis":"we go with plan b","tone":"settled, warm","direction":"slow exhale, soft bloom, cool calm horizon"}
+  stamps    : lastDistillAt=1784239149416  lastBangerAt=0  distilling=false
+
+[banger fired] judgeRecent -> score 9, quote="Ship the verifiable subset"
+
+[after banger -> brief OVERRIDDEN by the good point (priority path)]
+  brief     : {"mood":"good point: Ship the verifiable subset","emphasis":"Ship the verifiable subset","tone":"scope clarity wins","direction":"Make the banger legible and steer the motion around: Ship the verifiable subset"}
+  stamps    : lastDistillAt=1784239149416  lastBangerAt=1784239149416  distilling=false
+
+[distill attempted post-banger] model calls before=3 after=3 (expect equal: held)
+
+[after attempted post-banger distill -> brief UNCHANGED (banger holds)]
+  brief     : {"mood":"good point: Ship the verifiable subset","emphasis":"Ship the verifiable subset","tone":"scope clarity wins","direction":"Make the banger legible and steer the motion around: Ship the verifiable subset"}
+  stamps    : lastDistillAt=1784239149416  lastBangerAt=1784239149416  distilling=false
+
+# acceptance: brief updated from segments with NO banger across 3 windows
+#             (mood: cautious optimism -> heated debate -> relief), and a banger OVERRIDES + holds.
+# (live staging LLM run is operator-gated; see PR body — no keys on the swarm box.)
