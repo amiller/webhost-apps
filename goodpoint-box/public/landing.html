@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>the good point detector</title>
+<style>
+  :root{
+    --ground:#0a0d12; --panel:#10151d; --panel2:#161d28; --line:#232c3a;
+    --ink:#e8eef5; --muted:#8a97a8; --faint:#5c6878;
+    --aqua:#3dd7c4; --aqua-deep:#0f5f59; --ember:#ff6a5a; --violet:#9a86ff; --amber:#f5c451;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --maxw:940px;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:var(--sans); font-size:17px; line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(1200px 600px at 78% -8%, rgba(154,134,255,.10), transparent 60%),
+                     radial-gradient(1000px 520px at 8% 4%, rgba(61,215,196,.08), transparent 55%);
+    background-attachment:fixed;
+  }
+  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 22px}
+  a{color:var(--aqua); text-decoration:none}
+  a:hover{text-decoration:underline}
+  ::selection{background:rgba(61,215,196,.28)}
+
+  .eyebrow{font-family:var(--mono); font-size:12px; letter-spacing:.22em; text-transform:uppercase;
+    color:var(--aqua); display:flex; align-items:center; gap:.7em; flex-wrap:wrap}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--ember);
+    box-shadow:0 0 0 0 rgba(255,106,90,.6); animation:pulse 2.4s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,106,90,.55)}70%{box-shadow:0 0 0 9px rgba(255,106,90,0)}100%{box-shadow:0 0 0 0 rgba(255,106,90,0)}}
+  @media (prefers-reduced-motion:reduce){.dot{animation:none}}
+
+  header.hero{padding:64px 0 8px}
+  h1{font-family:var(--mono); font-weight:600; letter-spacing:-.01em; text-wrap:balance;
+    font-size:clamp(2.4rem,6.5vw,4.1rem); line-height:1.02; margin:.35em 0 .28em;
+    background:linear-gradient(180deg,#f3f8ff, #9fe9df 88%); -webkit-background-clip:text; background-clip:text; color:transparent}
+  .lede{font-size:clamp(1.05rem,2.2vw,1.32rem); color:#cdd7e3; max-width:64ch; text-wrap:pretty; margin:.2em 0 0}
+  .lede b{color:var(--ink); font-weight:600}
+  .cta-row{display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-top:28px}
+  .cta{display:inline-flex; align-items:center; gap:.5em; font-family:var(--mono); font-weight:600; font-size:1.04rem;
+    color:#04120f; background:linear-gradient(180deg,#5fe6d4,#2bbfad); border-radius:11px; padding:14px 24px;
+    text-decoration:none; box-shadow:0 12px 32px -12px rgba(61,215,196,.55); transition:transform .12s ease, box-shadow .12s ease}
+  .cta:hover{transform:translateY(-1px); box-shadow:0 16px 40px -12px rgba(61,215,196,.7); text-decoration:none}
+  .cta:focus-visible{outline:2px solid var(--aqua); outline-offset:3px}
+  @media (prefers-reduced-motion:reduce){.cta{transition:none}}
+  .cta-note{font-family:var(--mono); font-size:12px; color:var(--muted); letter-spacing:.02em}
+  .buildchip{display:inline-flex; align-items:center; gap:.6em; font-family:var(--mono); font-size:12.5px;
+    color:var(--amber); border:1px solid color-mix(in oklab,var(--amber) 40%, var(--line)); border-radius:999px; padding:6px 14px}
+
+  section{padding:44px 0; border-top:1px solid var(--line)}
+  section:first-of-type{border-top:none}
+  h2{font-family:var(--mono); font-size:13px; letter-spacing:.2em; text-transform:uppercase; color:var(--muted);
+    font-weight:600; margin:0 0 20px}
+  h2 .n{color:var(--aqua); margin-right:.8em}
+  p{margin:0 0 16px; max-width:68ch}
+  .muted{color:var(--muted)}
+  strong{color:#fff}
+
+  .khead{font-size:clamp(1.5rem,3.6vw,2.1rem); font-weight:650; letter-spacing:-.01em; color:var(--ink);
+    font-family:var(--sans); text-wrap:balance; margin:0 0 14px; max-width:26ch}
+  .khead em{font-style:normal; color:var(--aqua)}
+
+  .paths{display:grid; gap:16px; grid-template-columns:1fr 1fr; margin-top:6px}
+  @media (max-width:680px){.paths{grid-template-columns:1fr}}
+  .path{border:1px solid var(--line); border-radius:13px; padding:20px; background:linear-gradient(180deg,var(--panel),#0d121a)}
+  .path.n{--c:var(--ember)} .path.c{--c:var(--violet)}
+  .path .role{font-family:var(--mono); font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--c)}
+  .path .who{font-size:1.16rem; font-weight:650; margin:.35em 0 .1em}
+  .path .prov{font-family:var(--mono); font-size:13px; color:var(--muted)}
+  .path ul{list-style:none; margin:16px 0 0; padding:0; display:flex; flex-direction:column; gap:9px}
+  .path li{font-family:var(--mono); font-size:12.5px; color:#c3cddb; display:flex; gap:9px; align-items:baseline}
+  .path li b{color:var(--c); font-weight:600; min-width:0}
+  .path .chip{display:inline-block; font-family:var(--mono); font-size:11px; letter-spacing:.06em;
+    color:var(--c); border:1px solid color-mix(in oklab,var(--c) 40%, var(--line)); border-radius:999px; padding:2px 9px; margin-top:12px}
+  .route{font-family:var(--mono); font-size:12.5px; color:var(--muted); text-align:center; margin:16px 0 0}
+  .route b{color:var(--aqua)}
+
+  blockquote.said{margin:20px 0 0; padding-left:18px; border-left:2px solid var(--aqua-deep); color:#c8d2df; font-style:italic; font-size:1.04rem}
+  blockquote.said cite{display:block; font-style:normal; font-family:var(--mono); font-size:11.5px; color:var(--faint); margin-top:8px; letter-spacing:.04em}
+
+  .spark{width:100%; height:auto; margin:18px 0 8px; border:1px solid var(--line); border-radius:12px; background:#0c1016}
+  .spark .lbl{font-family:var(--mono); font-size:11px; fill:var(--muted)}
+
+  .arc{display:grid; gap:0; margin-top:10px}
+  .beat{display:grid; grid-template-columns:92px 1fr; gap:16px; padding:11px 0; border-top:1px dashed var(--line); align-items:baseline}
+  .beat:first-child{border-top:none}
+  @media (max-width:560px){.beat{grid-template-columns:1fr; gap:2px}}
+  .beat .m{font-family:var(--mono); font-size:12.5px; color:var(--faint)}
+  .beat .t{color:#d3dbe6}
+  .beat.save .t{color:var(--aqua); font-weight:600}
+  .beat.save .m{color:var(--aqua)}
+
+  footer{padding:40px 0 70px; border-top:1px solid var(--line); color:var(--muted); font-family:var(--mono); font-size:12.5px}
+  footer .row{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
+  .kbd{border:1px solid var(--line); border-radius:6px; padding:2px 8px; color:#cbd5e2; background:var(--panel)}
+  .caveat{color:var(--faint)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <div class="eyebrow"><span class="dot"></span> the brainrot box, sequel &nbsp;·&nbsp; good point detection</div>
+    <h1>the good point detector</h1>
+    <p class="lede">The brainrot box learned to take notes. It follows your meeting through a
+      <b>scoped OAuth3 token</b> instead of a raw microphone, a judge reads the transcript over
+      <b>encrypted inference</b>, and when somebody lands a banger the canvas <b>flashes the quote</b>
+      and writes it in a ledger. The meeting gets a score now.</p>
+    <div class="cta-row">
+      <a class="cta" href="/interleave/app">▶&nbsp; open the ancestor</a>
+      <span class="cta-note">the original box · live · your speech → visuals · e2ee</span>
+    </div>
+    <div class="cta-row" style="margin-top:14px">
+      <span class="buildchip">⚙ the combined app is in the build lane today — <a href="https://github.com/amiller/webhost-apps/issues/80" style="color:var(--amber)">webhost-apps#80</a></span>
+    </div>
+  </header>
+
+  <section>
+    <h2>where it came from</h2>
+    <p class="khead">Named out loud in a planning call, <em>the day before</em> mock demo day.</p>
+    <p>Demo day planning, 2026-07-15. The idea on the table: judging shouldn't just be humans with
+      scorecards. Let a model watch the room too, and count what actually lands.</p>
+    <blockquote class="said">"we can have … some sort of a judge that basically judges … how many good insights?
+      How many bangers there is, right?"<cite>— Tina, Demo Day Planning · 2026-07-15</cite></blockquote>
+    <blockquote class="said">"The good point. Yeah, yeah. The good point detection."<cite>— same call, one minute later, the name sticking</cite></blockquote>
+    <blockquote class="said">"identifying a loop of how something was before, feedback … then making a change,
+      improving it, and then you have some kind of a value marker that … observes the improvement."<cite>— Andrew, same call, on what makes work worth showing</cite></blockquote>
+    <p style="margin-top:20px">That last quote is the reason this exists: the detector <strong>is</strong> the value
+      marker. Bangers per meeting is a number. Numbers go in ledgers. Ledgers close feedback loops.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">01</span> the merge</h2>
+    <p class="khead">Two working things, one app: the box <em>paints</em> the room, the judge <em>scores</em> it.</p>
+    <div class="paths">
+      <div class="path n">
+        <div class="role">the brainrot box · paints</div>
+        <div class="who">interleave</div>
+        <div class="prov">live at <a href="/interleave/">/interleave/</a> &nbsp;·&nbsp; NEAR + Chutes enclaves</div>
+        <ul>
+          <li><b>toolsmith</b> writes little animation tools</li>
+          <li><b>compositor</b> VJs them live, sub-2s a frame</li>
+          <li><b>e2ee</b> ECIES → NEAR · ML-KEM-768 → Chutes</li>
+        </ul>
+        <span class="chip">already running</span>
+      </div>
+      <div class="path c">
+        <div class="role">the good point detector · judges</div>
+        <div class="who">otter live-follow + judge</div>
+        <div class="prov">OAuth3 scoped token &nbsp;·&nbsp; read-only, revocable</div>
+        <ul>
+          <li><b>follow</b> live meeting speech via <span style="font-family:var(--mono)">/api/otter/live</span></li>
+          <li><b>judge</b> scores the last minute: quote · why · 0–10</li>
+          <li><b>banger</b> score ≥ 7 → canvas flash + ledger entry</li>
+        </ul>
+        <span class="chip">building today · #80</span>
+      </div>
+    </div>
+    <p class="route">no raw mic, no copied cookies — the box holds a <b>scoped, revocable</b> otter read token, and nothing else</p>
+    <svg class="spark" viewBox="0 0 640 168" role="img" aria-label="Diagram: meeting speech over time as a flat line, with two spikes marked as detected good points scoring 8 and 9.">
+      <line x1="46" y1="138" x2="620" y2="138" stroke="#232c3a"/>
+      <line x1="46" y1="34" x2="46" y2="138" stroke="#232c3a"/>
+      <polyline fill="none" stroke="#5c6878" stroke-width="2" points="46,120 120,118 170,122 214,117 260,121 300,119"/>
+      <polyline fill="none" stroke="#3dd7c4" stroke-width="2.5" points="300,119 318,58 336,119"/>
+      <polyline fill="none" stroke="#5c6878" stroke-width="2" points="336,119 390,122 440,118 470,120"/>
+      <polyline fill="none" stroke="#ff6a5a" stroke-width="2.5" points="470,120 492,44 514,120"/>
+      <polyline fill="none" stroke="#5c6878" stroke-width="2" points="514,120 560,122 606,119"/>
+      <circle cx="318" cy="58" r="4" fill="#3dd7c4"/><circle cx="492" cy="44" r="4" fill="#ff6a5a"/>
+      <text class="lbl" x="46" y="24">the meeting, as heard</text>
+      <text class="lbl" x="296" y="46" fill="#3dd7c4">banger · 8</text>
+      <text class="lbl" x="472" y="32" fill="#ff6a5a">banger · 9</text>
+      <text class="lbl" x="120" y="108">mumbling about architecture</text>
+      <text class="lbl" x="548" y="162">meeting →</text>
+    </svg>
+  </section>
+
+  <section>
+    <h2><span class="n">02</span> the loop is the demo</h2>
+    <div class="arc">
+      <div class="beat"><div class="m">07-15 eve</div><div class="t">The phrase "good point detection" survives a planning call.</div></div>
+      <div class="beat"><div class="m">07-16 am</div><div class="t">Spec written and filed as <a href="https://github.com/amiller/webhost-apps/issues/80">webhost-apps#80</a>; dispatched to the swarm's ready lane.</div></div>
+      <div class="beat save"><div class="m">07-16</div><div class="t">This page ships before the app does. On purpose. Mock demo day is today.</div></div>
+      <div class="beat"><div class="m">07-24</div><div class="t">Demo day. The ledger says how many bangers happened. That number is the value marker.</div></div>
+    </div>
+    <p style="margin-top:20px" class="muted">Also floated on the call: a human good-point button, so the audience can
+      out-vote the judge. The ledger doesn't care who pressed it.</p>
+  </section>
+
+  <footer>
+    <div class="row">will run at <span class="kbd">pod.dstack.soc1024.com/goodpoint-box/app</span> · spec <span class="kbd">webhost-apps#80</span> · ancestor <span class="kbd"><a href="/interleave/">/interleave/</a></span></div>
+    <p class="caveat" style="margin-top:14px">Honest edges: the combined app is not live yet — #80 is in flight and this
+      page shipped ahead of it. Inherited from the box: speech-to-text is TLS to the enclave, not app-layer e2ee, and
+      enclave keys are trusted on first use without full quote-chain verification. New here: the judge's taste is one
+      model's opinion; the ledger keeps the receipts either way.</p>
+  </footer>
+</div>
+</body>
+</html>
