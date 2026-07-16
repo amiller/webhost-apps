@@ -11,6 +11,8 @@ interface Cfg {
   chutesKey: string;
   toolsmithModel: string;
   compositorModel: string;
+  weaveIdleMs: number;
+  otterIdleMs: number;
 }
 
 interface Segment {
@@ -39,6 +41,19 @@ export interface JudgeResult {
   quote: string;
   why: string;
   score: number;
+}
+
+/** Optional model-stream injection (tests): when set, `streamComplete` calls this instead of
+ *  the real NEAR/Chutes e2ee paths, so loops can be exercised with no network egress. */
+export interface StreamProvider {
+  complete(
+    model: string,
+    system: string,
+    user: string,
+    maxTokens: number,
+    onDelta: (t: string) => void,
+    signal?: AbortSignal,
+  ): Promise<string>;
 }
 
 const TOOLSMITH_SYSTEM = `You build compact animated canvas layer tools for a realtime visual compositor.
@@ -136,6 +151,8 @@ function requireCfg(env: Env): Cfg {
     chutesKey: get("CHUTES_API_KEY"),
     toolsmithModel: get("TOOLSMITH_MODEL") || "deepseek-ai/DeepSeek-V4-Flash",
     compositorModel: get("COMPOSITOR_MODEL") || "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+    weaveIdleMs: Number(get("WEAVE_IDLE_MS")) || 3 * 60_000,
+    otterIdleMs: Number(get("OTTER_IDLE_MS")) || 10 * 60_000,
   };
   const missing = [
     ["OAUTH3_CORE", cfg.oauth3Core],
@@ -172,13 +189,38 @@ export class GoodpointRuntime {
   brief = { mood: "", emphasis: "", tone: "", direction: "" };
   events: { seq: number; ev: unknown }[] = [];
   seq = 0;
-  running = false;
-  private stopper: (() => void) | null = null;
+  // master on/off (set by /start or /app load). `running` stays as a back-compat read of this.
+  enabled = false;
+  // two independent lanes: the weave (toolsmith+compositor) can idle while otter+judge keep
+  // watching a live meeting. Each lane has its own AbortController + running flag.
+  weaveRunning = false;
+  otterRunning = false;
+  // idle bookkeeping. lastConsumerAt = last /events poll (a viewer is watching);
+  // lastLiveAt = last live-meeting signal or freshly-arrived speech segment.
+  lastConsumerAt = 0;
+  lastLiveAt = 0;
+  lastWeaveIdleAt = 0;
+  lastOtterIdleAt = 0;
+  weaveIdleReason = "";
+  otterIdleReason = "";
+  private weaveAC: AbortController | null = null;
+  private otterAC: AbortController | null = null;
+  private supervisorAC: AbortController | null = null;
   private judgeOverride?: (text: string) => Promise<JudgeResult | null>;
+  private streams?: StreamProvider;
 
-  constructor(env: Env, judgeOverride?: (text: string) => Promise<JudgeResult | null>) {
+  constructor(
+    env: Env,
+    judgeOverride?: (text: string) => Promise<JudgeResult | null>,
+    streams?: StreamProvider,
+  ) {
     this.cfg = requireCfg(env);
     this.judgeOverride = judgeOverride;
+    this.streams = streams;
+  }
+
+  get running(): boolean {
+    return this.enabled;
   }
 
   push(ev: unknown): void {
@@ -186,9 +228,10 @@ export class GoodpointRuntime {
     if (this.events.length > 500) this.events.splice(0, this.events.length - 500);
   }
 
-  async pollOtter(): Promise<Segment[]> {
+  async pollOtter(signal?: AbortSignal): Promise<Segment[]> {
     const r = await fetch(`${this.cfg.oauth3Core}/api/otter/live?after=${this.cursor}`, {
       headers: { Authorization: `Bearer ${this.cfg.otterToken}` },
+      signal,
     });
     this.lastFetchAt = Date.now();
     if (!r.ok) {
@@ -197,10 +240,13 @@ export class GoodpointRuntime {
       throw new Error(this.lastFetchErr);
     }
     const data = await r.json();
+    const live = data?.live === true || data?.data?.live === true;
     const { added, cursor } = mergeOtterSegments(this.transcript, normalizeSegments(data), this.seen);
     this.cursor = cursor;
     this.lastFetchOk = true;
     this.lastFetchErr = "";
+    // a live meeting or freshly-arrived speech keeps the otter lane awake (#90)
+    if (live || added.length) this.lastLiveAt = Date.now();
     for (const seg of added) this.push({ type: "segment", segment: seg });
     return added;
   }
@@ -211,6 +257,7 @@ export class GoodpointRuntime {
   }
 
   async streamComplete(model: string, system: string, user: string, maxTokens: number, onDelta = (_: string) => {}, signal?: AbortSignal): Promise<string> {
+    if (this.streams) return await this.streams.complete(model, system, user, maxTokens, onDelta, signal);
     const body = { max_tokens: maxTokens, temperature: 0.25, messages: [{ role: "system", content: system }, { role: "user", content: user }] };
     let content = "";
     const cb = (t: string) => {
@@ -320,26 +367,50 @@ export class GoodpointRuntime {
     this.push({ type: "composition", layers: comp.layers });
   }
 
+  // A viewer polled /events -> they are watching. Refresh the heartbeat and, if the weave lane
+  // was idled, resume it now. (The otter/judge lane is resumed by /start or /app load.)
+  resumeConsumer(): void {
+    this.lastConsumerAt = Date.now();
+    if (this.enabled && !this.weaveRunning) this.startWeave();
+  }
+
+  // One synchronous idle decision (testable without realtime): stop a lane whose keepalive
+  // window expired. Restarts are viewer/app-driven (resumeConsumer / start), never here.
+  tickIdle(now = Date.now()): void {
+    if (this.weaveRunning && now - this.lastConsumerAt > this.cfg.weaveIdleMs) {
+      this.stopWeave(`no /events poller for ${Math.round((now - this.lastConsumerAt) / 1000)}s`);
+    }
+    if (this.otterRunning && now - this.lastLiveAt > this.cfg.otterIdleMs) {
+      this.stopOtter(`no live speech for ${Math.round((now - this.lastLiveAt) / 1000)}s`);
+    }
+  }
+
+  // master on: a viewer hit /start or loaded /app -> resume everything.
   start(): void {
-    if (this.running) return;
-    this.running = true;
+    this.enabled = true;
+    const now = Date.now();
+    if (!this.lastConsumerAt) this.lastConsumerAt = now;
+    if (!this.lastLiveAt) this.lastLiveAt = now;
+    this.startOtter();
+    this.startWeave();
+    this.startSupervisor();
+  }
+
+  // master off: stop everything.
+  stop(): void {
+    this.enabled = false;
+    this.stopWeave("stopped");
+    this.stopOtter("stopped");
+    this.stopSupervisor();
+  }
+
+  private startWeave(): void {
+    if (this.weaveRunning) return;
+    this.weaveRunning = true;
+    this.weaveIdleReason = "";
     const ac = new AbortController();
-    this.stopper = () => {
-      ac.abort();
-      this.running = false;
-    };
-    const otter = async () => {
-      while (!ac.signal.aborted) {
-        try {
-          const added = await this.pollOtter();
-          if (added.length) await this.judgeRecent();
-        } catch (e) {
-          this.push({ type: "status", text: e instanceof Error ? e.message : String(e) });
-        }
-        await delay(5000);
-      }
-    };
-    const weave = async () => {
+    this.weaveAC = ac;
+    const loop = async () => {
       while (!ac.signal.aborted) {
         try {
           await this.toolsmithTurn(ac.signal);
@@ -350,14 +421,67 @@ export class GoodpointRuntime {
         await delay(1800);
       }
     };
-    otter().finally(() => {});
-    weave().finally(() => {});
+    loop().finally(() => {});
   }
 
-  stop(): void {
-    this.stopper?.();
-    this.stopper = null;
-    this.running = false;
+  private stopWeave(reason: string): void {
+    this.weaveAC?.abort();
+    this.weaveAC = null;
+    if (!this.weaveRunning) return;
+    this.weaveRunning = false;
+    this.lastWeaveIdleAt = Date.now();
+    this.weaveIdleReason = reason;
+    this.push({ type: "idle", lane: "weave", reason });
+  }
+
+  private startOtter(): void {
+    if (this.otterRunning) return;
+    this.otterRunning = true;
+    this.otterIdleReason = "";
+    const ac = new AbortController();
+    this.otterAC = ac;
+    const loop = async () => {
+      while (!ac.signal.aborted) {
+        try {
+          const added = await this.pollOtter(ac.signal);
+          if (added.length) await this.judgeRecent();
+        } catch (e) {
+          if (!ac.signal.aborted) this.push({ type: "status", text: e instanceof Error ? e.message : String(e) });
+        }
+        await delay(5000);
+      }
+    };
+    loop().finally(() => {});
+  }
+
+  private stopOtter(reason: string): void {
+    this.otterAC?.abort();
+    this.otterAC = null;
+    if (!this.otterRunning) return;
+    this.otterRunning = false;
+    this.lastOtterIdleAt = Date.now();
+    this.otterIdleReason = reason;
+    this.push({ type: "idle", lane: "otter", reason });
+  }
+
+  // watchdog: idles stale lanes. It only stops; starts happen via resumeConsumer / start.
+  private startSupervisor(): void {
+    if (this.supervisorAC) return;
+    const ac = new AbortController();
+    this.supervisorAC = ac;
+    const loop = async () => {
+      while (!ac.signal.aborted) {
+        await delay(5000);
+        if (ac.signal.aborted) break;
+        this.tickIdle();
+      }
+    };
+    loop().finally(() => {});
+  }
+
+  private stopSupervisor(): void {
+    this.supervisorAC?.abort();
+    this.supervisorAC = null;
   }
 }
 
@@ -372,7 +496,14 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
   const path = url.pathname.replace(/\/+$/, "") || "/";
 
   if (req.method === "GET" && path === "/") return await readPublic("landing.html");
-  if (req.method === "GET" && (path === "/app" || path === "/index.html")) return await readPublic("index.html");
+  if (req.method === "GET" && (path === "/app" || path === "/index.html")) {
+    // a viewer loading the UI resumes the runtime (best-effort: the page is served even when
+    // the box's env isn't provisioned yet).
+    try {
+      (ctx?.runtime ?? getRuntime(ctx?.env ?? {})).start();
+    } catch { /* missing cfg — still serve the UI */ }
+    return await readPublic("index.html");
+  }
 
   let app: GoodpointRuntime;
   try {
@@ -390,9 +521,17 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
     return json({ ok: true });
   }
   if (req.method === "GET" && path === "/events") {
+    // a poller is a viewer — refresh the consumer heartbeat (and resume an idled weave).
+    app.resumeConsumer();
     const since = Number(url.searchParams.get("since") || 0);
     const out = app.events.filter((e) => e.seq > since);
-    return json({ seq: out.length ? out[out.length - 1].seq : since, events: out.map((e) => e.ev), running: app.running });
+    return json({
+      seq: out.length ? out[out.length - 1].seq : since,
+      events: out.map((e) => e.ev),
+      running: app.running,
+      weave_running: app.weaveRunning,
+      otter_running: app.otterRunning,
+    });
   }
   if (req.method === "GET" && path === "/goodpoints") return json({ goodpoints: app.ledger });
   if (req.method === "GET" && path === "/diag") {
@@ -409,6 +548,19 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
         toolsmith_model: app.cfg.toolsmithModel,
         compositor_model: app.cfg.compositorModel,
         ready: true,
+      },
+      idle: {
+        enabled: app.enabled,
+        weave_running: app.weaveRunning,
+        otter_running: app.otterRunning,
+        weave_idle_ms: app.cfg.weaveIdleMs,
+        otter_idle_ms: app.cfg.otterIdleMs,
+        last_consumer_at: app.lastConsumerAt,
+        last_live_at: app.lastLiveAt,
+        last_weave_idle_at: app.lastWeaveIdleAt,
+        last_otter_idle_at: app.lastOtterIdleAt,
+        weave_idle_reason: app.weaveIdleReason,
+        otter_idle_reason: app.otterIdleReason,
       },
     });
   }
