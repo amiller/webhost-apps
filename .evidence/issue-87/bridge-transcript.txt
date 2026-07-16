@@ -1,0 +1,38 @@
+# goodpoint-box #87 — envoy bridge functional verification (2026-07-16)
+
+Rig: envoy bridge POST http://localhost:3000/api/bridge (serialized via flock /tmp/envoy-bridge.lock).
+Page served locally (python3 http.server :8931 fixed, :8932 old/staging) and driven by the
+real Brave in the neko container. navigate + evaluate work; the `screenshot` tool times out
+(shared envoy browser saturated by the operator's oram-research scholar-kit Chromium, PID 3712955
+— an active research job, not killed). So evidence is a functional before/after via evaluate(),
+which is exactly the #87 acceptance ("main page still shows panes" after popout).
+
+== BUG REPRO on origin/staging (OLD index.html @ :8932) ==
+navigate http://172.17.0.1:8932/  -> location.href confirmed, title "goodpoint-box"
+BEFORE popout(): {"popClass":false,"topDisplay":"flex","leftDisplay":"grid","stripDisplay":"flex"}
+invoke popout()
+AFTER  popout(): {"popClass":true ,"topDisplay":"none","leftDisplay":"none","stripDisplay":"none"}
+  => The page is BLANKED: body.pop is toggled on, header/panes/strip all display:none.
+     This is exactly the operator-reported bug ("entire app disappear ... refresh the whole app").
+
+== FIX on ready-87 (NEW index.html @ :8931) ==
+navigate http://172.17.0.1:8931/  -> location.href confirmed, title "goodpoint-box"
+BEFORE popout(): {"popClass":false,"topDisplay":"flex","leftDisplay":"grid","stripDisplay":"flex",
+                  "transcript":"Waiting for live Otter segments.","points":"No bangers yet.",
+                  "canvasPresent":true,"slotPresent":false}
+invoke popout()  (no sync throw)
+AFTER  popout(): {"popClass":false,"topDisplay":"flex","leftDisplay":"grid","stripDisplay":"flex",
+                  "transcript":"Waiting for live Otter segments.","points":"No bangers yet.",
+                  "canvasPresent":true,"slotPresent":false}
+  => popout() no longer adds body.pop; the header, transcript pane, good-points pane and strip
+     ALL stay visible. The bug is gone.
+
+== Source-level check on the served fixed HTML (fetch(location.href).text()) ==
+{"hasTogglePop":false,"hasCanvasSlotCSS":true,"hasVideoPiP":true,"hasDocPiP":true}
+  => classList.toggle("pop") is gone; canvas-slot placeholder CSS + popoutDocPiP + popoutVideoPiP present.
+     (hasBodyPopRule substring=true is a false positive — "body.pop" survives only inside an
+      explanatory code comment, not as a CSS selector; the body.pop .top/.left/.strip rules are deleted.)
+
+== Parse checks ==
+node --check <extracted inline script>  -> exit 0 (clean)
+deno check goodpoint-box/server.ts       -> exit 0 (clean; NO server changes)

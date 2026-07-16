@@ -158,9 +158,20 @@
     10%, 70% { opacity: .96; transform: translateY(0); }
     100% { opacity: 0; transform: translateY(-12px); }
   }
-  body.pop .top, body.pop .left, body.pop .strip { display: none; }
-  body.pop .grid { display: block; height: 100vh; }
-  body.pop .right { height: 100vh; display: block; }
+  .canvas-slot {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 24px;
+    background: #050505;
+    color: #8f938f;
+    font-size: 13px;
+    font-weight: 700;
+    overflow: hidden;
+  }
   @media (max-width: 860px) {
     body { overflow: auto; }
     .grid { height: auto; display: block; }
@@ -210,6 +221,7 @@ let layers = [];
 let since = 0;
 let currentText = "";
 let popWin = null;
+let pipVideo = null;
 let host = window;
 
 function setDot(id, on) { $(id).classList.toggle("on", !!on); }
@@ -341,15 +353,31 @@ function frame() {
   host.requestAnimationFrame(frame);
 }
 
+// Canvas-only Picture-in-Picture. The main document keeps rendering transcript +
+// good points + dots the whole time — popout never fullscreens or blanks the page
+// (the old body.pop path did, and a page refresh was the only recovery).
 async function popout() {
-  document.body.classList.toggle("pop");
-  if (!("documentPictureInPicture" in window)) { resize(); return; }
-  if (popWin) { popWin.close(); return; }
-  popWin = await documentPictureInPicture.requestWindow({ width: 900, height: 560 });
+  if (popWin) { popWin.close(); return; }   // toggle: open -> close
+  if (pipVideo) { endVideoPiP(); return; }
+  if ("documentPictureInPicture" in window) return popoutDocPiP();
+  return popoutVideoPiP();
+}
+
+async function popoutDocPiP() {
+  let win;
+  try {
+    win = await documentPictureInPicture.requestWindow({ width: 900, height: 560 });
+  } catch (err) {
+    console.warn("popout failed", err);   // honest: leave the page untouched, button still works
+    return;
+  }
+  popWin = win;
   const style = popWin.document.createElement("style");
   style.textContent = "html,body{margin:0;height:100%;background:#050505;overflow:hidden}canvas{width:100vw;height:100vh;display:block}";
   popWin.document.head.appendChild(style);
-  const slot = document.createComment("canvas");
+  const slot = document.createElement("div");
+  slot.className = "canvas-slot";
+  slot.textContent = "canvas popped out — close the picture-in-picture window to return";
   canvas.replaceWith(slot);
   popWin.document.body.appendChild(canvas);
   host = popWin;
@@ -361,6 +389,33 @@ async function popout() {
     resize();
     window.requestAnimationFrame(frame);
   });
+}
+
+// Fallback for browsers without documentPictureInPicture: mirror the canvas into a
+// hidden <video> and PiP that. Canvas stays live in the main page either way.
+async function popoutVideoPiP() {
+  const v = document.createElement("video");
+  v.muted = true; v.autoplay = true; v.playsInline = true;
+  v.style.cssText = "position:fixed;width:2px;height:2px;left:-99px;top:-99px;opacity:0;pointer-events:none";
+  try {
+    v.srcObject = canvas.captureStream ? canvas.captureStream(30) : canvas.mozCaptureStream(30);
+    document.body.appendChild(v);
+    await v.play();
+    await v.requestPictureInPicture();
+  } catch (err) {
+    v.remove();
+    console.warn("popout failed", err);
+    return;
+  }
+  pipVideo = v;
+  v.addEventListener("leavepictureinpicture", endVideoPiP);
+}
+
+function endVideoPiP() {
+  if (!pipVideo) return;
+  const v = pipVideo; pipVideo = null;
+  try { v.srcObject = null; } catch (_) {}
+  v.remove();
 }
 
 $("pop").onclick = popout;
