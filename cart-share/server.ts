@@ -5,7 +5,7 @@
 // change your address/payment, or add unrelated items. You get a receipt of every swap and
 // can revoke any time. v1 runs against a realistic cart fixture (the model is the point);
 // v2 is the amazon browser-path plugin driving your real logged-in cart in the TEE.
-const BUILD = "v2";
+const BUILD = "v3";
 
 interface Item { id: string; name: string; cat: string; price: number; qty: number; organic: boolean; asin?: string }
 interface Sub { name: string; price: number; organic: boolean; why: string; asin?: string }
@@ -37,14 +37,79 @@ async function amazonSearch(term: string): Promise<AzProd[]> {
   }
   return out;
 }
-// v2: the cart is the OWNER'S REAL Amazon cart, read through the oauth3 core's amazon plugin
-// (GET /api/amazon/items — the plugin reads /gp/cart with the owner's synced jar). No fixtures,
-// no guest search. Organic SUGGESTIONS are still a live search (an organic alternative per line).
+// v3: the cart is read through the oauth3 CONNECT handshake — no pre-minted env token. cart-share
+// POSTs /api/connect {plugin:"amazon", caps:["amazon:cart-read"]}, surfaces the approveUrl to the
+// owner, and polls for the scoped token (bound to the APPROVER's identity = whose jar it reads).
+// Then GET /api/amazon/items with that token. No fixtures, no guest search. Organic SUGGESTIONS
+// are still a live search (an organic alternative per line).
 let OAUTH3_BASE = "https://pod.dstack.soc1024.com/oauth3";
-let OAUTH3_TOKEN = ""; // bearer to read the owner's cart via /api/amazon/items (set from env)
 const PRICE_BAND = 1.5; // an organic substitute may cost at most +150% of the original
 let cartSource: "amazon-jar" | "unconnected" = "unconnected";
 let cartError = "";
+
+// --- connect handshake (replaces the pre-minted OAUTH3_TOKEN env var). cart-share requests
+// amazon read access; the OWNER approves as their identity on the OAuth3 consent page; we poll
+// for the scoped token, bound to the approver's jar. No env token, no second path. ---
+type Conn =
+  | { kind: "none" }
+  | { kind: "pending"; requestId: string; approveUrl: string }
+  | { kind: "approved"; token: string }
+  | { kind: "denied" };
+let conn: Conn = { kind: "none" };
+let connError = "";
+
+function connectToken(): string | null {
+  return conn.kind === "approved" ? conn.token : null;
+}
+function connectStatus(): { status: string; approveUrl?: string; error?: string } {
+  const base: { status: string; approveUrl?: string; error?: string } = { status: conn.kind };
+  if (conn.kind === "pending") base.approveUrl = conn.approveUrl;
+  if (connError) base.error = connError;
+  return base;
+}
+function resetConnect(): void {
+  conn = { kind: "none" };
+  connError = "";
+}
+// Ask the oauth3 core for amazon read access. Reuses the in-flight requestId so repeated calls
+// don't orphan the approve page the owner opened.
+async function startConnect(): Promise<void> {
+  const r = await fetch(`${OAUTH3_BASE}/api/connect`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ plugin: "amazon", app: "cart-share", caps: ["amazon:cart-read"] }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || !d.requestId) throw new Error(d.error || d.reason || `connect ${r.status}`);
+  conn = { kind: "pending", requestId: d.requestId, approveUrl: d.approveUrl };
+}
+// Poll the connect once; transition when the user decides.
+async function pollConnect(): Promise<void> {
+  if (conn.kind !== "pending") return;
+  const r = await fetch(`${OAUTH3_BASE}/api/connect/${conn.requestId}`, { signal: AbortSignal.timeout(10_000) });
+  const d = await r.json().catch(() => ({}));
+  if (d.status === "approved" && d.token) conn = { kind: "approved", token: d.token };
+  else if (d.status === "denied") conn = { kind: "denied" };
+}
+// Drive the connect toward an approved token. Surfaces an approveUrl if none yet and polls for a
+// short window so a just-granted approval is picked up within the request (the owner view also
+// auto-refreshes, so a miss is recovered on the next poll).
+async function ensureConnect(): Promise<void> {
+  if (conn.kind === "approved" || conn.kind === "denied") return;
+  if (conn.kind === "none") {
+    try { await startConnect(); connError = ""; }
+    catch (e) { connError = String((e as Error).message || e); return; }
+  }
+  if (conn.kind === "pending") {
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline && conn.kind === "pending") {
+      await pollConnect().catch(() => {});
+      if (conn.kind !== "pending") break;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+}
 
 // A short search query from a long Amazon title (first few meaningful words) — used to find an
 // organic alternative to a real cart line.
@@ -61,8 +126,10 @@ let built = false;
 // alternative for each non-organic line. Throws (honestly) if no jar is synced or Amazon
 // blocks the read — never invents a cart.
 async function buildRealCart(): Promise<void> {
+  const token = connectToken();
+  if (!token) throw new Error("not connected — approve Amazon read on the OAuth3 consent screen");
   const r = await fetch(`${OAUTH3_BASE}/api/amazon/items`, {
-    headers: { authorization: `Bearer ${OAUTH3_TOKEN}` },
+    headers: { authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(90000),
   });
   const d = await r.json().catch(() => ({}));
@@ -94,6 +161,18 @@ async function buildRealCart(): Promise<void> {
 }
 async function ensureCart(): Promise<void> {
   if (built) return;
+  if (!connectToken()) await ensureConnect();
+  if (!connectToken()) {
+    // honest unconnected state — the owner view surfaces the approveUrl / denial / error.
+    cart = []; SUBS = {};
+    cartSource = "unconnected";
+    cartError = conn.kind === "denied"
+      ? "Amazon connect was denied — Retry to request again"
+      : conn.kind === "pending"
+        ? "" // pending: the owner view shows the approveUrl affordance (no error noise)
+        : (connError || "connect your Amazon to load your real cart");
+    return;
+  }
   built = true;
   try { await buildRealCart(); }
   catch (e) { cart = []; SUBS = {}; cartSource = "unconnected"; cartError = String((e as Error).message || e); }
@@ -118,7 +197,6 @@ let configured = false;
 export default async function handler(req: Request, ctx: { env: Record<string, string>; dataDir: string }): Promise<Response> {
   if (!configured) {
     if (ctx.env?.OAUTH3_BASE) OAUTH3_BASE = ctx.env.OAUTH3_BASE.replace(/\/$/, "");
-    if (ctx.env?.OAUTH3_TOKEN) OAUTH3_TOKEN = ctx.env.OAUTH3_TOKEN;
     configured = true;
   }
   const url = new URL(req.url);
@@ -129,7 +207,7 @@ export default async function handler(req: Request, ctx: { env: Record<string, s
   }
   if (req.method === "GET" && path === "/health") {
     await ensureCart();
-    return json({ ok: true, build: BUILD, source: cartSource, error: cartError || undefined, items: cart.length });
+    return json({ ok: true, build: BUILD, source: cartSource, error: cartError || undefined, items: cart.length, connect: connectStatus() });
   }
   if (req.method === "GET" && path === "/debug") {
     const out: Record<string, unknown> = {};
@@ -144,20 +222,20 @@ export default async function handler(req: Request, ctx: { env: Record<string, s
   }
   // rebuild the cart from live amazon
   if (req.method === "POST" && path === "/refresh") {
-    built = false;
+    built = false; // re-read the cart with the existing connection (no re-approve needed)
     revoked.clear();
     grant = null;
     receipt.length = 0;
     checkedOut = false;
     await ensureCart();
-    return json({ source: cartSource, error: cartError || undefined, items: cart.length });
+    return json({ source: cartSource, error: cartError || undefined, items: cart.length, connect: connectStatus() });
   }
 
   await ensureCart();
 
   // owner view of the cart + receipt + grant state
   if (req.method === "GET" && path === "/cart") {
-    return json({ source: cartSource, error: cartError || undefined, cart, total: +cart.reduce((s, i) => s + i.price * i.qty, 0).toFixed(2), receipt, checkedOut, shared: !!grant && !revoked.has(grant.token) });
+    return json({ source: cartSource, error: cartError || undefined, cart, total: +cart.reduce((s, i) => s + i.price * i.qty, 0).toFixed(2), receipt, checkedOut, shared: !!grant && !revoked.has(grant.token), connect: connectStatus() });
   }
 
   // OWNER: mint a scoped, revocable substitute-only capability for a friend.
@@ -215,12 +293,13 @@ export default async function handler(req: Request, ctx: { env: Record<string, s
   // reset the demo (rebuild from live amazon)
   if (req.method === "POST" && path === "/reset") {
     built = false;
+    resetConnect(); // full tear-down: also drops the amazon connection so the owner can re-approve
     revoked.clear();
     grant = null;
     receipt.length = 0;
     checkedOut = false;
     await ensureCart();
-    return json({ ok: true, source: cartSource });
+    return json({ ok: true, source: cartSource, connect: connectStatus() });
   }
 
   return new Response("not found", { status: 404 });
