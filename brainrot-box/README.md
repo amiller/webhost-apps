@@ -14,13 +14,57 @@ is the version that ran the Demo Day booth all day (registry held at its 24-tool
 
 ## How it works
 
-- **judge**: scores the last ~60s of transcript; score ≥ 7 = a banger — the canvas flashes the
-  quote and `/goodpoints` keeps the ledger.
-- **toolsmith** (slow lane): writes one small canvas layer tool per turn into a bounded registry —
+- **judge** (hearing lane): scores the last ~60s of transcript; score ≥ 7 = a banger — the canvas
+  flashes the quote and `/goodpoints` keeps the ledger.
+- **toolsmith** (paint lane, slow): writes one small canvas layer tool per turn into a bounded registry —
   `MAX_TOOLS` (default 24) LRU; 6 hand-built starter tools seed at boot and are eviction-proof.
-- **compositor** (fast lane): stacks 2–5 tools per turn against the distilled visual brief.
-- **decoder**: types utterances into a conversation graph (topics, decisions, questions).
+- **compositor** (paint lane, fast): stacks 2–5 tools per turn against the distilled visual brief.
+- **distill** (hearing lane): continuously re-reads the last ~45s into a visual brief (#93).
+- **decoder / state / convtype** (hearing lanes): conversation graph, recap/shift/flow readouts,
+  conversation-type verdict.
 - Both weave lanes idle when nobody polls `/events`; the otter lane idles after 10 quiet minutes.
+
+## Privacy boundary (#94) — who hears the room
+
+**Everything that hears the room is enclave-encrypted; the paint crew sees a sanitized brief.**
+
+The room's words flow through exactly two places: **Otter STT** (TLS to the enclave; see Honest
+edges) and the **hearing lanes** — judge, distill, decoder, state, convtype — which all run on e2ee
+confidential inference (NEAR ECIES or Chutes ML-KEM-768). These lanes have **no hosted branch at
+all**: `route()` in `server.ts` is the one place that decides transport per lane, and for hearing
+lanes it only ever returns an e2ee transport, even if every `*_BASE_URL` is set. Their models
+(`JUDGE_MODEL`, `DISTILL_MODEL`, `DECODER_MODEL`, `STATE_MODEL`) deliberately do **not** inherit
+`TOOLSMITH_MODEL`/`COMPOSITOR_MODEL`, because those may point at hosted models.
+
+Downstream of the hearing lanes, verbatim room text is **never** sent to another model:
+
+- On a banger, the judge's quote and free-text `why` flow **only to the client** (`SSE
+  goodpoint.point`) for local canvas rendering; the brief the crew gets is `sanitizeBrief()` — a
+  mood label, a tone/energy from the score, a *structural* emphasis descriptor (word-count +
+  sentence register), a constant motion direction. No verbatim n-gram of the quote (unit-tested).
+- #93's continuous distillation runs on its own **e2ee** lane, and its output passes through
+  `sanitizeDistilled()`: `emphasis` is always replaced by the structural descriptor of the key
+  phrase; `mood`/`tone`/`direction` are the model's own paraphrase and any field that trips a
+  transcript 3-gram check is blanked and announced as a `status` event (an absent field renders
+  "—" on the client — honest, never masked).
+
+Because the paint crew never sees the room's words, it is safe to route **toolsmith/compositor**
+(and the compositor-class **critic**, which reads only composition signatures) to a **fast hosted
+model** (plaintext) when NEAR's e2ee pool browns out. Configure per lane:
+
+```
+JUDGE_MODEL=, DISTILL_MODEL=, DECODER_MODEL=, STATE_MODEL=   # hearing lanes — always e2ee
+TOOLSMITH_MODEL=, TOOLSMITH_BASE_URL=, TOOLSMITH_API_KEY=    # set all three to go hosted
+COMPOSITOR_MODEL=, COMPOSITOR_BASE_URL=, COMPOSITOR_API_KEY= # set all three to go hosted
+```
+
+Leave the `*_BASE_URL` vars unset to keep a paint lane on its e2ee default (the deploy default).
+`GET /diag` reports the resolved `{lane, model, transport, hears_room}` for all eight lanes without
+disclosing keys or URLs.
+
+Any future stage that distills the transcript into a brief must (a) run on an e2ee hearing lane and
+(b) emit its brief through `sanitizeBrief`/`sanitizeDistilled` (or an equivalent that carries no
+verbatim n-gram) before it reaches toolsmith/compositor.
 
 ## Routes
 
