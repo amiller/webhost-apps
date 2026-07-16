@@ -112,11 +112,11 @@
       <b>encrypted inference</b>, and when somebody lands a banger the canvas <b>flashes the quote</b>
       and writes it in a ledger. The meeting gets a score now.</p>
     <div class="cta-row">
-      <a class="cta" href="/interleave/app">▶&nbsp; open the ancestor</a>
-      <span class="cta-note">the original box · live · your speech → visuals · e2ee</span>
+      <a class="cta" href="app">▶&nbsp; open the box</a>
+      <span class="cta-note">live · your meeting → judged → painted · e2ee &nbsp;·&nbsp; the ancestor: <a href="/interleave/app">/interleave/app</a></span>
     </div>
     <div class="cta-row" style="margin-top:14px">
-      <span class="buildchip">⚙ the combined app is in the build lane today — <a href="https://github.com/amiller/webhost-apps/issues/80" style="color:var(--amber)">webhost-apps#80</a></span>
+      <span class="buildchip" style="color:var(--aqua); border-color:color-mix(in oklab,var(--aqua) 40%, var(--line))">✓ live — spec'd, swarm-built (<a href="https://github.com/amiller/webhost-apps/pull/84" style="color:var(--aqua)">PR #84</a>), and deployed the same day</span>
     </div>
   </header>
 
@@ -158,7 +158,7 @@
           <li><b>judge</b> scores the last minute: quote · why · 0–10</li>
           <li><b>banger</b> score ≥ 7 → canvas flash + ledger entry</li>
         </ul>
-        <span class="chip">building today · #80</span>
+        <span class="chip">live · shipped in PR #84</span>
       </div>
     </div>
     <p class="route">no raw mic, no copied cookies — the box holds a <b>scoped, revocable</b> otter read token, and nothing else</p>
@@ -185,6 +185,7 @@
       <div class="beat"><div class="m">07-15 eve</div><div class="t">The phrase "good point detection" survives a planning call.</div></div>
       <div class="beat"><div class="m">07-16 am</div><div class="t">Spec written and filed as <a href="https://github.com/amiller/webhost-apps/issues/80">webhost-apps#80</a>; dispatched to the swarm's ready lane.</div></div>
       <div class="beat save"><div class="m">07-16</div><div class="t">This page ships before the app does. On purpose. Mock demo day is today.</div></div>
+      <div class="beat save"><div class="m">07-16 pm</div><div class="t">The app ships: merged, deployed, live tap verified. Same day. The loop closed.</div></div>
       <div class="beat"><div class="m">07-24</div><div class="t">Demo day. The ledger says how many bangers happened. That number is the value marker.</div></div>
     </div>
     <p style="margin-top:20px" class="muted">Also floated on the call: a human good-point button, so the audience can
@@ -192,9 +193,9 @@
   </section>
 
   <footer>
-    <div class="row">will run at <span class="kbd">pod.dstack.soc1024.com/goodpoint-box/app</span> · spec <span class="kbd">webhost-apps#80</span> · ancestor <span class="kbd"><a href="/interleave/">/interleave/</a></span></div>
-    <p class="caveat" style="margin-top:14px">Honest edges: the combined app is not live yet — #80 is in flight and this
-      page shipped ahead of it. Inherited from the box: speech-to-text is TLS to the enclave, not app-layer e2ee, and
+    <div class="row">running at <span class="kbd"><a href="app">pod.dstack.soc1024.com/goodpoint-box/app</a></span> · spec <span class="kbd">webhost-apps#80</span> · ancestor <span class="kbd"><a href="/interleave/">/interleave/</a></span></div>
+    <p class="caveat" style="margin-top:14px">Honest edges: a token change requires one owner step-up approval before the
+      first live read. Inherited from the box: speech-to-text is TLS to the enclave, not app-layer e2ee, and
       enclave keys are trusted on first use without full quote-chain verification. New here: the judge's taste is one
       model's opinion; the ledger keeps the receipts either way.</p>
   </footer>
