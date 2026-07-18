@@ -1,8 +1,8 @@
 <!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
-<title>screenshare-debug · oauth3</title><style>
-:root{--paper:#faf7f0;--ink:#1c2528;--teal:#00838a;--pink:#ff48b0;--mut:#5c6b6e;--pass:#1e7d46;--fail:#c62828;--hair:#ddd7c9;--card:#fffdf8;--wash:rgba(0,131,138,.07)}
+<title>screenshare-debug · change detection</title><style>
+:root{--paper:#faf7f0;--ink:#1c2528;--teal:#00838a;--pink:#ff48b0;--mut:#5c6b6e;--pass:#1e7d46;--fail:#c62828;--hair:#ddd7c9;--card:#fffdf8;--wash:rgba(0,131,138,.07);--cyan:#00b8c4}
 *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
-.wrap{max-width:940px;margin:0 auto;padding:26px 18px 70px}
+.wrap{max-width:1000px;margin:0 auto;padding:26px 18px 70px}
 .kick{font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--teal)}
 h1{margin:5px 0 3px;font-size:31px;font-weight:800;text-transform:uppercase;color:var(--teal);text-shadow:2.5px 2.5px 0 var(--pink);letter-spacing:-.01em}
 .sub{color:var(--mut);max-width:66ch;margin:2px 0 16px}
@@ -14,17 +14,24 @@ button{font:inherit;font-weight:700;border:2px solid var(--ink);background:var(-
 button.ghost{background:var(--card);color:var(--ink);box-shadow:3px 3px 0 var(--hair)}
 button.rev{background:var(--pink)}button:active{transform:translate(2px,2px);box-shadow:1px 1px 0 var(--pink)}
 button:disabled{opacity:.4;cursor:not-allowed;box-shadow:none}
+select{font:inherit;font-weight:700;border:2px solid var(--ink);background:var(--card);color:var(--ink);padding:8px 10px;box-shadow:3px 3px 0 var(--hair)}
 .pill{font-family:ui-monospace,Menlo,monospace;font-size:11px;padding:3px 9px;border:1.5px solid var(--mut);color:var(--mut)}
+.badge{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;padding:2px 7px;border:1.5px solid var(--hair);color:var(--mut);background:#fff}
+.badge.on{border-color:var(--pass);color:var(--pass)}
+.badge.off{border-color:var(--fail);color:var(--fail)}
 label.sel{display:flex;flex-direction:column;gap:3px;font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
 select{font:inherit;border:2px solid var(--ink);background:var(--card);color:var(--ink);padding:5px 8px;font-family:ui-monospace,Menlo,monospace;font-size:12px;cursor:pointer}
 select option:disabled{color:var(--mut)}
-.grid{display:grid;grid-template-columns:230px 1fr;gap:16px}@media(max-width:640px){.grid{grid-template-columns:1fr}}
+.grid{display:grid;grid-template-columns:260px 1fr;gap:16px}@media(max-width:720px){.grid{grid-template-columns:1fr}}
 .card{border:2px solid var(--ink);background:var(--card);margin-top:16px}
 .card h2{margin:0;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);font-family:ui-monospace,Menlo,monospace;padding:8px 12px;border-bottom:1px solid var(--hair)}
 .card h2 .h{color:var(--teal)}
-#prev{display:block;width:100%;height:auto;background:#0c0f12}
-.stat{display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--hair);font-size:13px}
-.stat b{font-variant-numeric:tabular-nums;font-size:17px}.ok{color:var(--pass)}.no{color:var(--fail)}
+.prevwrap{position:relative}#prev,#ovr{display:block;width:100%;height:auto}#ovr{position:absolute;left:0;top:0;height:100%;pointer-events:none;background:transparent}#prev{background:#0c0f12}
+.klassline{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--hair)}
+.klass{font-family:ui-monospace,Menlo,monospace;font-weight:800;font-size:15px;letter-spacing:.06em;text-transform:uppercase}
+.klass.still{color:var(--mut)}.klass.local{color:var(--teal)}.klass.scene{color:var(--pink)}.klass.init{color:var(--cyan)}
+.stat{display:flex;justify-content:space-between;padding:7px 12px;border-bottom:1px solid var(--hair);font-size:12.5px}
+.stat b{font-variant-numeric:tabular-nums;font-size:16px}.ok{color:var(--pass)}.no{color:var(--fail)}.sk{color:var(--mut)}
 .cost{display:grid;grid-template-columns:repeat(2,1fr);gap:0}
 @media(max-width:640px){.cost{grid-template-columns:1fr}}
 .cost .stat{font-size:12px;align-items:center;gap:6px;border-bottom:1px solid var(--hair)}
@@ -34,33 +41,59 @@ select option:disabled{color:var(--mut)}
 .cost .stat.duty b{font-size:18px;color:var(--teal)}
 .cost .unit{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:var(--mut);min-width:8ch;text-align:right}
 .cost .sub{font-family:ui-monospace,Menlo,monospace;font-size:9px;color:var(--mut);text-transform:none;letter-spacing:0}
-.cost b.pending{color:var(--mut);font-size:12px;font-weight:600}
 table{width:100%;border-collapse:collapse}
-th{font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);text-align:left;padding:6px 10px;border-bottom:2px solid var(--ink)}
-td{padding:5px 10px;border-bottom:1px solid var(--hair);font-family:ui-monospace,Menlo,monospace;font-size:12px}
-td.a{color:var(--pass);font-weight:700}td.r{color:var(--fail);font-weight:700}.reason{color:var(--mut);font-weight:400}
+th{font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);text-align:left;padding:6px 8px;border-bottom:2px solid var(--ink)}
+td{padding:5px 8px;border-bottom:1px solid var(--hair);font-family:ui-monospace,Menlo,monospace;font-size:11.5px;white-space:nowrap}
+td.a{color:var(--pass);font-weight:700}td.r{color:var(--fail);font-weight:700}td.sk{color:var(--mut)}td.c-still{color:var(--mut)}td.c-local{color:var(--teal);font-weight:700}td.c-scene{color:var(--pink);font-weight:700}td.c-init{color:var(--cyan);font-weight:700}
+.reason{color:var(--mut);font-weight:400}
+.kf{padding:10px 12px;border-top:1px solid var(--hair)}
+.kf .res{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--ink);margin-top:6px;word-break:break-word}
+.kf .res .muted{color:var(--mut)}
 .note{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--mut)}
 .note b{color:var(--teal)}
 .defer{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--mut);background:var(--wash);border-left:4px solid var(--teal);padding:8px 10px;margin:0 12px 12px}
 </style></head><body><div class=wrap>
-<div class=kick>oauth3 · outbound-stream consent · RFC 0011 did:key UCAN</div>
+<div class=kick>oauth3 · outbound-stream consent · change detection (#71)</div>
 <h1>Screenshare Debug</h1>
-<p class=sub>Your screen streams to a pod sink under a <b>scoped, revocable capability</b> that oauth3 <b>signs once</b> — the sink then verifies it <b>offline</b> (cryptographically, anchored on the issuer DID, no core call). This inverts the usual model: instead of delegating <i>read</i> access to a session you hold, you delegate a live <b>outbound</b> stream. Revoke and the sink stops honoring the same capability, live.</p>
+<p class=sub>Your screen streams to a pod sink under a <b>scoped, revocable capability</b> oauth3 <b>signs once</b>; the sink verifies it <b>offline</b>. On top of that pipe, cheap pixel math answers <b>"did something change, and where?"</b> per frame — so a <b>still</b> frame skips the wire entirely, a <b>local</b> change sends the frame, and a <b>scene</b> change (alt-tab, page nav) flags the whole frame. A hi-res <b>keyframe</b> can be pulled on demand — the hook OCR and a visual model use when tile-diff alone is not enough.</p>
 <div class=anchor>trust anchor · authority DID: <b class=mono id=anchor>…</b><br><span class=pill id=capstate>no capability</span></div>
 <div class=row>
   <button id=start>Start capture (screen)</button>
   <button id=demo class=ghost>Start synthetic demo</button>
+  <select id=synthmode title="synthetic source mode">
+    <option value=auto>synth: auto-cycle</option>
+    <option value=rect>synth: moving rect (local)</option>
+    <option value=still>synth: static (still)</option>
+    <option value=swap>synth: color swap (scene)</option>
+  </select>
   <button id=revoke class=rev disabled>Revoke</button>
-  <label class=sel>format <select id=fmtsel><option value="full-jpeg" selected>full-jpeg</option><option disabled>tile-delta (needs #71)</option></select></label>
+  <label class=sel>format <select id=fmtsel><option value="full-jpeg" selected>full-jpeg</option><option disabled>tile-delta (not implemented)</option></select></label>
   <span class="mono note" id=note></span>
 </div>
 <div class=grid>
-  <div class=card style=margin-top:0><h2>live frame → jpeg → sink</h2><canvas id=prev width=200 height=125></canvas>
+  <div class=card style=margin-top:0>
+    <h2>live frame · change detect · sink</h2>
+    <div class=prevwrap><canvas id=prev width=200 height=125></canvas><canvas id=ovr width=200 height=125></canvas></div>
+    <div class=klassline><span>current frame</span><span class="klass still" id=kbig>—</span></div>
     <div class=stat><span>accepted by sink</span><b class=ok id=nA>0</b></div>
     <div class=stat><span>rejected by sink</span><b class=no id=nR>0</b></div>
+    <div class=stat><span>still (POST skipped)</span><b class=sk id=nS>0</b></div>
+    <div class=stat><span>scene frames</span><b class=no id=nSc>0</b></div>
+    <div class=stat><span>visual-model calls</span><b id=nM>0</b></div>
   </div>
-  <div class=card style=margin-top:0><h2>sink console — what the pod verified offline</h2>
-    <table><thead><tr><th>seq</th><th>bytes</th><th>luma</th><th>fmt</th><th>ms</th><th>sink verdict</th></tr></thead><tbody id=log></tbody></table>
+  <div class=card style=margin-top:0>
+    <h2>sink console — what the pod verified offline · changed-pct · class</h2>
+    <table><thead><tr><th>seq</th><th>class</th><th>changed%</th><th>bytes</th><th>luma</th><th>sink verdict</th></tr></thead><tbody id=log></tbody></table>
+    <div class=kf>
+      <div class=row style="margin-bottom:4px">
+        <button id=kf class=ghost>Hi-res keyframe (1280)</button>
+        <button id=kfocr class=ghost>OCR keyframe</button>
+        <button id=kfvlm>VLM caption</button>
+        <button id=wantkf class=ghost>request keyframe from sink</button>
+        <span class=badge id=ocrbadge>OCR ?</span><span class=badge id=vlmbadge>VLM ?</span>
+      </div>
+      <div class=res id=kfres><span class=muted>no keyframe posted yet — a keyframe re-draws the source at a requested width and POSTs once; OCR/VLM hooks run server-side only when configured (OCR_CMD / VLM_URL).</span></div>
+    </div>
   </div>
 </div>
 
@@ -68,22 +101,22 @@ td.a{color:var(--pass);font-weight:700}td.r{color:var(--fail);font-weight:700}.r
   <h2><span class=h>compute · cost panel</span> — can I afford to run this all day?</h2>
   <div class=cost>
     <div class=stat><span>draw <span class=sub>(drawImage)</span></span><b id=cDraw>–</b><span class=unit>ms</span></div>
-    <div class=stat><span>diff <span class=sub>(change detect)</span></span><b id=cDiff class=pending>n/a</b><span class=unit>pending #71</span></div>
+    <div class=stat><span>diff <span class=sub>(change detect)</span></span><b id=cDiff>–</b><span class=unit>ms</span></div>
     <div class=stat><span>encode <span class=sub>(toBlob JPEG)</span></span><b id=cEnc>–</b><span class=unit>ms</span></div>
     <div class=stat><span>post <span class=sub>(fetch sink)</span></span><b id=cPost>–</b><span class=unit>ms</span></div>
     <div class=stat duty><span>duty-cycle <span class=sub>(pipeline / interval)</span></span><b id=cDuty>–</b><span class=unit>% of one core</span></div>
     <div class=stat><span>bytes / frame</span><b id=cBpf>–</b><span class=unit>B (ema)</span></div>
     <div class=stat><span>bytes / min</span><b id=cBpm>–</b><span class=unit>at current rate</span></div>
-    <div class=stat><span>frame kinds</span><b id=cKinds class=pending>–</b><span class=unit>full·hb·key</span></div>
+    <div class=stat><span>frame kinds</span><b id=cKinds>–</b><span class=unit>full·hb·key</span></div>
   </div>
-  <p class=note style="padding:8px 12px 12px">per-stage ms wraps each pipeline step in <b>performance.now()</b>; duty-cycle is pipeline ms over the 600 ms frame interval. <b>diff</b> (change detection), <b>heartbeat/keyframe</b> kinds, and the <b>tile-delta</b> format all land with the change-detection foundation (<a href="https://github.com/amiller/webhost-apps/issues/71">#71</a>, PR <a href="https://github.com/amiller/webhost-apps/pull/100">#100</a>) — until then every frame is a full JPEG.</p>
+  <p class=note style="padding:8px 12px 12px">per-stage ms wraps each pipeline step in <b>performance.now()</b>; duty-cycle is pipeline ms over the 600 ms frame interval. With the change-detection foundation now landed (<a href="https://github.com/amiller/webhost-apps/issues/71">#71</a>, PR <a href="https://github.com/amiller/webhost-apps/pull/100">#100</a>), <b>still</b> frames skip the wire (heartbeat only), <b>local/scene</b> send a full JPEG, and hi-res <b>keyframes</b> pull on demand — so the <b>diff</b> stage and the <b>full·hb·key</b> kinds counter are now live. The <b>tile-delta</b> wire format remains deferred.</p>
 </div>
 
 <div class=card>
   <h2><span class=h>encoding comparison</span> — what each codec would cost for this frame</h2>
   <div class=row style="margin:10px 12px"><button id=compare class=ghost>compare encodings</button><span class="mono note" id=encNote>encodes the current canvas as JPEG / WebP / PNG</span></div>
   <table><thead><tr><th>format</th><th>bytes</th><th>encode ms</th><th>vs JPEG</th></tr></thead><tbody id=encRows><tr><td colspan=4 class=reason>no comparison yet — press the button (works on the synthetic demo too)</td></tr></tbody></table>
-  <p class=defer><b>scoped to #72:</b> the per-stage timing, bandwidth accounting, and this encoding comparison are verified here. The <b>tile-delta wire format</b>, <b>delta-vs-full bandwidth</b>, and <b>reassembly error row</b> are deferred to the #71 foundation they depend on — see the PR body.</p>
+  <p class=defer><b>scoped to #72:</b> the per-stage timing, bandwidth accounting, and this encoding comparison are verified here. The <b>tile-delta wire format</b>, <b>delta-vs-full bandwidth</b>, and <b>reassembly error row</b> are deferred to a follow-up — see the PR body.</p>
 </div>
 
 <script>
@@ -92,21 +125,65 @@ const $=id=>document.getElementById(id);
 const B58="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 function b58(b){let z=0;while(z<b.length&&b[z]===0)z++;const d=[0];for(let i=z;i<b.length;i++){let c=b[i];for(let j=0;j<d.length;j++){c+=d[j]<<8;d[j]=c%58;c=c/58|0}while(c){d.push(c%58);c=c/58|0}}let o='1'.repeat(z);for(let i=d.length-1;i>=0;i--)o+=B58[d[i]];return o}
 async function sessionDid(){const k=await crypto.subtle.generateKey('Ed25519',true,['sign','verify']);const raw=new Uint8Array(await crypto.subtle.exportKey('raw',k.publicKey));const p=new Uint8Array(2+raw.length);p[0]=0xed;p[1]=0x01;p.set(raw,2);return 'did:key:z'+b58(p)}
-const ctx=$('prev').getContext('2d');
+const ctx=$('prev').getContext('2d',{willReadFrequently:true});
+const octx=$('ovr').getContext('2d');
+// change-detect constants (on the 200×125 downsampled frame)
+const W=200,H=125,PX=W*H,COLS=20,ROWS=12,TW=10,TH=10;
+const PIXEL_THRESH=26,TILE_THRESH=12,SCENE_AREA_FRAC=0.30;
 const INTERVAL=600; // ms/frame — matches setInterval in begin(); duty-cycle denominator
-let ucan=null,seq=0,timer=null,video=null,fmt='full-jpeg';
-// per-stage timing + bandwidth state (#72 compute panel)
-let emaDraw=0,emaEnc=0,emaPost=0,emaBytes=0,lastBytes=0,lastTickMs=0,dutyCycle=0,bytesPerMin=0;
-let fullFrames=0,heartbeats=0,keyframes=0; // heartbeat/keyframe stay 0 until #71 lands still/scene classification
+let ucan=null,seq=0,timer=null,video=null,synthMode='auto',fmt='full-jpeg';
+// change-detect state (#71)
+let prevGray=null,lastClass='—',lastChangedPct=0,lastRegions=0;
+let cfgOcr=null,cfgVlm=null;
+// per-stage timing + bandwidth state (#72 compute panel) — diff stage + kinds now wired to #71
+let emaDraw=0,emaDiff=0,emaEnc=0,emaPost=0,emaBytes=0,lastBytes=0,lastTickMs=0,dutyCycle=0,bytesPerMin=0;
+let fullFrames=0,heartbeats=0,keyframes=0; // hb/key now populated: still→heartbeat, on-demand→keyframe
 let encRows=null,_webp=null;
-function synthFrame(){const w=200,h=125,t=Date.now()/300;ctx.fillStyle='#0c0f12';ctx.fillRect(0,0,w,h);ctx.fillStyle='hsl('+((t*40)%360)+',85%,55%)';const x=(Math.sin(t)*.5+.5)*(w-42),y=(Math.cos(t*.7)*.5+.5)*(h-30);ctx.fillRect(x,y,42,30);ctx.fillStyle='#fff';ctx.font='11px monospace';ctx.fillText('synthetic · seq '+seq,6,16)}
-function drawVideo(){try{ctx.drawImage(video,0,0,200,125)}catch(e){}}
-function luma(){const im=ctx.getImageData(0,0,200,125).data;let s=0;for(let i=0;i<im.length;i+=400)s+=im[i];return Math.round(s/(im.length/400))}
-function blobOf(){return new Promise(r=>$('prev').toBlob(r,'image/jpeg',0.6))}
-function logRow(seq,bytes,lm,r,f,ms){const tr=document.createElement('tr');tr.innerHTML='<td>'+seq+'</td><td>'+(bytes||'–')+'</td><td>'+lm+'</td><td>'+f+'</td><td>'+(ms!=null?ms.toFixed(1):'–')+'</td>'+(r.ok?'<td class=a>ACCEPTED</td>':'<td class=r>401 <span class=reason>'+(r.reason||'')+'</span></td>');$('log').prepend(tr);while($('log').children.length>10)$('log').lastChild.remove()}
+
+// ---- source painting ----
+function synthPhase(){const seg=Math.floor(seq/15)%3;return seg===0?'rect':seg===1?'still':'swap';}
+function drawSynth(){
+  const mode=synthMode==='auto'?synthPhase():synthMode;
+  if(mode==='still'){ctx.fillStyle='#0c0f12';ctx.fillRect(0,0,W,H);ctx.fillStyle='#3a4a52';ctx.fillRect(58,38,64,44);ctx.fillStyle='#9aa6a8';ctx.fillRect(64,46,18,8);ctx.fillStyle='#fff';ctx.font='11px ui-monospace,monospace';ctx.fillText('static · still',6,16);return;}
+  if(mode==='swap'){ // full-frame color swap each frame → scene
+    ctx.fillStyle=(seq%2)?'#ff48b0':'#00838a';ctx.fillRect(0,0,W,H);ctx.fillStyle='#fff';ctx.font='11px ui-monospace,monospace';ctx.fillText('color swap · scene',6,16);return;}
+  // moving rect → local
+  const t=seq/4;ctx.fillStyle='#0c0f12';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='hsl('+((t*40)%360)+',85%,55%)';const x=(Math.sin(t)*.5+.5)*(W-42),y=(Math.cos(t*.7)*.5+.5)*(H-30);ctx.fillRect(x,y,42,30);
+  ctx.fillStyle='#fff';ctx.font='11px ui-monospace,monospace';ctx.fillText('moving rect · local',6,16);
+}
+function drawVideo(){try{ctx.drawImage(video,0,0,W,H)}catch(e){}}
+
+// ---- pixel math ----
+function grayOf(){const d=ctx.getImageData(0,0,W,H).data;const g=new Uint8Array(PX);for(let i=0,j=0;i<d.length;i+=4,j++){g[j]=(d[i]*77+d[i+1]*150+d[i+2]*29)>>8;}return g;}
+function luma(){const g=grayOf();let s=0;for(let i=0;i<g.length;i+=40)s+=g[i];return Math.round(s/Math.ceil(g.length/40));}
+function diffFrame(prev,cur){
+  let changed=0;const hot=new Float32Array(COLS*ROWS),hotn=new Uint16Array(COLS*ROWS);
+  for(let y=0;y<H;y++){const rowBase=y*W,tBase=(y/TH|0)*COLS;for(let x=0;x<W;x++){const i=rowBase+x;const df=Math.abs(cur[i]-prev[i]);if(df>PIXEL_THRESH)changed++;const ti=tBase+(x/TW|0);hot[ti]+=df;hotn[ti]++;}}
+  const changedPct=changed/PX*100;const hotBool=new Uint8Array(COLS*ROWS);for(let k=0;k<hotBool.length;k++){hotBool[k]=hotn[k]?(hot[k]/hotn[k])>TILE_THRESH:0;}
+  return {changedPct,hot:hotBool};
+}
+function boxes(hot){const seen=new Uint8Array(COLS*ROWS);const out=[];for(let sy=0;sy<ROWS;sy++)for(let sx=0;sx<COLS;sx++){const si=sy*COLS+sx;if(!hot[si]||seen[si])continue;const q=[[sx,sy]];seen[si]=1;let minx=sx,maxx=sx,miny=sy,maxy=sy;while(q.length){const[x,y]=q.pop();if(x<minx)minx=x;if(x>maxx)maxx=x;if(y<miny)miny=y;if(y>maxy)maxy=y;const n=[[x-1,y],[x+1,y],[x,y-1],[x,y+1]];for(const[nx,ny] of n){if(nx<0||ny<0||nx>=COLS||ny>=ROWS)continue;const ni=ny*COLS+nx;if(hot[ni]&&!seen[ni]){seen[ni]=1;q.push([nx,ny]);}}}out.push({x:minx*TW,y:miny*TH,w:(maxx-minx+1)*TW,h:(maxy-miny+1)*TH});}return out;}
+function classify(hot,boxList){let hotCount=0;for(let k=0;k<hot.length;k++)if(hot[k])hotCount++;if(!hotCount)return 'still';const area=boxList.reduce((a,b)=>a+b.w*b.h,0);const frac=area/PX;if(frac>=SCENE_AREA_FRAC||hotCount/(COLS*ROWS)>0.5)return 'scene';return 'local';}
+function drawOverlay(klass,boxList,changedPct){
+  octx.clearRect(0,0,W,H);
+  if(klass!=='still'&&klass!=='init'){octx.lineWidth=1.5;octx.strokeStyle=klass==='scene'?'#ff48b0':'#00e0ff';for(const b of boxList){octx.strokeRect(b.x+1,b.y+1,b.w-2,b.h-2);}}
+  octx.font='bold 11px ui-monospace,monospace';octx.fillStyle='rgba(0,0,0,.55)';octx.fillRect(3,4,104,15);octx.fillStyle='#fff';octx.fillText(klass.toUpperCase()+' · '+changedPct.toFixed(1)+'% chg',6,15);
+}
+function blobOf(){return new Promise(r=>$('prev').toBlob(r,'image/jpeg',0.6));}
+
+function setKlass(k){lastClass=k;const el=$('kbig');el.textContent=k;el.className='klass '+(k==='—'?'still':k);}
+function logRow(seq,klass,changedPct,bytes,lm,r){
+  const tr=document.createElement('tr');
+  const cls='c-'+klass;
+  const verdict=r.ok?(r.still?'<td class=sk>still · skip</td>':'<td class=a>ACCEPTED</td>'):'<td class=r>'+(r.status||401)+' <span class=reason>'+(r.reason||'')+'</span></td>';
+  tr.innerHTML='<td>'+seq+'</td><td class="'+cls+'">'+klass+'</td><td>'+(changedPct?changedPct.toFixed(1):'0.0')+'</td><td>'+(bytes==null?'–':bytes)+'</td><td>'+lm+'</td>'+verdict;
+  $('log').prepend(tr);while($('log').children.length>12)$('log').lastChild.remove();
+}
 function fmtBytes(n){if(n<1024)return n.toFixed(0)+'B';if(n<1048576)return(n/1024).toFixed(1)+'KB';return(n/1048576).toFixed(2)+'MB'}
 function renderCost(){
   $('cDraw').textContent=emaDraw?emaDraw.toFixed(1):'–';
+  $('cDiff').textContent=emaDiff?emaDiff.toFixed(1):'–';
   $('cEnc').textContent=emaEnc?emaEnc.toFixed(1):'–';
   $('cPost').textContent=emaPost?emaPost.toFixed(1):'–';
   $('cDuty').textContent=dutyCycle?dutyCycle.toFixed(2):'–';
@@ -114,28 +191,63 @@ function renderCost(){
   $('cBpm').textContent=bytesPerMin?fmtBytes(bytesPerMin):'–';
   $('cKinds').textContent=fullFrames+'·'+heartbeats+'·'+keyframes;
 }
+async function refreshCounts(){try{const s=await(await fetch(BASE+'/sink/frames')).json();$('nA').textContent=s.accepted;$('nR').textContent=s.rejected;$('nS').textContent=s.still;$('nSc').textContent=s.scene;$('nM').textContent=s.modelCalls;}catch(e){}}
+
 async function tick(draw){
   const tD0=performance.now();draw();const tDraw=performance.now()-tD0;        // DRAW stage
+  const tF0=performance.now();                                              // DIFF stage (change detect)
+  const cur=grayOf();let klass,boxList=[],changedPct=0;
+  if(!prevGray){klass='init';changedPct=100;} // bootstrap: sync a full frame
+  else{const d=diffFrame(prevGray,cur);changedPct=d.changedPct;boxList=boxes(d.hot);klass=classify(d.hot,boxList);}
+  const tDiff=performance.now()-tF0;
+  drawOverlay(klass,boxList,changedPct);prevGray=cur;seq++;setKlass(klass);lastChangedPct=changedPct;lastRegions=boxList.length;
   const lm=luma();
-  const tE0=performance.now();const blob=await blobOf();const tEnc=performance.now()-tE0; // ENCODE stage
-  seq++;
-  const tP0=performance.now();let r;                                       // POST stage
-  try{r=await(await fetch(BASE+'/sink/frame',{method:'POST',headers:{authorization:'Bearer '+ucan,'x-seq':String(seq),'x-luma':String(lm),'x-format':fmt,'content-type':'image/jpeg'},body:blob})).json()}catch(e){r={ok:false,reason:String(e)}}
-  const tPost=performance.now()-tP0;
   // exponential moving averages (alpha 0.2) — stable per-stage readout, not per-frame jitter
   const a=0.2;
   emaDraw=emaDraw?emaDraw*(1-a)+tDraw*a:tDraw;
-  emaEnc=emaEnc?emaEnc*(1-a)+tEnc*a:tEnc;
-  emaPost=emaPost?emaPost*(1-a)+tPost*a:tPost;
-  emaBytes=emaBytes?emaBytes*(1-a)+blob.size*a:blob.size;
-  lastBytes=blob.size;fullFrames++;
-  lastTickMs=tDraw+tEnc+tPost; // excludes diff: change detection not yet in the pipeline (#71)
-  dutyCycle=(lastTickMs/INTERVAL)*100;
-  bytesPerMin=emaBytes*(60000/INTERVAL);
-  logRow(seq,r.bytes,lm,r,fmt,lastTickMs);
+  emaDiff=emaDiff?emaDiff*(1-a)+tDiff*a:tDiff;
+  if(klass==='still'){ // delta-aware: skip the image POST, send a heartbeat so sink accounting stays honest
+    const tP0=performance.now();let r;
+    try{r=await(await fetch(BASE+'/sink/heartbeat',{method:'POST',headers:{authorization:'Bearer '+ucan,'x-seq':String(seq)}})).json();}catch(e){r={ok:false,reason:String(e)};}
+    const tPost=performance.now()-tP0;
+    emaPost=emaPost?emaPost*(1-a)+tPost*a:tPost;
+    heartbeats++;lastTickMs=tDraw+tDiff+tPost;dutyCycle=(lastTickMs/INTERVAL)*100;
+    if(r.wantKeyframe)postKeyframe(r.wantKeyframe,'');
+    logRow(seq,klass,changedPct,null,lm,r.ok?{ok:true,still:true}:r);
+  }else{
+    const tE0=performance.now();const blob=await blobOf();const tEnc=performance.now()-tE0; // ENCODE stage
+    const headers={authorization:'Bearer '+ucan,'x-seq':String(seq),'x-luma':String(lm),'content-type':'image/jpeg'};if(klass==='scene')headers['x-scene']='1';
+    const tP0=performance.now();let r;                                       // POST stage
+    try{r=await(await fetch(BASE+'/sink/frame',{method:'POST',headers,body:blob})).json();}catch(e){r={ok:false,reason:String(e)};}
+    const tPost=performance.now()-tP0;
+    emaEnc=emaEnc?emaEnc*(1-a)+tEnc*a:tEnc;
+    emaPost=emaPost?emaPost*(1-a)+tPost*a:tPost;
+    emaBytes=emaBytes?emaBytes*(1-a)+blob.size*a:blob.size;
+    lastBytes=blob.size;fullFrames++;
+    lastTickMs=tDraw+tDiff+tEnc+tPost;dutyCycle=(lastTickMs/INTERVAL)*100;
+    bytesPerMin=emaBytes*(60000/INTERVAL);
+    if(r.wantKeyframe)postKeyframe(r.wantKeyframe,'');
+    logRow(seq,klass,changedPct,blob.size,lm,r);
+  }
   renderCost();
-  const s=await(await fetch(BASE+'/sink/frames')).json();$('nA').textContent=s.accepted;$('nR').textContent=s.rejected;
+  refreshCounts();
 }
+
+async function postKeyframe(width,want){
+  width=Math.max(160,Math.min(3840,Number(width)||1280));
+  const kc=document.createElement('canvas');kc.width=width;kc.height=Math.round(width*H/W);
+  const kctx=kc.getContext('2d');
+  try{if(video&&video.readyState>=2){kctx.drawImage(video,0,0,kc.width,kc.height);}else{kctx.imageSmoothingEnabled=true;kctx.drawImage($('prev'),0,0,kc.width,kc.height);}}catch(e){$('kfres').innerHTML='<span class=muted>keyframe draw failed: '+e+'</span>';return;}
+  const blob=await new Promise(r=>kc.toBlob(r,'image/jpeg',0.7));
+  const headers={authorization:'Bearer '+ucan,'content-type':'image/jpeg','x-width':String(kc.width),'x-height':String(kc.height)};if(want)headers['x-want']=want;
+  let r;try{r=await(await fetch(BASE+'/sink/keyframe',{method:'POST',headers,body:blob})).json();}catch(e){r={ok:false,reason:String(e)};}
+  keyframes++; // count for the #72 cost-panel "frame kinds" counter
+  const ocr=r.ok?(r.ocr&&r.ocr.ok?('ocr: '+r.ocr.text):'ocr: '+(r.ocr&&r.ocr.error?r.ocr.error:'not configured')):'ocr: '+(r.reason||'fail');
+  const vlm=r.ok?(r.vlm&&r.vlm.ok?('vlm: '+r.vlm.text):'vlm: '+(r.vlm&&r.vlm.error?r.vlm.error:'not configured')):'vlm: '+(r.reason||'fail');
+  $('kfres').innerHTML='<b>keyframe '+kc.width+'×'+kc.height+'</b> · '+blob.size+'b · <span class=muted>'+ocr+'</span> · <span class=muted>'+vlm+'</span>';
+  renderCost();refreshCounts();
+}
+
 async function webpSupported(){if(_webp!==null)return _webp;const c=document.createElement('canvas');c.width=2;c.height=2;return _webp=await new Promise(r=>c.toBlob(b=>r(!!(b&&b.type==='image/webp')),'image/webp',0.6))}
 function renderEnc(){
   const jb=encRows.find(r=>r[0].startsWith('JPEG'));const jbBytes=jb?jb[1]:0;
@@ -159,21 +271,34 @@ async function compareEncodings(){
   out.push(['AVIF',-1,-1]); // canvas.toBlob has no AVIF encoder in practice
   encRows=out;renderEnc();
 }
-async function getGrant(){const sd=await sessionDid();const c=await(await fetch(BASE+'/consent/grant',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionDid:sd,rate:4,ttlMin:30})})).json();ucan=c.grant;$('capstate').textContent='capability live · '+c.maxRate+'fps · '+c.expiresInSec+'s';$('capstate').style.borderColor='var(--pass)';$('capstate').style.color='var(--pass)';$('revoke').disabled=false;return c}
-function begin(draw,label){$('start').disabled=true;$('demo').disabled=true;$('note').textContent=label;timer=setInterval(()=>tick(draw),INTERVAL)}
-$('demo').onclick=async()=>{$('note').textContent='minting session key + requesting consent…';await getGrant();begin(synthFrame,'streaming synthetic frames (headless-safe; real capture is the other button)')};
-$('start').onclick=async()=>{if(!navigator.mediaDevices?.getDisplayMedia){$('note').textContent='getDisplayMedia unavailable — use synthetic demo';return}$('note').textContent='pick a window/screen…';try{const s=await navigator.mediaDevices.getDisplayMedia({video:true,audio:false});video=document.createElement('video');video.srcObject=s;await video.play()}catch(e){$('note').textContent='capture cancelled';return}await getGrant();begin(drawVideo,'streaming your screen under the signed capability')};
-$('revoke').onclick=async()=>{await fetch(BASE+'/consent/revoke',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({grant:ucan})});$('capstate').textContent='capability REVOKED';$('capstate').style.borderColor='var(--fail)';$('capstate').style.color='var(--fail)';$('note').textContent='revoked — the SAME capability is now rejected by the sink (watch the console)';$('revoke').disabled=true};
+
+async function getGrant(){const sd=await sessionDid();const c=await(await fetch(BASE+'/consent/grant',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionDid:sd,rate:4,ttlMin:30})})).json();ucan=c.grant;$('capstate').textContent='capability live · '+c.maxRate+'fps · '+c.expiresInSec+'s';$('capstate').style.borderColor='var(--pass)';$('capstate').style.color='var(--pass)';$('revoke').disabled=false;return c;}
+function begin(draw,label){$('start').disabled=true;$('demo').disabled=true;$('synthmode').disabled=false;$('note').textContent=label;timer=setInterval(()=>tick(draw),INTERVAL);}
+$('synthmode').onchange=e=>{synthMode=e.target.value;$('note').textContent='synth mode → '+synthMode;};
+$('demo').onclick=async()=>{$('note').textContent='minting session key + requesting consent…';await getGrant();begin(drawSynth,'streaming synthetic frames (auto-cycles local/still/scene; pick a mode to pin one)');};
+$('start').onclick=async()=>{if(!navigator.mediaDevices?.getDisplayMedia){$('note').textContent='getDisplayMedia unavailable — use synthetic demo';return;}$('note').textContent='pick a window/screen…';try{const s=await navigator.mediaDevices.getDisplayMedia({video:true,audio:false});video=document.createElement('video');video.srcObject=s;await video.play();}catch(e){$('note').textContent='capture cancelled';return;}await getGrant();begin(drawVideo,'streaming your screen under the signed capability');};
+$('revoke').onclick=async()=>{await fetch(BASE+'/consent/revoke',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({grant:ucan})});$('capstate').textContent='capability REVOKED';$('capstate').style.borderColor='var(--fail)';$('capstate').style.color='var(--fail)';$('note').textContent='revoked — the SAME capability is now rejected by the sink (watch the console)';$('revoke').disabled=true;};
+$('kf').onclick=()=>postKeyframe(1280,'');
+$('kfocr').onclick=()=>postKeyframe(1280,'ocr');
+$('kfvlm').onclick=()=>postKeyframe(1280,'vlm');
+$('wantkf').onclick=async()=>{try{const r=await(await fetch(BASE+'/sink/want-keyframe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({width:1280})})).json();$('kfres').innerHTML='<span class=muted>sink requested a '+r.wantKeyframe+'px keyframe — the next frame will auto-POST one.</span>';}catch(e){$('kfres').innerHTML='<span class=muted>request failed: '+e+'</span>';}};
 $('compare').onclick=compareEncodings;
-$('fmtsel').onchange=e=>{const v=e.target.value;if(v==='full-jpeg'){fmt=v;$('note').textContent='format: full JPEG'}else{$('note').textContent='tile-delta needs the #71 change-detection foundation'}};
-(async()=>{const a=await(await fetch(BASE+'/authority')).json();$('anchor').textContent=a.did})();
-// headless driver for the evidence rig — assert via the envoy bridge after __ssdebug.demo()
+$('fmtsel').onchange=e=>{const v=e.target.value;if(v==='full-jpeg'){fmt=v;$('note').textContent='format: full JPEG'}else{$('note').textContent='tile-delta wire format is not implemented yet'}};
+async function loadConfig(){try{const c=await(await fetch(BASE+'/config')).json();cfgOcr=c.ocr.configured;cfgVlm=c.vlm.configured;const o=$('ocrbadge'),v=$('vlmbadge');o.textContent=cfgOcr?'OCR_CMD set':'OCR not configured';o.className='badge '+(cfgOcr?'on':'off');v.textContent=cfgVlm?'VLM_URL set':'VLM not configured';v.className='badge '+(cfgVlm?'on':'off');}catch(e){}}
+(async()=>{const a=await(await fetch(BASE+'/authority')).json();$('anchor').textContent=a.did;await loadConfig();})();
+
+// headless driver for the evidence rig — assert via the envoy bridge (no CDP) after __ssdebug.demo()
 window.__ssdebug={
   demo:()=>$('demo').onclick(),
   revoke:()=>$('revoke').onclick(),
   compare:()=>$('compare').onclick(),
-  state:()=>({seq,acc:$('nA').textContent,rej:$('nR').textContent,cap:$('capstate').textContent,fmt,
-    emaDraw:round(emaDraw),emaEnc:round(emaEnc),emaPost:round(emaPost),lastTickMs:round(lastTickMs),
+  setMode:m=>{synthMode=m;$('synthmode').value=m;},
+  keyframe:w=>postKeyframe(w||1280,''),
+  ocr:()=>postKeyframe(1280,'ocr'),
+  vlm:()=>postKeyframe(1280,'vlm'),
+  counts:async()=>{const s=await(await fetch(BASE+'/sink/frames')).json();return{seq,accepted:s.accepted,rejected:s.rejected,still:s.still,scene:s.scene,modelCalls:s.modelCalls,lastClass,lastChangedPct,lastRegions,cfg:{ocr:cfgOcr,vlm:cfgVlm}};},
+  state:()=>({seq,acc:$('nA').textContent,rej:$('nR').textContent,cap:$('capstate').textContent,lastClass,lastChangedPct,lastRegions,fmt,
+    emaDraw:round(emaDraw),emaDiff:round(emaDiff),emaEnc:round(emaEnc),emaPost:round(emaPost),lastTickMs:round(lastTickMs),
     dutyCycle:round(dutyCycle,2),emaBytes:Math.round(emaBytes),bytesPerMin:Math.round(bytesPerMin),
     fullFrames,heartbeats,keyframes,encRows})
 };
