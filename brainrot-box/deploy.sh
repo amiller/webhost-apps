@@ -12,6 +12,11 @@ CVM="${CVM:-${WEBHOST_STAGING:-${TEE_DAEMON_URL:-}}}"
 : "${OTTER_TOKEN:?set OTTER_TOKEN or source ~/paseo-batch/.intake-env}"
 : "${NEAR_API_KEY:?set NEAR_API_KEY}"
 : "${CHUTES_API_KEY:?set CHUTES_API_KEY}"
+# Attestation pins (webhost-apps#105): derive once with
+#   ./attest-verify/target/release/attest-verify --derive-pins <model>
+# and review the values out-of-band before trusting them.
+: "${NEAR_KMS_ROOTS:?set NEAR_KMS_ROOTS (see --derive-pins)}"
+: "${NEAR_BASE_MEASUREMENTS:?set NEAR_BASE_MEASUREMENTS (see --derive-pins)}"
 
 MANIFEST="$(python3 - <<'PY'
 import json, os
@@ -28,15 +33,11 @@ print(json.dumps({
     "CHUTES_API_KEY": os.environ["CHUTES_API_KEY"],
     "TOOLSMITH_MODEL": os.environ.get("TOOLSMITH_MODEL", "deepseek-ai/DeepSeek-V4-Flash"),
     "COMPOSITOR_MODEL": os.environ.get("COMPOSITOR_MODEL", "unsloth/Mistral-Nemo-Instruct-2407-TEE"),
-    # #94 privacy cleave: hearing lanes stay e2ee (own models); paint lanes may go hosted.
-    "JUDGE_MODEL": os.environ.get("JUDGE_MODEL", "deepseek-ai/DeepSeek-V4-Flash"),
-    "DISTILL_MODEL": os.environ.get("DISTILL_MODEL", "unsloth/Mistral-Nemo-Instruct-2407-TEE"),
-    "DECODER_MODEL": os.environ.get("DECODER_MODEL", "deepseek-ai/DeepSeek-V4-Flash"),
-    "STATE_MODEL": os.environ.get("STATE_MODEL", "deepseek-ai/DeepSeek-V4-Flash"),
-    "TOOLSMITH_BASE_URL": os.environ.get("TOOLSMITH_BASE_URL", ""),
-    "TOOLSMITH_API_KEY": os.environ.get("TOOLSMITH_API_KEY", ""),
     "COMPOSITOR_BASE_URL": os.environ.get("COMPOSITOR_BASE_URL", ""),
     "COMPOSITOR_API_KEY": os.environ.get("COMPOSITOR_API_KEY", ""),
+    "NEAR_KMS_ROOTS": os.environ["NEAR_KMS_ROOTS"],
+    "NEAR_BASE_MEASUREMENTS": os.environ["NEAR_BASE_MEASUREMENTS"],
+    **{k: os.environ[k] for k in ("NEAR_WORKLOAD_IDS", "NEAR_IMAGE_DIGESTS") if os.environ.get(k)},
   },
 }))
 PY
@@ -44,7 +45,8 @@ PY
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-tar czf "$TMP/app.tgz" -C "$DIR" server.ts near_e2ee.ts chutes_e2ee.ts hosted_stream.ts project.json public
+tar czf "$TMP/app.tgz" -C "$DIR" server.ts near_e2ee.ts chutes_e2ee.ts hosted_stream.ts project.json public \
+  -C "$DIR/attest-verify/target/release" attest-verify
 RESP="$(curl -fsS -X POST "$CVM/_api/projects" \
   -H "Authorization: Bearer $TEE_DAEMON_TOKEN" \
   -F "manifest=$MANIFEST;type=application/json" \

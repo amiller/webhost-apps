@@ -40,20 +40,30 @@ async function decrypt(hex: string, clientPriv: Uint8Array): Promise<string> {
 }
 
 const pkCache = new Map<string, string>();
-async function modelPubkey(model: string, apiKey: string): Promise<string> {
+// Attested pubkey via the bundled attest-verify sidecar (bitrouter-attestation):
+// DCAP quote chain + NVIDIA NRAS + pinned policy; report_data binds the key.
+// No TOFU (webhost-apps#105). pins = NEAR_WORKLOAD_IDS / NEAR_IMAGE_DIGESTS /
+// NEAR_KMS_ROOTS / NEAR_BASE_MEASUREMENTS — the sidecar refuses to run unpinned.
+async function modelPubkey(model: string, pins: Record<string, string>): Promise<string> {
   if (pkCache.has(model)) return pkCache.get(model)!;
-  const r = await fetch(`${BASE}/attestation/report?model=${encodeURIComponent(model)}&signing_algo=ecdsa`, { headers: { Authorization: `Bearer ${apiKey}` } });
-  if (!r.ok) throw new Error(`near attestation ${r.status}: ${(await r.text()).slice(0, 160)}`);
-  const rep = await r.json();
-  for (const a of rep.model_attestations ?? []) if (a.signing_public_key) { pkCache.set(model, a.signing_public_key); return a.signing_public_key; }
-  throw new Error(`near ${model}: no signing_public_key (not e2ee-capable)`);
+  // Deployed: the binary sits beside this module. Dev checkout: that path is
+  // the cargo dir, so use its build output.
+  let bin = new URL("./attest-verify", import.meta.url).pathname;
+  if (Deno.statSync(bin).isDirectory) bin += "/target/release/attest-verify";
+  const out = await new Deno.Command(bin, { args: [model], env: pins, stdout: "piped", stderr: "piped" }).output();
+  const stdout = new TextDecoder().decode(out.stdout);
+  if (!out.success) throw new Error(`attest-verify ${model}: ${(stdout || new TextDecoder().decode(out.stderr)).slice(0, 300)}`);
+  const v = JSON.parse(stdout);
+  if (!v.verified || !v.signing_public_key) throw new Error(`attest-verify ${model}: unverified`);
+  pkCache.set(model, v.signing_public_key);
+  return v.signing_public_key;
 }
 
 // Stream OpenAI chat completions over NEAR e2ee. Calls onDelta(text) for each content delta.
 export async function nearStream(
-  apiKey: string, model: string, body: Record<string, unknown>, onDelta: (t: string) => void, signal?: AbortSignal,
+  apiKey: string, pins: Record<string, string>, model: string, body: Record<string, unknown>, onDelta: (t: string) => void, signal?: AbortSignal,
 ): Promise<void> {
-  const pk = await modelPubkey(model, apiKey);
+  const pk = await modelPubkey(model, pins);
   const clientPriv = secp256k1.utils.randomPrivateKey();
   const clientPub = hx(secp256k1.getPublicKey(clientPriv, false).slice(1)); // 64-byte, no prefix
   const msgs = await Promise.all((body.messages as any[]).map(async (m) =>
@@ -84,9 +94,12 @@ export async function nearStream(
 
 if (import.meta.main) {
   const key = Deno.env.get("NEAR_API_KEY")!;
+  const pins = Object.fromEntries(
+    ["NEAR_WORKLOAD_IDS", "NEAR_IMAGE_DIGESTS", "NEAR_KMS_ROOTS", "NEAR_BASE_MEASUREMENTS"]
+      .flatMap((k) => { const v = Deno.env.get(k); return v ? [[k, v]] : []; }));
   const model = Deno.args[0] ?? "deepseek-ai/DeepSeek-V4-Flash";
   const t0 = Date.now(); let first = 0; let out = "";
-  await nearStream(key, model, { max_tokens: 60, messages: [{ role: "user", content: "In one short sentence, what is a TEE?" }] },
-    (t) => { if (!first) first = Date.now() - t0; out += t; });
+  await nearStream(key, pins, model, { max_tokens: 60, messages: [{ role: "user", content: "In one short sentence, what is a TEE?" }] },
+    (t: string) => { if (!first) first = Date.now() - t0; out += t; });
   console.log(`model=${model}\nttft=${first}ms total=${Date.now() - t0}ms\nDECRYPTED: ${out}`);
 }
