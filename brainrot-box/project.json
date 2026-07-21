@@ -1,5 +1,5 @@
 {
-  "name": "goodpoint-box",
+  "name": "brainrot-box",
   "runtime": "deno",
   "entry": "server.ts",
   "mode": "dev",

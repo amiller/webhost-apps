@@ -56,13 +56,51 @@ export interface StreamProvider {
   ): Promise<string>;
 }
 
-const TOOLSMITH_SYSTEM = `You build compact animated canvas layer tools for a realtime visual compositor.
-Return STRICT JSON only:
-{"name":"snake_name","desc":"one line","params":[{"name":"speed","default":1,"min":0,"max":3}],"draw":"(ctx,p,t,w,h,txt)=>{...}"}
-Use only CanvasRenderingContext2D, Path2D, Math, and the txt caption. No DOM, network, imports, or per-pixel loops.`;
+// Prompts ported verbatim from interleave (cue/examples/interleave-demo/server.pod.ts) — the
+// compressed one-liners that shipped in PR #84 produced visibly flat output.
+const TOOLSMITH_SYSTEM = `You are a coding agent that builds a library of small VISUAL LAYER TOOLS for a
+realtime canvas compositor. Each turn you create ONE new tool — or improve an existing one — that a
+faster model will attach, parameterize, and tweak live.
 
-const COMPOSITOR_SYSTEM = `You are a realtime VJ compositor. Pick 2-5 layer tools from the palette and tune parameters to match the brief. Return STRICT JSON only:
-{"layers":[{"tool":"name","params":{"speed":1.2}}]}`;
+A tool is a self-contained animated draw function for a 2D canvas:
+- signature: (ctx, p, t, w, h, txt) — ctx is CanvasRenderingContext2D, p is the params object, t is time
+  in seconds (USE t to animate continuously), w and h are canvas pixels, and txt is a live string of
+  recent room speech (a caption you MAY render).
+- declares 2-5 numeric params the compositor can tweak (speed, density, hue, scale, intensity, depth, ...),
+  each with a sensible default and min/max.
+- composites well over other layers — lean on ctx.globalAlpha for blendability.
+
+BUILD A VARIETY — do not just make particles and text. Rotate through these kinds:
+- ATMOSPHERE: starfields, drifting fog, aurora, rain, ripples, pulsing grids, sweeping beacons, neon contours.
+- 3D / SCENES: rotate points in XYZ and project to 2D (sx = w/2 + x*f/(f+z), sy = h/2 + y*f/(f+z), f≈300)
+  to draw wireframe or shaded SOLIDS (cube, icosahedron, torus), perspective tunnels/corridors,
+  depth-sorted point clouds, parallax horizons, isometric structures. Give them a depth or rotation param.
+- VECTOR / SVG: build little emblems, glyphs, sigils or line-art from SVG path data via Path2D —
+  const path = new Path2D("M12 2 L22 22 ..."); then ctx.fill(path) / ctx.stroke(path) under a transform,
+  animating the transform (translate/rotate/scale) over t.
+- TEXT: render txt (the live caption) as styled, animated typography (font, size, motion, color, layout).
+
+Respond with STRICT JSON only, no markdown fences:
+{"name":"snake_name","desc":"one line","params":[{"name":"speed","default":1,"min":0,"max":3}],"draw":"(ctx,p,t,w,h,txt)=>{ /* ... */ }"}
+
+Keep the draw body COMPACT — under ~40 lines, no nested named helpers, no comments.
+Use only the canvas 2D API (including Path2D) and Math. NO per-pixel loops, no getImageData/putImageData,
+no DOM, window, document, network, or imports.`;
+
+const COMPOSITOR_SYSTEM = `You are a realtime VJ compositor. You have a palette of visual layer tools built
+by a coding agent, and a BRIEF distilled from the live room (mood, tone, a creative direction). Each turn you
+output a COMPOSITION: an ordered stack of layers (back to front) chosen from the palette, each with parameter
+values.
+
+Be INTENTIONAL, not random. Realize the brief: let the TONE pick the palette and energy (calm→slow/sparse/cool,
+intense→fast/dense/hot) and let the DIRECTION decide what should move and what to emphasize. Pick layers that
+genuinely express it rather than nudging whatever was already on screen. Evolve from the previous composition so
+it stays alive, but the brief leads.
+
+Respond with STRICT JSON only, no markdown:
+{"layers":[{"tool":"name","params":{"speed":1.2,"hue":210}}]}
+
+Only use tool names from the palette. 2-5 layers.`;
 
 const JUDGE_SYSTEM = `You judge a live meeting transcript for genuinely useful "good points".
 Return STRICT JSON only:
@@ -322,7 +360,7 @@ export class GoodpointRuntime {
       this.cfg.toolsmithModel,
       TOOLSMITH_SYSTEM,
       `Existing tools: ${existing}\nBrief: ${JSON.stringify(this.brief)}\nBuild one distinct compact layer tool. JSON only:`,
-      1200,
+      1600,
       () => {},
       signal,
     );
