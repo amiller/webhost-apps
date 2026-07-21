@@ -1,4 +1,4 @@
-# goodpoint-box
+# brainrot-box
 
 The brainrot box (interleave) merged with a good point detector, as one OAuth3 app.
 
@@ -17,7 +17,7 @@ The ledger is the value marker for the feedback-loop framing: bangers per meetin
 
 Build spec: [webhost-apps#80](https://github.com/amiller/webhost-apps/issues/80) (in the swarm
 lane). This directory currently holds the landing page ([#81](https://github.com/amiller/webhost-apps/issues/81)),
-deployed ahead of the app at `pod.dstack.soc1024.com/goodpoint-box/`.
+deployed ahead of the app at `pod.dstack.soc1024.com/brainrot-box/`.
 
 ## Routes (per #80)
 
