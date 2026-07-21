@@ -45,7 +45,7 @@ PY
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-tar czf "$TMP/app.tgz" -C "$DIR" server.ts near_e2ee.ts chutes_e2ee.ts hosted_stream.ts project.json public \
+tar czf "$TMP/app.tgz" -C "$DIR" server.ts near_e2ee.ts chutes_e2ee.ts hosted_stream.ts project.json public ca-bundle.crt \
   -C "$DIR/attest-verify/target/release" attest-verify
 RESP="$(curl -fsS -X POST "$CVM/_api/projects" \
   -H "Authorization: Bearer $TEE_DAEMON_TOKEN" \

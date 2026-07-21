@@ -50,7 +50,9 @@ async function modelPubkey(model: string, pins: Record<string, string>): Promise
   // the cargo dir, so use its build output.
   let bin = new URL("./attest-verify", import.meta.url).pathname;
   if (Deno.statSync(bin).isDirectory) bin += "/target/release/attest-verify";
-  const out = await new Deno.Command(bin, { args: [model], env: pins, stdout: "piped", stderr: "piped" }).output();
+  // SSL_CERT_FILE: the shared deno container has no system CA store for rustls.
+  const env = { ...pins, SSL_CERT_FILE: new URL("./ca-bundle.crt", import.meta.url).pathname };
+  const out = await new Deno.Command(bin, { args: [model], env, stdout: "piped", stderr: "piped" }).output();
   const stdout = new TextDecoder().decode(out.stdout);
   if (!out.success) throw new Error(`attest-verify ${model}: ${(stdout || new TextDecoder().decode(out.stderr)).slice(0, 300)}`);
   const v = JSON.parse(stdout);
