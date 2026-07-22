@@ -233,6 +233,7 @@
   <span class="meter" id="meter" hidden><i id="meterFill"></i><i id="meterMark"></i></span>
   <button id="pop">popout</button>
   <button class="ghost" id="stop">stop</button>
+  <button class="ghost" id="reset">reset</button>
 </header>
 <main class="grid">
   <aside class="left">
@@ -655,6 +656,7 @@ async function popout() {
 
 $("pop").onclick = popout;
 $("stop").onclick = async () => { await fetch("stop", { method: "POST" }); setRunState("stopped"); setDot("runDot", false); };
+$("reset").onclick = async () => { await fetch("reset", { method: "POST" }); location.reload(); };
 window.addEventListener("resize", resize);
 resize();
 host.requestAnimationFrame(frame);
