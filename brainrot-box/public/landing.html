@@ -6,8 +6,9 @@
 <title>the brainrot box</title>
 <style>
   :root{
-    --teal:#00838a; --pink:#ff48b0; --ink:#191919; --paper:#fffdf7; --line:#171717;
-    --muted:#5e6464; --wash:#e8faf8;
+    --teal:#00838a; --aqua:#00838a; --pink:#ff48b0; --ember:#ff48b0; --violet:#7a5cff;
+    --ink:#191919; --paper:#fffdf7; --line:#171717; --muted:#5e6464; --faint:#8a8f8f;
+    --wash:#e8faf8; --panel:#ffffff;
     --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   }
   *{box-sizing:border-box}
@@ -15,7 +16,7 @@
     font:17px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
   .wrap{max-width:880px;margin:0 auto;padding:0 22px}
   a{color:var(--teal)}
-  header{padding:58px 0 10px}
+  header{padding:54px 0 8px}
   .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--teal)}
   .eyebrow .dot{color:var(--pink)}
   h1{font-family:var(--mono);font-weight:700;font-size:clamp(2.4rem,7vw,4.2rem);line-height:1;margin:.25em 0;color:var(--teal)}
@@ -27,16 +28,42 @@
     padding:14px 24px;text-decoration:none}
   .cta:hover{transform:translate(-2px,-2px);box-shadow:7px 7px 0 var(--line)}
   .note{font-family:var(--mono);font-size:12.5px;color:var(--muted)}
-  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:18px;margin:38px 0}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:18px;margin:34px 0 10px}
   .tile{border:3px solid var(--line);background:#fff;box-shadow:6px 6px 0 var(--pink)}
   .tile h2{margin:0;padding:8px 12px;background:var(--teal);color:#fff;font-size:13px;
     text-transform:uppercase;border-bottom:3px solid var(--line);letter-spacing:.06em}
   .tile p{margin:0;padding:12px;font-size:15px}
   .tile p b{color:var(--teal)}
-  .how{border:3px solid var(--line);background:var(--wash);padding:14px 16px;margin:6px 0 30px;
+  section{padding:38px 0 6px;border-top:3px solid var(--line);margin-top:26px}
+  section h2.sec{font-family:var(--mono);font-size:13px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);margin:0 0 6px}
+  .khead{font-size:clamp(1.4rem,3.4vw,2rem);font-weight:800;margin:.1em 0 .5em}
+  .khead em{font-style:normal;color:var(--teal)}
+  .paths{display:grid;gap:16px;grid-template-columns:1fr 1fr;margin-top:6px}
+  @media (max-width:680px){.paths{grid-template-columns:1fr}}
+  .path{border:3px solid var(--line);padding:20px;background:var(--panel);box-shadow:5px 5px 0 var(--line)}
+  .path.n{--c:var(--pink)} .path.c{--c:var(--violet)}
+  .path .role{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--c)}
+  .path .who{font-size:1.16rem;font-weight:800;margin:.35em 0 .1em}
+  .path .prov{font-family:var(--mono);font-size:13px;color:var(--muted)}
+  .path ul{list-style:none;margin:16px 0 0;padding:0;display:flex;flex-direction:column;gap:9px}
+  .path li{font-family:var(--mono);font-size:12.5px;color:var(--ink);display:flex;gap:9px;align-items:baseline}
+  .path li b{color:var(--c);font-weight:700}
+  .route{font-family:var(--mono);font-size:12.5px;color:var(--muted);text-align:center;margin:16px 0 0}
+  .route b{color:var(--teal)}
+  .spark{width:100%;height:auto;margin:18px 0 8px;border:3px solid var(--line);background:#050a0b}
+  .spark .lbl{font-family:var(--mono);font-size:11px;fill:#9fb3b5}
+  .how{border:3px solid var(--line);background:var(--wash);padding:14px 16px;margin:18px 0 8px;
     font-family:var(--mono);font-size:13.5px;overflow-x:auto;white-space:nowrap}
   .how b{color:var(--teal)}
-  .privacy{font-size:14.5px;color:var(--muted);max-width:64ch;margin:0 0 44px}
+  .arc{display:grid;gap:0;margin-top:10px}
+  .beat{display:grid;grid-template-columns:120px 1fr;gap:16px;padding:11px 0;border-top:1px dashed var(--line);align-items:baseline}
+  .beat:first-child{border-top:none}
+  @media (max-width:560px){.beat{grid-template-columns:1fr;gap:2px}}
+  .beat .m{font-family:var(--mono);font-size:12.5px;color:var(--faint)}
+  .beat .t{color:var(--ink)}
+  .beat.save .t{color:var(--teal);font-weight:700}
+  .beat.save .m{color:var(--teal)}
+  .privacy{font-size:14.5px;color:var(--muted);max-width:64ch;margin:26px 0 40px}
   .privacy b{color:var(--ink)}
   footer{border-top:3px solid var(--line);padding:14px 0 46px;font-family:var(--mono);font-size:12.5px;color:var(--muted)}
 </style>
@@ -60,17 +87,69 @@
       <p>The transcript as it happens, and the <b>bangers ledger</b> — every scored good point, quote and reason.</p></div>
     <div class="tile"><h2>graph</h2>
       <p>The conversation as a <b>topic timeline</b>: frames open as subjects shift, returns marked, decisions and action items on their own rail.</p></div>
-    <div class="tile"><h2>workflow</h2>
+    <div class="tile"><h2>studio</h2>
       <p>Watch one model <b>write animation tools live</b> — code streaming — while a faster one stacks and tunes them to match the room.</p></div>
   </div>
 
-  <div class="how"><b>room speech</b> → transcript → judge · decoder · brief → <b>toolsmith</b> writes a tool → <b>compositor</b> stacks 2–5 layers → canvas</div>
+  <section>
+    <h2 class="sec">the two models</h2>
+    <p class="khead">One box that <em>paints</em> the room while little detectors <em>read</em> it.</p>
+    <div class="paths">
+      <div class="path n">
+        <div class="role">the canvas · paints</div>
+        <div class="who">toolsmith × compositor</div>
+        <div class="prov">two models in TEE enclaves · NEAR + Chutes</div>
+        <ul>
+          <li><b>toolsmith</b> writes little animation tools, live</li>
+          <li><b>compositor</b> VJs them, 2–5 layers a frame</li>
+          <li><b>e2ee</b> prompts decrypt only inside the enclave</li>
+        </ul>
+      </div>
+      <div class="path c">
+        <div class="role">the detectors · read</div>
+        <div class="who">judge · decoder · distill</div>
+        <div class="prov">every few seconds, over the same transcript</div>
+        <ul>
+          <li><b>judge</b> scores the last minute: quote · why · 0–10</li>
+          <li><b>decoder</b> types the talk into the topic timeline</li>
+          <li><b>distill</b> turns the mood into a visual brief</li>
+        </ul>
+      </div>
+    </div>
+    <p class="route">speech via your <b>🎤</b> or a <b>scoped, revocable</b> Otter read token — no raw mic upload, no copied cookies</p>
+    <svg class="spark" viewBox="0 0 640 168" role="img" aria-label="Diagram: meeting speech over time as a flat line, with two spikes marked as detected good points scoring 8 and 9.">
+      <line x1="46" y1="138" x2="620" y2="138" stroke="#2a4a4e"/>
+      <line x1="46" y1="34" x2="46" y2="138" stroke="#2a4a4e"/>
+      <polyline fill="none" stroke="#5e7a7d" stroke-width="2" points="46,120 120,118 170,122 214,117 260,121 300,119"/>
+      <polyline fill="none" stroke="#35d6f0" stroke-width="2.5" points="300,119 318,58 336,119"/>
+      <polyline fill="none" stroke="#5e7a7d" stroke-width="2" points="336,119 390,122 440,118 470,120"/>
+      <polyline fill="none" stroke="#ff48b0" stroke-width="2.5" points="470,120 492,44 514,120"/>
+      <polyline fill="none" stroke="#5e7a7d" stroke-width="2" points="514,120 560,122 606,119"/>
+      <circle cx="318" cy="58" r="4" fill="#35d6f0"/><circle cx="492" cy="44" r="4" fill="#ff48b0"/>
+      <text class="lbl" x="46" y="24">the meeting, as heard</text>
+      <text class="lbl" x="296" y="46" fill="#35d6f0">banger · 8</text>
+      <text class="lbl" x="472" y="32" fill="#ff48b0">banger · 9</text>
+      <text class="lbl" x="120" y="108">mumbling about architecture</text>
+      <text class="lbl" x="548" y="162">meeting →</text>
+    </svg>
+    <div class="how"><b>room speech</b> → transcript → judge · decoder · distill → brief → <b>toolsmith</b> writes a tool → <b>compositor</b> stacks 2–5 layers → canvas</div>
+  </section>
+
+  <section>
+    <h2 class="sec">the loop</h2>
+    <p class="khead">Complain about the box <em>to the box</em>. It ships the fix overnight.</p>
+    <div class="arc">
+      <div class="beat"><div class="m">in the meeting</div><div class="t">Feedback and ideas are just… said out loud. Nobody files anything.</div></div>
+      <div class="beat"><div class="m">transcript lands</div><div class="t">An intake pass reads finished Otter transcripts through the same scoped token, looking for feedback to act on and work worth taking.</div></div>
+      <div class="beat"><div class="m">before acting</div><div class="t">The swarm posts a Matrix warning of what it's about to take on — reply <span style="font-family:var(--mono)">veto</span> within the window to stop it.</div></div>
+      <div class="beat save"><div class="m">by morning</div><div class="t">Accepted items come back as evidence-gated fixes: coding agents work them overnight, and a screenshot gate proves each one before it merges.</div></div>
+    </div>
+  </section>
 
   <p class="privacy">Prompts decrypt only <b>inside the model's enclave</b> — the inference provider's
-    gateway and the network path never see a word. Runs on an attested CVM; speech via your 🎤 or a
-    scoped, revocable Otter token.</p>
+    gateway and the network path never see a word. Runs on an attested CVM.</p>
 
-  <footer>the ancestor: <a href="/interleave/">/interleave/</a> · a Shape Rotator cohort artifact</footer>
+  <footer>running at <a href="app">pod.dstack.soc1024.com/brainrot-box/app</a> · a Shape Rotator cohort artifact</footer>
 </div>
 </body>
 </html>
