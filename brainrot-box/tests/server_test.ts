@@ -171,3 +171,14 @@ Deno.test("/listen rejects empty audio; smokeTest rejects clearRect; compositor 
     .filter((l) => !seen.has(l.tool) && seen.add(l.tool));
   assertEquals(layers.map((l) => l.tool), ["a", "b"]);
 });
+
+Deno.test("scoreTranscript drops silence hallucinations and non-speech garbage", async () => {
+  const { scoreTranscript } = await import("../server.ts");
+  const silence = scoreTranscript({ text: "안녕하세요 감사합니다", segments: [{ no_speech_prob: 0.8, avg_logprob: -1.2, compression_ratio: 1.1 }] });
+  assert(silence.drop); // high no_speech + no latin chars
+  const korean = scoreTranscript({ text: "시청해주셔서 감사합니다", segments: [{ no_speech_prob: 0.2, avg_logprob: -0.3, compression_ratio: 1.0 }] });
+  assert(korean.drop); // confident-looking but zero latin characters
+  const good = scoreTranscript({ text: "we should ship the tabs today", segments: [{ no_speech_prob: 0.05, avg_logprob: -0.2, compression_ratio: 1.2 }] });
+  assert(!good.drop);
+  assert(good.confidence > 0.7);
+});

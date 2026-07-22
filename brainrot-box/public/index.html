@@ -475,6 +475,7 @@ async function sendClip(blob) {
     const wav = await blobToWav(blob);
     const j = await (await fetch("listen", { method: "POST", headers: { "content-type": "application/octet-stream" }, body: wav })).json();
     if (j.error) setRunState("mic: " + j.error);
+    else if (j.dropped) setRunState("mic: dropped low-confidence clip" + (j.text ? ` ("${j.text.slice(0, 30)}…")` : " (silence)"));
     else if (j.text) setRunState("mic heard: " + j.text);
     else setRunState("mic: (nothing recognized in that clip)");
   } catch (e) { setRunState("mic send failed"); } finally { inflight--; }
