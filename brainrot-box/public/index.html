@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>brainrot-box</title>
+<style>
+  :root {
+    color-scheme: light;
+    --teal: #00838a;
+    --pink: #ff48b0;
+    --ink: #191919;
+    --paper: #fffdf7;
+    --line: #171717;
+    --muted: #5e6464;
+    --wash: #e8faf8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--paper);
+    color: var(--ink);
+    font: 15px/1.35 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    overflow: hidden;
+  }
+  button {
+    border: 2px solid var(--line);
+    background: var(--pink);
+    color: var(--line);
+    font: inherit;
+    font-weight: 800;
+    padding: 8px 12px;
+    cursor: pointer;
+    box-shadow: 3px 3px 0 var(--line);
+  }
+  button.ghost { background: var(--paper); box-shadow: none; }
+  .top {
+    height: 58px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 14px;
+    border-bottom: 3px solid var(--line);
+    background: var(--wash);
+  }
+  .brand { font-size: 22px; font-weight: 950; letter-spacing: 0; color: var(--teal); margin-right: auto; }
+  .status { display: flex; gap: 14px; align-items: center; font-size: 12px; color: var(--muted); min-width: 260px; }
+  .dot { width: 10px; height: 10px; border: 2px solid var(--line); display: inline-block; margin-right: 5px; background: #d7d7d7; vertical-align: -1px; }
+  .dot.on { background: var(--pink); animation: blink .8s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: .35; } }
+  .grid {
+    height: calc(100vh - 58px);
+    display: grid;
+    grid-template-columns: minmax(360px, 43vw) minmax(340px, 1fr);
+    min-height: 0;
+  }
+  .left {
+    border-right: 3px solid var(--line);
+    display: grid;
+    grid-template-rows: 52% 48%;
+    min-height: 0;
+    background: #fff;
+  }
+  .section {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border-bottom: 3px solid var(--line);
+  }
+  .section:last-child { border-bottom: 0; }
+  h2 {
+    margin: 0;
+    padding: 9px 12px;
+    border-bottom: 2px solid var(--line);
+    background: var(--teal);
+    color: #fff;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0;
+  }
+  .transcript {
+    flex: 1;
+    overflow: auto;
+    padding: 12px;
+    font-size: 18px;
+  }
+  .utterance {
+    margin: 0 0 10px;
+    padding: 0 0 10px;
+    border-bottom: 1px solid #d5dedc;
+  }
+  .speaker { color: var(--teal); font-weight: 900; margin-right: 7px; }
+  .order { color: var(--muted); font-size: 12px; font-weight: 700; margin-right: 7px; }
+  .empty { color: var(--muted); padding: 12px; }
+  .points {
+    flex: 1;
+    overflow: auto;
+    padding: 12px;
+    background: #fff7fb;
+  }
+  .point {
+    border: 3px solid var(--line);
+    background: #fff;
+    padding: 12px;
+    margin: 0 0 12px;
+    box-shadow: 5px 5px 0 var(--pink);
+  }
+  .quote {
+    font-size: clamp(24px, 3.2vw, 46px);
+    line-height: 1.02;
+    font-weight: 950;
+    color: var(--line);
+    overflow-wrap: anywhere;
+  }
+  .why { margin-top: 8px; font-weight: 800; color: var(--teal); }
+  .score { float: right; background: var(--pink); border: 2px solid var(--line); padding: 2px 7px; font-weight: 950; }
+  .right {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) 46px;
+    min-height: 0;
+    position: relative;
+  }
+  canvas { width: 100%; height: 100%; display: block; background: #050505; }
+  .strip {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 8px 12px;
+    border-top: 3px solid var(--line);
+    background: #fff;
+    font-size: 12px;
+    color: var(--muted);
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .strip b { color: var(--line); }
+  .flash {
+    position: absolute;
+    left: 24px;
+    right: 24px;
+    top: 24px;
+    border: 4px solid var(--line);
+    background: var(--pink);
+    color: var(--line);
+    padding: 18px;
+    font-size: clamp(30px, 5vw, 72px);
+    line-height: .98;
+    font-weight: 950;
+    box-shadow: 8px 8px 0 var(--line);
+    opacity: 0;
+    transform: translateY(-12px);
+    pointer-events: none;
+  }
+  .flash.show { animation: flash 5s ease; }
+  @keyframes flash {
+    0% { opacity: 0; transform: translateY(-12px); }
+    10%, 70% { opacity: .96; transform: translateY(0); }
+    100% { opacity: 0; transform: translateY(-12px); }
+  }
+  body.pop .top, body.pop .left, body.pop .strip { display: none; }
+  body.pop .grid { display: block; height: 100vh; }
+  body.pop .right { height: 100vh; display: block; }
+  @media (max-width: 860px) {
+    body { overflow: auto; }
+    .grid { height: auto; display: block; }
+    .left { height: 72vh; border-right: 0; border-bottom: 3px solid var(--line); }
+    .right { height: 65vh; }
+    .status { display: none; }
+  }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">brainrot-box</div>
+  <div class="status">
+    <span><i class="dot" id="otterDot"></i>otter</span>
+    <span><i class="dot" id="smithDot"></i>toolsmith</span>
+    <span><i class="dot" id="compDot"></i>compositor</span>
+  </div>
+  <button id="pop">popout</button>
+  <button class="ghost" id="stop">stop</button>
+</header>
+<main class="grid">
+  <aside class="left">
+    <section class="section">
+      <h2>Live transcript</h2>
+      <div class="transcript" id="transcript"><div class="empty">Waiting for live Otter segments.</div></div>
+    </section>
+    <section class="section">
+      <h2>Good points</h2>
+      <div class="points" id="points"><div class="empty">No bangers yet.</div></div>
+    </section>
+  </aside>
+  <section class="right">
+    <canvas id="canvas"></canvas>
+    <div class="flash" id="flash"></div>
+    <div class="strip">
+      <span><i class="dot" id="runDot"></i><b id="runState">starting</b></span>
+      <span id="toolState">toolsmith idle</span>
+      <span id="compState">compositor idle</span>
+      <span id="layerState"></span>
+    </div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const registry = new Map();
+let layers = [];
+let since = 0;
+let currentText = "";
+let popWin = null;
+let host = window;
+
+function setDot(id, on) { $(id).classList.toggle("on", !!on); }
+function clearEmpty(id) { const el = $(id); const e = el.querySelector(".empty"); if (e) e.remove(); }
+function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+function addSegment(seg) {
+  clearEmpty("transcript");
+  const row = document.createElement("p");
+  row.className = "utterance";
+  row.innerHTML = `<span class="order">${seg.order}</span>${seg.speaker ? `<span class="speaker">${esc(seg.speaker)}</span>` : ""}<span>${esc(seg.text)}</span>`;
+  $("transcript").appendChild(row);
+  while ($("transcript").children.length > 80) $("transcript").firstElementChild.remove();
+  $("transcript").scrollTop = $("transcript").scrollHeight;
+  currentText = seg.text;
+  setDot("otterDot", true);
+}
+
+function addPoint(point) {
+  clearEmpty("points");
+  currentText = point.quote;
+  const row = document.createElement("article");
+  row.className = "point";
+  row.innerHTML = `<span class="score">${point.score}/10</span><div class="quote">${esc(point.quote)}</div><div class="why">${esc(point.why)}</div>`;
+  $("points").prepend(row);
+  const flash = $("flash");
+  flash.textContent = point.quote;
+  flash.classList.remove("show");
+  void flash.offsetWidth;
+  flash.classList.add("show");
+}
+
+function addTool(tool) {
+  let fn;
+  try { fn = new Function("return (" + tool.draw + ")")(); } catch (_) { return; }
+  const defaults = Object.fromEntries((tool.params || []).map((p) => [p.name, p.default]));
+  registry.set(tool.name, { fn, params: tool.params || [], defaults });
+  $("toolState").textContent = `toolsmith ${registry.size} tools`;
+  setDot("smithDot", true);
+}
+
+function setComposition(newLayers) {
+  layers = (newLayers || []).filter((l) => registry.has(l.tool)).slice(0, 5).map((l) => {
+    const tool = registry.get(l.tool);
+    return { tool: l.tool, params: { ...tool.defaults, ...(l.params || {}) } };
+  });
+  $("layerState").textContent = layers.map((l) => l.tool).join(" + ");
+  $("compState").textContent = layers.length ? `compositor ${layers.length} layers` : "compositor idle";
+  setDot("compDot", layers.length > 0);
+}
+
+function activity(ev) {
+  if (ev.who === "toolsmith") $("toolState").textContent = `toolsmith ${ev.state}`;
+  if (ev.who === "compositor") $("compState").textContent = `compositor ${ev.state}`;
+}
+function setRunState(text) {
+  const t = String(text || "");
+  $("runState").textContent = t.length > 54 ? t.slice(0, 51) + "..." : t;
+}
+
+async function start() {
+  await fetch("start", { method: "POST" });
+  setRunState("running");
+  setDot("runDot", true);
+  poll();
+}
+
+async function poll() {
+  while (true) {
+    try {
+      const j = await (await fetch("events?since=" + since)).json();
+      since = j.seq;
+      setDot("runDot", j.running);
+      setRunState(j.running ? "running" : "stopped");
+      for (const ev of j.events || []) {
+        if (ev.type === "segment") addSegment(ev.segment);
+        else if (ev.type === "goodpoint") addPoint(ev.point);
+        else if (ev.type === "tool") addTool(ev.tool);
+        else if (ev.type === "composition") setComposition(ev.layers);
+        else if (ev.type === "activity") activity(ev);
+        else if (ev.type === "status") setRunState(ev.text);
+      }
+    } catch (_) {}
+    await new Promise((r) => setTimeout(r, 800));
+  }
+}
+
+const canvas = $("canvas");
+const ctx = canvas.getContext("2d");
+let W = 0, H = 0, dpr = 1, t0 = performance.now();
+function resize() {
+  const win = canvas.ownerDocument.defaultView || window;
+  dpr = Math.min(2, win.devicePixelRatio || 1);
+  W = canvas.clientWidth || 800;
+  H = canvas.clientHeight || 500;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+function baseBrainrot(t) {
+  const g = ctx.createLinearGradient(0, 0, W, H);
+  g.addColorStop(0, "#00838a");
+  g.addColorStop(1, "#ff48b0");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = .28;
+  ctx.strokeStyle = "#fffdf7";
+  ctx.lineWidth = 7;
+  for (let i = -80; i < W + 80; i += 46) {
+    ctx.beginPath();
+    ctx.moveTo(i + Math.sin(t + i) * 24, 0);
+    ctx.lineTo(i + Math.cos(t * 1.4 + i) * 34, H);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+function frame() {
+  const t = (performance.now() - t0) / 1000;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  if (!layers.length) baseBrainrot(t);
+  for (const layer of layers) {
+    const tool = registry.get(layer.tool);
+    if (!tool) continue;
+    ctx.save();
+    try { tool.fn(ctx, layer.params, t, W, H, currentText); } catch (_) {}
+    ctx.restore();
+  }
+  host.requestAnimationFrame(frame);
+}
+
+async function popout() {
+  document.body.classList.toggle("pop");
+  if (!("documentPictureInPicture" in window)) { resize(); return; }
+  if (popWin) { popWin.close(); return; }
+  popWin = await documentPictureInPicture.requestWindow({ width: 900, height: 560 });
+  const style = popWin.document.createElement("style");
+  style.textContent = "html,body{margin:0;height:100%;background:#050505;overflow:hidden}canvas{width:100vw;height:100vh;display:block}";
+  popWin.document.head.appendChild(style);
+  const slot = document.createComment("canvas");
+  canvas.replaceWith(slot);
+  popWin.document.body.appendChild(canvas);
+  host = popWin;
+  resize();
+  popWin.addEventListener("pagehide", () => {
+    slot.replaceWith(canvas);
+    popWin = null;
+    host = window;
+    resize();
+    window.requestAnimationFrame(frame);
+  });
+}
+
+$("pop").onclick = popout;
+$("stop").onclick = async () => { await fetch("stop", { method: "POST" }); setRunState("stopped"); setDot("runDot", false); };
+window.addEventListener("resize", resize);
+resize();
+host.requestAnimationFrame(frame);
+start();
+</script>
+</body>
+</html>

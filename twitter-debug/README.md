@@ -34,46 +34,41 @@ The xctid is a bot-detection signal aimed mostly at the *guest/unauthenticated* 
 
 ## Endpoints (served by `ws-bridge.js` on the single `image_port` 3000, proxied to the agent on 8090)
 
-Reads/observation are **public**. Writes and the mouse-probe require the shared secret (`X-Debug-Secret` header). Browser-driving is lock+cooldown'd so the single in-TEE browser can't be hogged.
+Reads/observation are **public**. Writes (post/like/unlike) and the mouse-probe require the owner's **OAuth3 consent** (Connect X on the dashboard → approve in the OAuth3 popup, which discloses the raw-jar grant). Browser-driving is lock+cooldown'd so the single in-TEE browser can't be hogged.
 
 | endpoint | gate | notes |
 |----------|------|-------|
 | `GET /twitter/health` `/twitter/status` `/twitter/shot` `/twitter/ip` `/twitter/cookies` | public | observe: health, what's holding the browser, live frame, egress IP, loaded cookie names |
-| `POST /twitter/setjar` | secret | load the cookie jar into the TEE (in-memory) |
-| `POST /twitter/api {op}` | timeline public; post/like/unlike secret | blind `rettiwt-api` path |
-| `POST /twitter/browser {task}` | trace public (lock+cooldown); post secret | drive the real browser (vision + xdotool), verified against the CDP trace |
+| `POST /twitter/oauth3/connect` · `GET /twitter/oauth3/status` · `POST /twitter/oauth3/refresh` | public | delegated-jar connect (`caps: ["jar","write"]`); once the owner approves, the jar is pulled from their vault and writes unlock |
+| `POST /twitter/api {op}` | timeline public; post/like/unlike consent | blind `rettiwt-api` path |
+| `POST /twitter/browser {task}` | trace public (lock+cooldown); post consent | drive the real browser (vision + xdotool), verified against the CDP trace |
 | `POST /twitter/reify` | public (lock+cooldown) | rung 1 vs 2 vs 3 side-by-side + diff + verdict |
-| `POST /twitter/engine {op}` | timeline public; post/like/unlike secret | **rung 4 — fully headless, no browser, no xctid** |
-| `POST /twitter/probe` | secret | xdotool diagnostics (geometry, mouse) |
+| `POST /twitter/engine {op}` | timeline public; post/like/unlike consent | **rung 4 — fully headless, no browser, no xctid** |
+| `POST /twitter/probe` | consent | xdotool diagnostics (geometry, mouse) |
 
 ## Security model
 
 Public URL → **read-only by default**:
 
-- `DEBUG_SECRET` env gates all writes (`setjar`, `post`, `like`, `unlike`) and the probe. No secret set → writes hard-disabled.
-- The dashboard has a `🔒 read-only / 🔓 unlocked` pill: paste the secret once (stored in `localStorage`, sent as `X-Debug-Secret`; never baked into the page).
+- Writes (`post`, `like`, `unlike`) and the probe are gated on the owner's OAuth3 consent. The dashboard's **Connect X via OAuth3** button starts a delegated-jar connect (`caps: ["jar","write"]`); the owner approves in the OAuth3 popup, which discloses that this enclave receives the **raw twitter session cookies**. Once approved, the jar is pulled from the vault and writes unlock. Not connected → writes hard-disabled.
+- The dashboard pill shows `🔒 read-only` / `🔓 writes on` and reflects the live OAuth3 connection state — there is no shared secret and no per-request header; the consent IS the gate.
 - Browser-driving (`browser`, `reify`) has a single-flight lock + 20s cooldown so nobody can monopolize the one browser.
 
-The secret lives in `.debug-secret` (git-ignored, perms 600). Rotate by regenerating it and redeploying.
+The consent is revocable from the OAuth3 node at any time. There is **no `DEBUG_SECRET` / shared-secret path** — it was removed in favor of the consent flow.
 
 ## Deploy
 
 Prereqs: `docker`, a `TEE_DAEMON_TOKEN`, a `ZAI_API_KEY` (GLM-4.5V, z.ai coding/paas endpoint), and — for the attested VPN egress — ProtonVPN creds in `secrets.env`.
 
 ```bash
-# generate the write-secret once
-openssl rand -hex 16 > .debug-secret && chmod 600 .debug-secret
-
 # attested: caps:[NET_ADMIN] → the baked-in vpn.sh brings up a full-tunnel ProtonVPN egress
 ZAI_API_KEY=… ./deploy-attested.sh          # posts the image manifest to the daemon
 
-# load the jar (needs the secret)
-curl -X POST https://pod.dstack.soc1024.com/twitter-debug/twitter/setjar \
-  -H "X-Debug-Secret: $(cat .debug-secret)" -H 'content-type: application/json' \
-  --data '{"jar": { "auth_token": "…", "ct0": "…", "twid": "…", … }}'
+# load the jar (consent): open the dashboard → Connect X via OAuth3 → approve in the popup.
+# the raw jar (incl. httpOnly auth_token) is pulled from your OAuth3 vault and sealed in the TEE.
 ```
 
-`deploy.sh` is the non-attested variant (no VPN, no NET_ADMIN). The jar is held **in-memory** in the TEE — reload it after any container restart.
+`deploy.sh` is the non-attested variant (no VPN, no NET_ADMIN). The OAuth3 token is persisted to the `/data` volume, so the jar re-sources itself on container restart — no re-approve, no re-upload.
 
 ### Attested privilege
 

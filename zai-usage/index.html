@@ -1,0 +1,705 @@
+<!doctype html>
+<meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>GLM Usage</title>
+<!--
+  zai-usage — an OAuth3 relying-party app that reads the z.ai GLM Coding Plan usage
+  dashboard (5-hour quota %, weekly quota % + reset, total tokens) through a scoped,
+  revocable token from the OAuth3 node. The app never sees the z.ai API key; the TEE
+  pod does the authenticated read against https://api.z.ai.
+
+  It consumes the `zai` cookie-jar plugin (oauth3-server, NOT yet shipped). The read route:
+    GET /oauth3/api/zai/quota   (header: Authorization: Bearer <scoped token>)
+    → { plugin:"zai", data:{
+        fiveHourPct, weeklyPct, weeklyResetIso, totalTokens7d,
+        models:[{model,tokens}], searchReader?:{used,limit}
+      } }
+  The plugin seeds the z.ai bearer token under jar key `zai_token`, sends
+  `Authorization: Bearer ${zai_token}` against base https://api.z.ai, and composes the
+  four upstream /api/monitor/usage/* endpoints into the one response above. The scoped
+  read is `zai:usage-read`. (This contract is the cross-repo interface — see issue #76.)
+
+  Connect goes through the SHARED ShareKit.oauth3Connect() helper (the #66 pattern): the
+  probe reads via ShareKit.oauth3Read, so a 409 challenge_pending / step-up is retryable
+  (polls) and every other failure is an honest, readable terminal error — no masking.
+  Until the `zai` plugin ships in oauth3-server AND the owner syncs their z.ai session,
+  the live read can't return numbers; this app proves the RENDER PATH with a clearly
+  labeled SAMPLE and shows the REAL connect/read error in the evidence block — never fake
+  numbers, never an empty-green lie.
+-->
+<style>
+/* pod design system · constructivist overprint · grape-acid inking (webhost register) */
+:root{
+  --ink1:#6f57a8; --ink2:#b5d33d; --paper:#f8f7f3; --deep:#2e2745; --overprint:#31491f;
+  --bg:var(--paper); --text:var(--deep);
+  --faint:color-mix(in srgb,var(--deep) 55%,var(--paper));
+  --rule:color-mix(in srgb,var(--deep) 16%,var(--paper));
+  --card:#fff; --block:var(--deep); --block-text:#f8f7f3;
+  --wash1:color-mix(in srgb,var(--ink1) 15%,var(--paper));
+  --wash2:color-mix(in srgb,var(--ink2) 17%,var(--paper));
+  --i1-text:#5a4590; --i2-text:#6d8317;
+  --warn:#a8780c; --warn-wash:color-mix(in srgb,#e0a41a 22%,var(--paper));
+  --sans:"Helvetica Neue",Arial,sans-serif;
+  --cond:"Arial Narrow","Helvetica Neue",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  --off:1px;
+}
+@media (prefers-color-scheme: dark){ :root{
+  --ink1:#9b82d6; --ink2:#cbe85c; --paper:#181524; --deep:#100d1a;
+  --bg:#181524; --text:#e8e3f0;
+  --faint:color-mix(in srgb,#e8e3f0 55%,#181524);
+  --rule:color-mix(in srgb,#e8e3f0 14%,#181524);
+  --card:#221d33; --block:#100d1a; --block-text:#e8e3f0;
+  --wash1:color-mix(in srgb,#9b82d6 20%,#181524);
+  --wash2:color-mix(in srgb,#cbe85c 20%,#181524);
+  --i1-text:#b9a4e2; --i2-text:#d6f07a;
+  --warn:#e0b34a; --warn-wash:color-mix(in srgb,#e0b34a 18%,#181524);
+}}
+:root[data-theme="dark"]{
+  --ink1:#9b82d6; --ink2:#cbe85c; --paper:#181524; --deep:#100d1a;
+  --bg:#181524; --text:#e8e3f0;
+  --faint:color-mix(in srgb,#e8e3f0 55%,#181524);
+  --rule:color-mix(in srgb,#e8e3f0 14%,#181524);
+  --card:#221d33; --block:#100d1a; --block-text:#e8e3f0;
+  --wash1:color-mix(in srgb,#9b82d6 20%,#181524);
+  --wash2:color-mix(in srgb,#cbe85c 20%,#181524);
+  --i1-text:#b9a4e2; --i2-text:#d6f07a;
+  --warn:#e0b34a; --warn-wash:color-mix(in srgb,#e0b34a 18%,#181524);
+}
+:root[data-theme="light"]{
+  --ink1:#6f57a8; --ink2:#b5d33d; --paper:#f8f7f3; --deep:#2e2745;
+  --bg:#f8f7f3; --text:#2e2745;
+  --faint:color-mix(in srgb,#2e2745 55%,#f8f7f3);
+  --rule:color-mix(in srgb,#2e2745 16%,#f8f7f3);
+  --card:#fff; --block:#2e2745; --block-text:#f8f7f3;
+  --wash1:color-mix(in srgb,#6f57a8 15%,#f8f7f3);
+  --wash2:color-mix(in srgb,#b5d33d 17%,#f8f7f3);
+  --i1-text:#5a4590; --i2-text:#6d8317;
+  --warn:#a8780c; --warn-wash:color-mix(in srgb,#e0a41a 22%,#f8f7f3);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 var(--sans)}
+a{color:var(--i1-text)}:focus-visible{outline:2px solid var(--ink2);outline-offset:2px}
+.wrap{max-width:640px;margin:0 auto;padding:0 14px 80px}
+header{padding:26px 4px 16px}
+h1.display{font:800 clamp(28px,5vw,40px)/0.94 var(--cond);text-transform:uppercase;margin:0 0 4px;color:var(--ink1);text-shadow:var(--off) var(--off) 0 var(--ink2);text-wrap:balance}
+.sub{color:var(--faint);font:13px var(--mono);margin:6px 0 0}
+.label{font:500 11px/1 var(--mono);letter-spacing:.16em;text-transform:lowercase;color:var(--faint)}
+.pill{display:inline-flex;align-items:center;gap:6px;font:500 12px/1 var(--mono);padding:4px 10px;border-radius:999px;background:var(--wash1);color:var(--i1-text)}
+.chip{font:12px var(--mono);background:var(--wash1);color:var(--i1-text);padding:2px 7px}
+.btn{display:inline-flex;align-items:center;gap:8px;font:800 14px var(--cond);text-transform:uppercase;letter-spacing:.12em;border:0;padding:12px 22px;cursor:pointer;background:var(--ink1);color:#fff;box-shadow:3px 3px 0 var(--ink2)}
+.btn:disabled{opacity:.5;cursor:default}
+.btn.ghost{background:transparent;color:var(--i1-text);border:3px solid var(--ink1);box-shadow:none;padding:9px 19px}
+.acts{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+.note{margin-top:14px;color:var(--faint);font:13px/1.6 var(--mono);min-height:1em}
+.note.err{color:var(--i2-text)}
+.diag{font:12px/1.6 var(--mono);color:var(--faint);margin-top:12px}
+.diag b.ok{color:var(--i1-text)} .diag b.bad{color:var(--i2-text)}
+.card{background:var(--card);border:2.5px solid var(--ink1);padding:16px 18px;margin:14px 0}
+.card b.title{font:800 18px var(--cond);text-transform:uppercase;letter-spacing:.06em}
+.ev-meta{color:var(--faint);font:12px var(--mono);margin-top:3px}
+.stamp{display:inline-block;font:800 12px var(--cond);text-transform:uppercase;letter-spacing:.24em;padding:6px 11px 6px 14px;transform:rotate(-3deg)}
+.stamp.ok{color:var(--i1-text);border:3px solid var(--ink1)}
+.stamp.err{color:var(--warn);border:3px solid var(--warn)}
+.stamp.sample{color:var(--i2-text);border:3px solid var(--ink2);background:var(--wash2)}
+/* quota grid */
+.quota{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:6px 0 4px}
+.qcell{border:1.5px solid var(--rule);padding:14px 15px;position:relative}
+.qcell .kv{display:block;font:500 11px var(--mono);letter-spacing:.16em;text-transform:lowercase;color:var(--faint);margin-bottom:6px}
+.qcell b{font:800 30px var(--cond);color:var(--ink1);text-shadow:var(--off) var(--off) 0 var(--ink2)}
+.qcell span.u{font:500 12px var(--mono);color:var(--faint);margin-left:4px}
+.qcell .when{display:block;font:12px var(--mono);color:var(--faint);margin-top:6px}
+.bar{height:9px;background:var(--rule);margin:10px 0 2px;position:relative;overflow:hidden}
+.bar > i{display:block;height:100%;background:var(--ink1)}
+.bar.warn > i{background:var(--warn)}
+.halftone{height:12px;margin:12px 0 4px;background:radial-gradient(circle,var(--ink1) 34%,transparent 36%) 0 0/9px 9px,radial-gradient(circle,var(--ink2) 30%,transparent 32%) 4px 5px/9px 9px}
+.models{margin:8px 0 0}
+.models li{list-style:none;display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px dashed var(--rule);font:13px var(--mono)}
+.models li:last-child{border-bottom:0}
+.models li .m{color:var(--text)} .models li .t{color:var(--faint)}
+.block{background:var(--block);color:var(--block-text);border-left:12px solid var(--ink2);padding:14px 18px;font:13px/1.7 var(--mono);overflow-x:auto;margin:12px 0 0;white-space:pre-wrap}
+.block .k{opacity:.55;display:inline-block;min-width:9ch}
+.block .hit{color:color-mix(in srgb,var(--ink2) 55%,#fff)}
+footer{color:var(--faint);font:12px var(--mono);text-align:center;padding:24px 0;border-top:1px solid var(--rule);margin-top:18px}
+</style>
+<div class=wrap>
+  <header>
+    <p class=label>oauth3 · sample app · zai</p>
+    <h1 class=display>GLM Usage</h1>
+    <div class=sub id=sub>Your z.ai Coding Plan quotas — read through a scoped token, never your API key.</div>
+    <div style=margin-top:10px><span class=pill>🔒 scoped <span class=chip style=background:transparent;padding:0>zai:usage-read</span> · key never leaves the TEE</span></div>
+    <div class=acts>
+      <button id=go class=btn>Connect with OAuth3</button>
+      <button id=sample class="btn ghost">Preview sample render</button>
+    </div>
+    <div id=diag class=diag>checking…</div>
+    <div id=note class=note></div>
+  </header>
+  <div id=view></div>
+  <footer id=foot hidden>A sample OAuth3 relying-party app. The OAuth3 node holds the z.ai API key; this app only ever sees a scoped read token — and can do nothing but read your Coding Plan quotas with it. The owner can revoke the link any time.</footer>
+</div>
+<!-- share-kit:inline — canonical source: share-kit/share-kit.js (v0.2.0).
+     Re-run: share-kit/inline.sh zai-usage — do not edit the block by hand. -->
+<script>
+/*
+ * share-kit.js — one shared capability-share UI for the webhost-app suite.
+ *
+ * The apps on this pod are all one primitive — "share a scoped, revocable capability
+ * over something that's mine, without handing over the credential" — but each was
+ * expressing it differently (or not at all). share-kit is the small shared UI that makes
+ * that shape visible and consistent, so learning one app teaches all of them.
+ *
+ * It exports the capability-SHARE pieces (plus the observable ShareHandle that wires them
+ * together), AND the CONNECT half that every relying-party app needs to obtain the scoped
+ * token in the first place:
+ *   1. ShareKit.shareAction(el, {label, onShare})       — the journey-labeled button
+ *   2. ShareKit.capabilityReceipt(el, handle)            — link + scope sentence + revoke + status pill
+ *   3. ShareKit.recipientBanner(el, handleOrOpts)        — top strip on a shared view, honest end-states
+ *   4. ShareKit.oauth3Connect({plugin,app,node,onStatus,probe}) -> Promise<token>
+ *      runs the connect handshake via window.oauth3; if `probe` is given, runs the gated
+ *      read and treats a 409 challenge_pending / step-up as RETRYABLE (polls
+ *      GET /api/challenge/:id, capped ~20×4s, mirroring otterpilot's proven #61 recover),
+ *      re-running the probe on approval; every other failure is TERMINAL and re-thrown so
+ *      the app renders the REAL error (no raw dead-end, no mock/mask).
+ *      ShareKit.oauth3Read(node, path, token) -> Promise<body> is the gated-read primitive
+ *      the probe calls; it throws the step-up marker on 409 challenge_pending.
+ *
+ * DESIGN SYSTEM: share-kit is a *component* layer, not a token layer — exactly like the
+ * pod's components.css. It CONSUMES the host app's pod design tokens (--ink1/--ink2/
+ * --paper/--deep/--wash1/--wash2/--i1-text/--i2-text/--warn/--warn-wash/--block/
+ * --block-text/--rule/--faint/--card/--cond/--mono/--sans/--off), so it inherits each
+ * app's own inking (watermelon classic, grape-acid webhost, …) and light/dark register.
+ * Your app must already define them (inline tokens.css / your :root block) — see README.
+ * All styles are scoped under `.sk` and every class is `.sk-*`, so the kit never collides
+ * with a host app's own .btn / .pill / .card classes.
+ *
+ * No dependencies, no build, no network. Adopt by inlining this one file into your app's
+ * index.html (run share-kit/inline.sh <app>).
+ */
+(function () {
+  "use strict";
+  var VERSION = "0.2.0";
+
+  var CSS = [
+/* base — consumes host tokens; scoped so it never touches host styles */
+".sk{font:15px/1.6 var(--sans);color:var(--text)}",
+".sk *{box-sizing:border-box}",
+".sk :focus-visible{outline:2px solid var(--ink2);outline-offset:2px}",
+".sk .sk-err{font:13px/1.5 var(--mono);color:var(--i2-text);margin-top:8px;min-height:1px}",
+/* buttons — hard-edged, two-ink shadow; same grammar as components.css .btn */
+".sk .sk-btn{display:inline-flex;align-items:center;gap:8px;font:800 14px var(--cond);text-transform:uppercase;letter-spacing:.12em;border:0;padding:12px 22px;cursor:pointer;background:var(--ink1);color:#fff;box-shadow:3px 3px 0 var(--ink2);border-radius:0}",
+".sk .sk-btn:disabled{opacity:.5;cursor:default}",
+".sk .sk-btn.danger{background:var(--ink2);color:var(--deep);box-shadow:3px 3px 0 var(--ink1)}",
+".sk .sk-btn.quiet{background:transparent;color:var(--text);border:1px solid var(--rule);box-shadow:none;font:600 13px var(--sans);letter-spacing:0;text-transform:none;padding:9px 14px}",
+/* status pills — mono; ok/warn/bad (warn is the only third ink) */
+".sk .sk-pill{display:inline-flex;align-items:center;gap:6px;font:500 12px/1 var(--mono);padding:4px 10px;border-radius:999px;text-transform:capitalize}",
+".sk .sk-pill.ok{background:var(--wash1);color:var(--i1-text)}",
+".sk .sk-pill.warn{background:var(--warn-wash);color:var(--warn)}",
+".sk .sk-pill.bad{background:var(--wash2);color:var(--i2-text)}",
+/* capability receipt — white card with an ink1 frame, like components.css .card */
+".sk .sk-card{background:var(--card);border:2.5px solid var(--ink1);padding:16px 18px}",
+".sk .sk-receipt-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}",
+".sk .sk-title{font:800 16px var(--cond);text-transform:uppercase;letter-spacing:.08em}",
+".sk .sk-scope{font:13px/1.5 var(--mono);color:var(--text);margin:10px 0}",
+".sk .sk-link-row{display:flex;gap:8px;align-items:stretch}",
+".sk .sk-link{flex:1;min-width:0;font:12px var(--mono);padding:8px 10px;border:1.5px solid var(--rule);background:var(--paper);color:var(--text);border-radius:0}",
+".sk .sk-acts{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}",
+/* recipient banner — full-width top strip; wash ground + ink1 rule, bad/warn variants */
+".sk.sk-banner{display:block;background:var(--wash1);border-bottom:2.5px solid var(--ink1);padding:10px 16px;font:13px/1.5 var(--mono);color:var(--text)}",
+".sk.sk-banner.bad{background:var(--wash2);border-bottom-color:var(--ink2)}",
+".sk.sk-banner.warn{background:var(--warn-wash);border-bottom-color:var(--warn)}",
+".sk .sk-banner-inner{max-width:920px;margin:0 auto}",
+".sk .sk-cap{font-weight:700;color:var(--i1-text)}",
+".sk .sk-sep{color:var(--faint)}"
+  ].join("\n");
+
+  // inject <style id=share-kit-css> once. root defaults to document.head.
+  function init(root) {
+    var r = root || document.head;
+    if (!r || r.querySelector("#share-kit-css")) return;
+    var s = document.createElement("style");
+    s.id = "share-kit-css";
+    s.textContent = CSS;
+    r.appendChild(s);
+  }
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+  function el(tag, cls, txt) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (txt != null) e.textContent = txt;
+    return e;
+  }
+
+  /*
+   * ShareHandle — the live, observable state of one shared capability.
+   *
+   * The app creates a handle after it mints a token; BOTH the owner-side receipt and the
+   * recipient-side banner subscribe to it, so an owner revoking flips the recipient view
+   * to the honest revoked state on its next render. Fields:
+   *   link       — the ?token= (or ?code=) URL the recipient opens
+   *   scope      — plain-English scope sentence (MUST be true; see README)
+   *   owner      — who shared ("you" / a handle)
+   *   thing      — what was shared ("X feed" / "one calendar event" / "live meeting")
+   *   capability — recipient capability phrase ("read-only" / "edit this event" / …)
+   *   status     — "active" | "revoked" | "expired"
+   *   onRevoke   — async () => {} that performs the REAL revoke server-side and resolves
+   *                only once confirmed. If it throws, the status is NOT flipped (the
+   *                receipt re-enables and surfaces the real error — nothing masked).
+   */
+  function handle(opts) {
+    opts = opts || {};
+    var h = {
+      version: VERSION,
+      link: opts.link || "",
+      scope: opts.scope || "",
+      owner: opts.owner || "the owner",
+      thing: opts.thing || "view",
+      capability: opts.capability || "read-only",
+      status: opts.status || "active",
+      onRevoke: typeof opts.onRevoke === "function" ? opts.onRevoke : null,
+      _subs: new Set(),
+      subscribe: function (fn) { this._subs.add(fn); fn(this); return this; },
+      set: function (patch) { Object.assign(this, patch); this._subs.forEach(function (f) { f(h); }); return this; },
+      revoke: async function () {
+        if (this.status !== "active") return;
+        if (this.onRevoke) await this.onRevoke(); // may throw — propagate, do NOT flip
+        this.set({ status: "revoked" });
+      }
+    };
+    return h;
+  }
+
+  /*
+   * 1) SHARE ACTION — the primary button, labeled by the JOURNEY ("Share my feed →"),
+   *    never by the mechanism ("mint token"). Renders into `el`.
+   *    opts.label   — journey label
+   *    opts.onShare — async () => ShareHandle ; mint the capability however your app does
+   *    opts.onShared(handle) — called once minted (typically render the receipt here)
+   *    While minting the button is disabled; a mint failure is shown inline (no silent stall).
+   */
+  function shareAction(el, opts) {
+    init(); opts = opts || {};
+    var host = typeof el === "string" ? document.getElementById(el) : el;
+    host.className = "sk"; host.innerHTML = "";
+    var btn = el2(host, "button", "sk-btn");
+    btn.type = "button"; btn.textContent = opts.label || "Share →";
+    var err = el2(host, "div", "sk-err");
+    btn.addEventListener("click", async function () {
+      btn.disabled = true; var prev = btn.textContent; btn.textContent = "Sharing…"; err.textContent = "";
+      try {
+        var h = await opts.onShare();
+        btn.textContent = "Shared ✓";
+        if (typeof opts.onShared === "function") opts.onShared(h);
+      } catch (e) {
+        btn.disabled = false; btn.textContent = prev;
+        err.textContent = String((e && e.message) || e);
+      }
+    });
+    return { button: btn };
+  }
+  function el2(parent, tag, cls) { var e = el(tag, cls); parent.appendChild(e); return e; }
+
+  /*
+   * 2) CAPABILITY RECEIPT — link + plain-English scope sentence + status pill + Revoke.
+   *    Renders into `el` from a ShareHandle and re-renders on any handle change, so a
+   *    successful revoke flips the pill to "revoked" and disables Revoke.
+   */
+  function capabilityReceipt(host, h) {
+    init();
+    host = typeof host === "string" ? document.getElementById(host) : host;
+    host.className = "sk";
+    h.subscribe(render);
+    function render(hh) {
+      var st = hh.status;
+      var pillCls = st === "active" ? "sk-pill ok" : st === "expired" ? "sk-pill warn" : "sk-pill bad";
+      host.innerHTML =
+        '<div class="sk-card">' +
+          '<div class="sk-receipt-head">' +
+            '<b class="sk-title">Shared link</b>' +
+            '<span class="' + pillCls + '">' + esc(st) + '</span>' +
+          '</div>' +
+          '<div class="sk-scope">' + esc(hh.scope) + '</div>' +
+          '<div class="sk-link-row">' +
+            '<input class="sk-link" readonly value="' + esc(hh.link) + '">' +
+            '<button class="sk-btn quiet" type="button" data-act="copy">copy</button>' +
+          '</div>' +
+          '<div class="sk-acts">' +
+            '<button class="sk-btn danger" type="button" data-act="revoke"' + (st === "active" ? "" : " disabled") + '>' +
+              (st === "active" ? "Revoke" : "Revoked") + '</button>' +
+          '</div>' +
+          '<div class="sk-err" data-role="err"></div>' +
+        '</div>';
+      var copyBtn = host.querySelector('[data-act="copy"]');
+      var revokeBtn = host.querySelector('[data-act="revoke"]');
+      var errEl = host.querySelector('[data-role="err"]');
+      copyBtn.addEventListener("click", function () {
+        var inp = host.querySelector(".sk-link");
+        inp.select(); inp.setSelectionRange(0, 99999);
+        try {
+          navigator.clipboard.writeText(inp.value);
+          copyBtn.textContent = "copied";
+          setTimeout(function () { copyBtn.textContent = "copy"; }, 1200);
+        } catch (_) { try { document.execCommand("copy"); } catch (_) {} }
+      });
+      revokeBtn.addEventListener("click", async function () {
+        revokeBtn.disabled = true; var prev = revokeBtn.textContent; revokeBtn.textContent = "Revoking…"; errEl.textContent = "";
+        try { await h.revoke(); }
+        catch (e) { revokeBtn.disabled = false; revokeBtn.textContent = prev; errEl.textContent = String((e && e.message) || e); }
+      });
+    }
+    return h;
+  }
+
+  /*
+   * 3) RECIPIENT BANNER — top strip on a shared view.
+   *    "You're viewing <owner>'s shared <thing> · <capability>", and an HONEST end-state
+   *    when revoked / expired / gone — never a silent stall (anti-hollow-green, applied to UX).
+   *    Pass a ShareHandle to stay in sync with an owner-side revoke, or a static opts
+   *    object ({owner, thing, capability, status}) to render once.
+   */
+  function recipientBanner(host, h) {
+    init();
+    host = typeof host === "string" ? document.getElementById(host) : host;
+    function render(hh) {
+      var state = hh.status || "active";
+      var cap = hh.capability || "read-only";
+      var cls = "sk sk-banner";
+      var body;
+      if (state === "active") {
+        body = "You're viewing <b>" + esc(hh.owner) + "</b>'s shared " + esc(hh.thing) +
+               ' <span class="sk-sep">·</span> <span class="sk-cap">' + esc(cap) + "</span>";
+      } else if (state === "revoked") {
+        cls += " bad";
+        body = "This share was <b>revoked by the owner</b>. The link no longer works.";
+      } else if (state === "expired") {
+        cls += " warn";
+        body = "This share has <b>expired</b>. Ask the owner for a fresh link.";
+      } else { // "gone" or anything unknown — honest, doesn't over-claim a specific reason
+        cls += " bad";
+        body = "This share is <b>no longer available</b> — it was revoked or has expired.";
+      }
+      host.className = cls;
+      host.innerHTML = '<div class="sk-banner-inner">' + body + "</div>";
+    }
+    if (h && typeof h.subscribe === "function") { h.subscribe(render); return h; }
+    render(Object.assign({ capability: "read-only", status: "active" }, h || {}));
+    return h || {};
+  }
+
+  /*
+   * 4) OAUTH3 CONNECT — the shared connect handshake + gated-read recovery.
+   *
+   * Every relying-party app on the pod needs the same thing: ask the OAuth3 wallet for a
+   * scoped token, then read through it. They were each hand-rolling it five different ways —
+   * and timeline-peek DEAD-ENDED on a step-up, rendering the raw `challenge_pending` string
+   * in pink with no recovery. This is the one shared path. Two pieces:
+   *
+   *   oauth3Connect({plugin, app, node, onStatus, probe}) -> Promise<token>
+   *     - runs window.oauth3.connect() (the wallet/extension carries consent + approval and
+   *       hands back a bare token string). If no wallet is present, throws a readable terminal
+   *       error (NOT a silent stall).
+   *     - if `probe(token)` is given, runs it AFTER connect. A probe that rejects with the
+   *       step-up marker (409 challenge_pending + challengeId, see oauth3Read) is RETRYABLE:
+   *       onStatus("waiting-approval") fires, the challenge is polled (capped ~20×4s), and the
+   *       probe is re-run on approval. denied/expired/unknown/timeout, and EVERY other probe
+   *       error, is TERMINAL — re-thrown so the app surfaces the real message. No mock, no
+   *       mask, no raw dead-end.
+   *     - onStatus(state, detail) lets the app render the states: "connecting" → "approved" →
+   *       "reading" → ("waiting-approval" → "reading")*. Resolves with the token once a probe
+   *       (if any) passes; with no probe, resolves right after connect.
+   *
+   *   oauth3Read(node, path, token) -> Promise<body>
+   *     - the gated-read primitive the probe calls (e.g. "/api/twitter/feed"). 409
+   *       challenge_pending + challengeId throws the RETRYABLE marker; any other non-2xx
+   *       throws a TERMINAL Error carrying the node's real {error}; 2xx returns the parsed
+   *       body. A network failure throws a terminal "couldn't reach the oauth3 node" error.
+   *
+   * The step-up challenge poll mirrors otterpilot's proven recover pattern (webhost-apps
+   * #61/#62): the server holds a guarded read for out-of-band approval (RFC 0005) and the
+   * app bounces back automatically on approval instead of going down.
+   */
+  function oauth3Read(node, path, token) {
+    return (async function () {
+      node = String(node || "").replace(/\/$/, "");
+      var r;
+      try {
+        r = await fetch(node + path, { headers: { Authorization: "Bearer " + token } });
+      } catch (e) {
+        var ne = new Error("couldn't reach the oauth3 node (" + ((e && e.message) || e) + ")");
+        ne.terminal = true; throw ne;
+      }
+      var body = null;
+      try { body = await r.json(); } catch (_) { body = null; }
+      if (r.ok) return body || {};
+      // step-up (RFC 0005): a 409 with {error:'challenge_pending', challengeId} is retryable.
+      if (r.status === 409 && body && body.error === "challenge_pending" && body.challengeId) {
+        var se = new Error("challenge_pending");
+        se.oauth3StepUp = true; se.challengeId = body.challengeId; throw se;
+      }
+      // everything else is terminal — surface the node's real error, never mask it.
+      var te = new Error((body && (body.error || body.message)) || (path + " " + r.status));
+      te.status = r.status; te.terminal = true; throw te;
+    })();
+  }
+
+  // Poll GET {node}/api/challenge/:id until decided, or the cap is hit (~20×4s ≈ 80s).
+  // Returns "approved" | "denied" | "expired" | "unknown" | "timeout". onTick(status, n)
+  // lets the caller keep a "waiting…" banner live each round. Network blips are treated as
+  // pending (keep polling) so a transient drop doesn't kill an otherwise-recoverable read.
+  function pollChallenge(node, id, token, onTick) {
+    node = String(node || "").replace(/\/$/, "");
+    var attempts = 20, delay = 4000;
+    return new Promise(function (resolve) {
+      var n = 0;
+      (async function loop() {
+        while (n < attempts) {
+          n++;
+          var st = "pending";
+          try {
+            var r = await fetch(node + "/api/challenge/" + encodeURIComponent(id),
+              { headers: { Authorization: "Bearer " + token } });
+            if (r.status === 404) { if (onTick) onTick("unknown", n); return resolve("unknown"); }
+            var j = null; try { j = await r.json(); } catch (_) {}
+            st = (j && (j.status || (j.data && j.data.status))) || (r.ok ? "pending" : "unknown");
+          } catch (e) { st = "pending"; }
+          if (onTick) onTick(st, n);
+          if (st === "approved" || st === "denied" || st === "expired" || st === "unknown") return resolve(st);
+          await new Promise(function (rr) { setTimeout(rr, delay); });
+        }
+        resolve("timeout");
+      })();
+    });
+  }
+
+  function oauth3Connect(opts) {
+    opts = opts || {};
+    var node = String(opts.node || "").replace(/\/$/, "");
+    var onStatus = typeof opts.onStatus === "function" ? opts.onStatus : function () {};
+    var probe = typeof opts.probe === "function" ? opts.probe : null;
+    var MAX_PROBE_ROUNDS = 3;
+    return (async function () {
+      if (typeof window === "undefined" || !window.oauth3 || typeof window.oauth3.connect !== "function") {
+        var we = new Error("No OAuth3 wallet found — install the oauth3 extension and reload.");
+        we.terminal = true; throw we;
+      }
+      onStatus("connecting", { plugin: opts.plugin });
+      var got;
+      try {
+        got = await window.oauth3.connect({ plugin: opts.plugin, app: opts.app, subject: opts.subject, node: node });
+      } catch (e) {
+        var ce = new Error(String((e && e.message) || e)); ce.terminal = true; throw ce;
+      }
+      // The wallet resolves with a bare token string (provider-inject.js). Be defensive about
+      // an object {token}/{error} shape too in case a future wallet returns one.
+      var token = (got && typeof got === "object") ? (got.error ? null : got.token) : got;
+      if (!token || typeof token !== "string") {
+        var ne = new Error((got && got.error) || "connect returned no token (approval denied or cancelled)");
+        ne.terminal = true; throw ne;
+      }
+      onStatus("approved", { plugin: opts.plugin });
+      if (!probe) return token; // pure-handshake mode
+
+      for (var i = 0; i < MAX_PROBE_ROUNDS; i++) {
+        onStatus("reading", { round: i + 1 });
+        try {
+          await probe(token);
+          return token; // read passed — token is known-good
+        } catch (e) {
+          if (e && e.oauth3StepUp && e.challengeId) {
+            onStatus("waiting-approval", { challengeId: e.challengeId, round: i + 1 });
+            var decision = await pollChallenge(node, e.challengeId, token, function (st, k) {
+              onStatus("waiting-approval", { challengeId: e.challengeId, round: i + 1, poll: st, attempt: k });
+            });
+            if (decision === "approved") continue; // retry the probe
+            var de = new Error("step-up " + decision +
+              " — the read needs approval that didn't come through. Try Connect again.");
+            de.terminal = true; throw de;
+          }
+          throw e; // terminal — the app renders the honest, real error
+        }
+      }
+      // The read kept re-triggering step-up past the retry cap — honest terminal fail.
+      var ex = new Error("the read kept requiring step-up approval — try Connect again.");
+      ex.terminal = true; throw ex;
+    })();
+  }
+
+  window.ShareKit = {
+    VERSION: VERSION,
+    CSS: CSS,
+    init: init,
+    handle: handle,
+    shareAction: shareAction,
+    capabilityReceipt: capabilityReceipt,
+    recipientBanner: recipientBanner,
+    oauth3Connect: oauth3Connect,
+    oauth3Read: oauth3Read,
+    esc: esc
+  };
+})();
+
+</script>
+<!-- /share-kit:inline -->
+
+<script>
+const NODE = location.origin + "/oauth3";
+const PLUGIN = "zai", APP = "zai-usage", READ_PATH = "/api/zai/quota", BUILD = "b1";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => (s == null ? "" : String(s)).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmtNum = (n) => Number(n||0).toLocaleString();
+const fmtTok = (n) => { n = Number(n||0); return n >= 1e9 ? (n/1e9).toFixed(2)+"B" : n >= 1e6 ? (n/1e6).toFixed(1)+"M" : n >= 1e3 ? (n/1e3).toFixed(1)+"K" : String(n); };
+const setNote = (msg, err) => { const n = $("note"); n.className = "note" + (err ? " err" : ""); n.textContent = msg || ""; };
+
+// ---- diagnostics: oauth3 node up? zai plugin registered? extension present? ----
+async function diag() {
+  let inst = "…", plugin = "";
+  try {
+    const h = await (await fetch(NODE + "/api/health")).json();
+    const plugins = (h.plugins || []);
+    inst = '<b class=ok>reachable</b>';
+    plugin = plugins.includes(PLUGIN)
+      ? ' · zai plugin <b class=ok>registered</b>'
+      : ' · zai plugin <b class=bad>not registered</b> (oauth3-server zai plugin pending — see issue #76)';
+  } catch (e) { inst = '<b class=bad>unreachable</b> (' + esc(e.message || e) + ')'; }
+  const ext = window.oauth3 ? 'extension <b class=ok>present</b>' : 'extension <b class=bad>absent — Connect will ask you to install the oauth3 wallet</b>';
+  $("diag").innerHTML = "build " + BUILD + " · instance: " + inst + plugin + " · " + ext;
+}
+
+// ---- render the quota cards (shared by LIVE + SAMPLE; ev.source tells which) ----
+// Response shape (the contract): {plugin:"zai", data:{fiveHourPct, weeklyPct,
+//   weeklyResetIso, totalTokens7d, models:[{model,tokens}], searchReader?:{used,limit}}}.
+function renderQuota(data, ev) {
+  const d = data || {};
+  const fh = Number(d.fiveHourPct) || 0;
+  const wk = Number(d.weeklyPct) || 0;
+  const toks = Number(d.totalTokens7d) || 0;
+  const reset = d.weeklyResetIso ? new Date(d.weeklyResetIso) : null;
+  const resetTxt = reset && !isNaN(reset) ? reset.toLocaleString(undefined, {month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "—";
+  const models = Array.isArray(d.models) ? d.models : [];
+  const sr = d.searchReader || null;
+  const stampCls = ev.source === "sample" ? "sample" : "ok";
+  const stampTxt = ev.source === "sample" ? "sample · not live" : "live";
+  const headline = ev.source === "sample" ? "GLM Coding Plan usage (sample render)" : "GLM Coding Plan usage";
+  const pct = (v) => Math.max(0, Math.min(100, v));
+  let cards =
+    '<div class=card>' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">' +
+        '<div><b class=title>' + esc(headline) + '</b>' +
+        '<div class=ev-meta>z.ai Coding Plan · <span class=chip>zai:usage-read</span></div></div>' +
+        '<span class="stamp ' + stampCls + '">' + stampTxt + '</span>' +
+      '</div>' +
+      '<div class=halftone></div>' +
+      '<div class=quota>' +
+        '<div class=qcell><span class=kv>5-hour quota</span><b>' + pct(fh) + '<span class=u>% used</span></b>' +
+          '<div class=bar' + (fh >= 80 ? " warn" : "") + '><i style=width:' + pct(fh) + '%></i></div></div>' +
+        '<div class=qcell><span class=kv>weekly quota</span><b>' + pct(wk) + '<span class=u>% used</span></b>' +
+          '<div class=bar' + (wk >= 80 ? " warn" : "") + '><i style=width:' + pct(wk) + '%></i></div>' +
+          '<span class=when>resets ' + esc(resetTxt) + '</span></div>' +
+        '<div class=qcell><span class=kv>tokens · last 7d</span><b>' + esc(fmtTok(toks)) + '</b><span class=u>total</span></div>' +
+        '<div class=qcell><span class=kv>web search / reader</span><b>' + (sr ? esc(sr.used + " / " + sr.limit) : "—") + '</b>' +
+          (sr && sr.unit ? '<span class=u>' + esc(sr.unit) + '</span>' : '') + '</div>' +
+      '</div>';
+  if (models.length) {
+    cards += '<ul class=models>' + models.map(m =>
+      '<li><span class=m>' + esc(m.model || "?") + '</span><span class=t>' + fmtTok(m.tokens) + ' tokens</span></li>'
+    ).join("") + '</ul>';
+  }
+  if (ev.source === "sample") {
+    cards += '<p style="margin:12px 0 0;color:var(--warn);font:12px/1.6 var(--mono)">SAMPLE — not live data. Proves the render path only. Real numbers come from Connect once the oauth3-server <code>zai</code> plugin ships and the z.ai session is synced.</p>';
+  }
+  cards += '</div>';
+  $("foot").hidden = false;
+  $("view").innerHTML = cards + evidence(ev);
+}
+
+function evidence(ev) {
+  const rows = [];
+  rows.push('<span class=k>source</span><span class=hit>' + esc(ev.source) + '</span>');
+  rows.push('<span class=k>endpoint</span>GET ' + esc(ev.endpoint || (NODE + READ_PATH)));
+  if (ev.status != null) rows.push('<span class=k>status</span>' + esc(ev.status));
+  if (ev.token) rows.push('<span class=k>token</span>' + esc(ev.token));
+  if (ev.reason) rows.push('<span class=k>reason</span>' + esc(ev.reason));
+  return '<div class=block>' + rows.join("\n") + '</div>';
+}
+
+// ---- honest error state: the REAL error is shown, no fake numbers, no empty-green. ----
+function renderError(ev) {
+  $("foot").hidden = false;
+  $("view").innerHTML =
+    '<div class=card>' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">' +
+        '<div><b class=title>No usage to show</b>' +
+        '<div class=ev-meta>connect or read failed · <span class=chip>zai:usage-read</span></div></div>' +
+        '<span class="stamp err">error</span>' +
+      '</div>' +
+      '<p style="margin:14px 0 0;color:var(--warn);font:13px/1.6 var(--mono)">' + esc(humanize(ev.reason)) + '</p>' +
+    '</div>' +
+    evidence(ev);
+}
+
+function humanize(msg){
+  const m = String(msg||"").trim();
+  if(!m) return "Connect or read failed for an unknown reason.";
+  return m;
+}
+
+// ---- connect: SHARED ShareKit.oauth3Connect helper (the #66 pattern). ----
+//   probe = ShareKit.oauth3Read(READ_PATH). A 409 challenge_pending / step-up is retryable
+//   (the helper polls); every other failure is a terminal error we render honestly.
+async function onConnect() {
+  setNote("");
+  if(!window.oauth3){ setNote("No OAuth3 wallet found — install the oauth3 extension and reload.", true); return; }
+  $("go").disabled = true; $("sample").disabled = true;
+  try {
+    const token = await ShareKit.oauth3Connect({
+      plugin: PLUGIN, app: APP, node: NODE,
+      onStatus(state){
+        if(state==="connecting")         setNote("Asking your wallet for a scoped zai token…");
+        else if(state==="reading")        setNote("Reading your quotas with the scoped token…");
+        else if(state==="waiting-approval") setNote("Waiting for your approval in the OAuth3 console…");
+      },
+      probe: async (tok) => {
+        const body = await ShareKit.oauth3Read(NODE, READ_PATH, tok);
+        const data = body && body.data;
+        if(!data) throw new Error("quota response missing `data` (plugin shape mismatch)");
+        renderQuota(data, { source:"live", endpoint:NODE+READ_PATH, token: tok.slice(0,12)+"…" });
+      }
+    });
+    setNote("");
+    $("go").hidden = true;
+  } catch(e){
+    const reason = String((e && e.message) || e || "");
+    renderError({ source:"error", endpoint:NODE+READ_PATH, reason });
+    setNote("Connect or live read failed — see evidence for the real error.", true);
+    $("go").disabled = false; $("sample").disabled = false;
+  }
+}
+
+// ---- SAMPLE render: proves the card render path without a live jar/plugin. ----
+//   Clearly labeled "SAMPLE — not live data". Numbers reflect a typical Coding Plan.
+const SAMPLE = {
+  fiveHourPct: 3,
+  weeklyPct: 32,
+  weeklyResetIso: new Date(Date.now() + 3*864e5).toISOString(),
+  totalTokens7d: 291_000_000,
+  models: [
+    { model:"GLM-4.6", tokens: 198_000_000 },
+    { model:"GLM-4.5-Air", tokens: 71_000_000 },
+    { model:"GLM-4.5V", tokens: 22_000_000 }
+  ],
+  searchReader: { used: 142, limit: 500, unit:"queries / mo" }
+};
+function onSample(){
+  setNote("");
+  renderQuota(SAMPLE, { source:"sample", endpoint:NODE+READ_PATH });
+}
+
+$("go").addEventListener("click", onConnect);
+$("sample").addEventListener("click", onSample);
+diag();
+</script>

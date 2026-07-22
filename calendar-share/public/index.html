@@ -1,0 +1,409 @@
+<!doctype html>
+<meta charset=utf-8>
+<!-- /calendar-share/ is where the tee-daemon mounts this project; pin relative fetches
+     here so a stray relative URL can't escape to a sibling app (the #16 trap). The page
+     still talks to the oauth3 node at location.origin + "/oauth3" — an absolute path,
+     so <base> only affects the rare relative ref, never the oauth3 calls. -->
+<base href="/calendar-share/">
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Calendar Share</title>
+<!--
+  The write-side sibling of timeline-peek. Two modes, one file:
+   • owner  — connect as the synced Google Calendar account, list its events, and for
+              a chosen event MINT A SHARE CODE: a scoped token carrying the structured
+              capability "write:event:<id>". Rendered as a share URL (?code=<token>&event=<id>)
+              that lets whoever opens it edit THAT ONE EVENT on the account's behalf —
+              and nothing else. Revocable.
+   • share  — ?code=<token>&event=<id> in the URL: no wallet needed. The page loads that
+              one event and offers an edit form that PUTs through POST /api/google-calendar/event/:id
+              with the scoped token. The recipient can edit this event and reach nothing
+              else on the calendar; the cap is enforced exactly (write:event:A ≠ write:event:B).
+
+  Only ever talks to the OAuth3 node's /api/google-calendar/* — the account's google.com
+  cookies stay sealed in the TEE. Real errors are surfaced, never masked.
+
+  Endpoint shape is defined by oauth3-server#69 (google-calendar plugin + write:event:<id>
+  cap + POST /api/google-calendar/event/:id). Until #69 ships on staging AND the cube@
+  jar is synced, the live data path returns an honest "not yet captured" error from the
+  plugin — the delegation envelope (cap check, audit, attenuation) is verifiable today.
+-->
+<style>
+/* pod design system · constructivist overprint · grape-acid inking (webhost register) */
+:root{
+  --ink1:#6f57a8; --ink2:#b5d33d; --paper:#f8f7f3; --deep:#2e2745; --overprint:#31491f;
+  --bg:var(--paper); --text:var(--deep);
+  --faint:color-mix(in srgb,var(--deep) 55%,var(--paper));
+  --rule:color-mix(in srgb,var(--deep) 16%,var(--paper));
+  --card:#fff; --block:var(--deep); --block-text:#f8f7f3;
+  --wash1:color-mix(in srgb,var(--ink1) 15%,var(--paper));
+  --wash2:color-mix(in srgb,var(--ink2) 17%,var(--paper));
+  --i1-text:#5a4590; --i2-text:#6d8317;
+  --warn:#a8780c; --warn-wash:color-mix(in srgb,#e0a41a 22%,var(--paper));
+  --sans:"Helvetica Neue",Arial,sans-serif;
+  --cond:"Arial Narrow","Helvetica Neue",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  --off:1px;
+}
+/* light mode only — per issue (pod design system, light mode) */
+:root[data-theme="light"]{
+  --ink1:#6f57a8; --ink2:#b5d33d; --paper:#f8f7f3; --deep:#2e2745;
+  --bg:#f8f7f3; --text:#2e2745;
+  --faint:color-mix(in srgb,#2e2745 55%,#f8f7f3);
+  --rule:color-mix(in srgb,#2e2745 16%,#f8f7f3);
+  --card:#fff; --block:#2e2745; --block-text:#f8f7f3;
+  --wash1:color-mix(in srgb,#6f57a8 15%,#f8f7f3);
+  --wash2:color-mix(in srgb,#b5d33d 17%,#f8f7f3);
+  --i1-text:#5a4590; --i2-text:#6d8317;
+  --warn:#a8780c; --warn-wash:color-mix(in srgb,#e0a41a 22%,#f8f7f3);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 var(--sans)}
+a{color:var(--i1-text)}:focus-visible{outline:2px solid var(--ink2);outline-offset:2px}
+.wrap{max-width:640px;margin:0 auto;padding:0 14px 70px}
+header{padding:26px 4px 16px}
+h1.display{font:800 clamp(28px,5vw,40px)/0.94 var(--cond);text-transform:uppercase;margin:0 0 4px;color:var(--ink1);text-shadow:var(--off) var(--off) 0 var(--ink2);text-wrap:balance}
+.sub{color:var(--faint);font:13px var(--mono);margin:6px 0 0}
+.label{font:500 11px/1 var(--mono);letter-spacing:.16em;text-transform:lowercase;color:var(--faint)}
+.pill{display:inline-flex;align-items:center;gap:6px;font:500 12px/1 var(--mono);padding:4px 10px;border-radius:999px;background:var(--wash1);color:var(--i1-text)}
+.pill.bad{background:var(--wash2);color:var(--i2-text)}
+.chip{font:12px var(--mono);background:var(--wash1);color:var(--i1-text);padding:2px 7px}
+.btn{display:inline-flex;align-items:center;gap:8px;font:800 14px var(--cond);text-transform:uppercase;letter-spacing:.12em;border:0;padding:12px 22px;cursor:pointer;background:var(--ink1);color:#fff;box-shadow:3px 3px 0 var(--ink2)}
+.btn:disabled{opacity:.5;cursor:default}
+.btn.danger{background:var(--ink2);color:var(--deep);box-shadow:3px 3px 0 var(--ink1)}
+.btn.ghost{background:transparent;color:var(--i1-text);border:3px solid var(--ink1);box-shadow:none;padding:9px 19px}
+.btn.quiet{background:transparent;color:var(--text);border:1px solid var(--rule);box-shadow:none;font:600 13px var(--sans);letter-spacing:0;text-transform:none;padding:9px 16px}
+.note{margin-top:14px;color:var(--faint);font:13px/1.6 var(--mono)}
+.note.err{color:var(--i2-text)}
+.card{background:var(--card);border:2.5px solid var(--ink1);padding:16px 18px;margin:14px 0}
+.card b.title{font:800 16px var(--cond);text-transform:uppercase;letter-spacing:.08em}
+.block{background:var(--block);color:var(--block-text);border-left:12px solid var(--ink2);padding:14px 18px;font:13px/1.7 var(--mono);overflow-x:auto;margin:12px 0}
+.block .k{opacity:.55;display:inline-block;min-width:9ch}
+.block .hit{color:color-mix(in srgb,var(--ink2) 55%,#fff)}
+.row{display:flex;gap:12px;align-items:flex-start;padding:13px 4px;border-bottom:1px solid var(--rule)}
+.row:last-child{border-bottom:0}
+.ev-meta{color:var(--faint);font:13px var(--mono);margin-top:2px}
+.ev-id{font:11px var(--mono);color:var(--faint);word-break:break-all}
+label.fld{display:block;margin:12px 0 0}
+label.fld>span{display:block;font:500 11px var(--mono);letter-spacing:.14em;text-transform:lowercase;color:var(--faint);margin-bottom:4px}
+input,textarea{width:100%;font:15px var(--sans);padding:9px 11px;border:1.5px solid var(--rule);background:var(--paper);color:var(--text);border-radius:0}
+input:focus,textarea:focus{outline:2px solid var(--ink2);outline-offset:1px;border-color:var(--ink1)}
+textarea{resize:vertical;min-height:64px}
+.share-url{display:flex;gap:8px;align-items:center}
+.share-url input{font:12px var(--mono)}
+.acts{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+footer{color:var(--faint);font:12px var(--mono);text-align:center;padding:24px 0;border-top:1px solid var(--rule);margin-top:18px}
+</style>
+<div class=wrap>
+  <header>
+    <p class=label>oauth3 · edit-on-behalf demo</p>
+    <h1 class=display>Calendar Share</h1>
+    <div class=sub id=sub>Mint a link that edits ONE event on behalf of the account.</div>
+    <div style=margin-top:10px><span class=pill>🔒 scoped <span class=chip style=background:transparent;padding:0>write:event:&lt;id&gt;</span> cap · cookies never leave the TEE</span></div>
+    <div id=connectWrap style=margin-top:16px><button id=go class=btn>Connect with OAuth3</button></div>
+    <div id=note class=note></div>
+  </header>
+  <div id=view></div>
+  <footer id=foot hidden>A relying-party app. The share code carries a single-event write cap; the OAuth3 node enforces it exactly. The owner can revoke any link at any time.</footer>
+</div>
+<script>
+const NODE = location.origin + "/oauth3";
+const PLUGIN = "google-calendar";
+const APP = "calendar-share";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmtDate = (iso) => { try { const d = new Date(iso); return isNaN(d) ? esc(iso) : d.toLocaleString([], {dateStyle:"medium", timeStyle:"short"}); } catch { return esc(iso); } };
+const setNote = (msg, err) => { const n = $("note"); n.className = "note" + (err ? " err" : ""); n.textContent = msg || ""; };
+
+// ---- share mode: ?code=<token>&event=<id> — edit one event on behalf of the account ----
+const params = new URLSearchParams(location.search);
+const shareCode = params.get("code");
+const shareEvent = params.get("event");
+
+if (shareCode) {
+  shareMode(shareCode, shareEvent || "").catch(e => setNote(String(e.message || e), true));
+} else {
+  ownerMode();
+}
+
+// Loads the one event (best-effort pre-fill) and renders an edit form whose Save PUTs
+// through POST /api/google-calendar/event/:id with the scoped token. The cap on the
+// token is checked server-side BEFORE the write — a write:event:A code is rejected
+// (401) for any other event id, so a recipient can only ever touch this one event.
+async function shareMode(code, eventId) {
+  $("connectWrap").hidden = true;
+  $("foot").hidden = false;
+  $("sub").textContent = "Editing one event on behalf of the account.";
+  if (!eventId) { setNote("Share link is missing ?event=<id> — the share code is scoped but the page needs to know which event to edit.", true); return; }
+  $("view").innerHTML = renderEditForm(eventId);
+  $("cap").textContent = "write:event:" + eventId;
+  // Best-effort pre-fill. fetchItem throws "not yet captured" until #69's data path lands;
+  // we surface that honestly but still leave the form editable so a write can be attempted.
+  try {
+    const r = await fetch(NODE + "/api/" + PLUGIN + "/items/" + encodeURIComponent(eventId), { headers: { Authorization: "Bearer " + code } });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || ("items " + r.status));
+    prefill(body.data);
+    setNote("Loaded the event. Edit and Save — only this event is reachable.");
+  } catch (e) {
+    setNote("Couldn't pre-load the event (" + String(e.message || e) + "). You can still submit changes; the server checks the cap before writing.", true);
+  }
+  $("save").addEventListener("click", async () => {
+    const changes = collect();
+    if (!changes) { setNote("Fill in at least one field to edit.", true); return; }
+    $("save").disabled = true; setNote("Sending the edit through the OAuth3 node with your scoped token…");
+    try {
+      const r = await fetch(NODE + "/api/" + PLUGIN + "/event/" + encodeURIComponent(eventId), {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + code },
+        body: JSON.stringify({ changes })
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || ("event " + r.status));
+      setNote("");
+      $("result").innerHTML = `<div class=block><span class=k>status</span><span class=hit>saved</span>\n<span class=k>event</span>${esc(eventId)}\n<span class=k>by</span>${esc(body.by || "scoped token")}</div>`;
+    } catch (e) { setNote(String(e.message || e), true); $("save").disabled = false; }
+  });
+}
+
+function renderEditForm(eventId) {
+  return `<div class=card>
+    <b class=title>Edit event</b>
+    <div class=ev-meta>on behalf of the connected account · cap <span class=chip id=cap></span></div>
+    <label class=fld><span>summary</span><input id=f_summary placeholder="(event title)"></label>
+    <label class=fld><span>start (ISO, e.g. 2026-07-10T14:30:00)</span><input id=f_start placeholder="2026-07-10T14:30:00"></label>
+    <label class=fld><span>end (ISO)</span><input id=f_end placeholder="2026-07-10T15:00:00"></label>
+    <label class=fld><span>location</span><input id=f_location></label>
+    <label class=fld><span>description</span><textarea id=f_description></textarea></label>
+    <div class=acts><button id=save class=btn>Save edit</button></div>
+    <div id=result></div>
+  </div>`;
+}
+// Google Calendar event resource shape: start/end are {dateTime}. We only send fields
+// the recipient actually changed, so an empty field never clobbers the existing value.
+function collect() {
+  const out = {};
+  const s = $("f_summary").value.trim();
+  const st = $("f_start").value.trim();
+  const en = $("f_end").value.trim();
+  const loc = $("f_location").value.trim();
+  const desc = $("f_description").value.trim();
+  if (s) out.summary = s;
+  if (st) out.start = { dateTime: st };
+  if (en) out.end = { dateTime: en };
+  if (loc) out.location = loc;
+  if (desc) out.description = desc;
+  return Object.keys(out).length ? out : null;
+}
+function prefill(ev) {
+  if (!ev || typeof ev !== "object") return;
+  const set = (id, v) => { if (v) $(id).value = v; };
+  set("f_summary", ev.summary);
+  set("f_start", ev.start && ev.start.dateTime);
+  set("f_end", ev.end && ev.end.dateTime);
+  set("f_location", ev.location);
+  set("f_description", ev.description);
+}
+
+// ---- owner mode: connect, list events, mint per-event share codes, revoke ----
+// Two sibling containers in #view: #events (list + mint) and #stored (minted links + revoke).
+// Rendering into #events never touches #stored, so revoke wiring survives a re-render.
+function ensureContainers() {
+  const v = $("view");
+  if (!$("events")) v.appendChild(Object.assign(document.createElement("div"), { id: "events" }));
+  if (!$("stored")) v.appendChild(Object.assign(document.createElement("div"), { id: "stored", hidden: true }));
+}
+async function ownerMode() {
+  ensureContainers();
+  $("foot").hidden = false;
+  if (!window.oauth3) {
+    setNote("No OAuth3 extension detected — Connect will sign you in with a wallet kept in this browser.", false);
+  }
+  renderStored();
+  $("go").addEventListener("click", onConnect);
+}
+
+let readToken = null;       // scoped read token for listing events
+let walletSession = null;   // wallet session (only set on the self-provision path)
+
+async function onConnect() {
+  setNote(""); const viaExt = !!window.oauth3; $("go").disabled = true;
+  setNote(viaExt ? "Asking your wallet for a scoped token…" : "Self-provisioning a wallet in this browser…");
+  try {
+    if (viaExt) {
+      readToken = await window.oauth3.connect({ plugin: PLUGIN, app: APP, node: NODE });
+    } else {
+      walletSession = await walletSignIn();
+      readToken = await connectViaWallet(undefined);
+    }
+    $("connectWrap").hidden = true;
+    await loadEvents();
+  } catch (e) { setNote(String(e.message || e), true); $("go").disabled = false; }
+}
+
+async function loadEvents() {
+  setNote("Listing the account's events with the scoped token…");
+  let items = [];
+  try {
+    const r = await fetch(NODE + "/api/" + PLUGIN + "/items", { headers: { Authorization: "Bearer " + readToken } });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || ("items " + r.status));
+    items = (body.data && body.data.items) || body.data || [];
+    setNote(items.length ? "Connected. Pick an event to mint a single-event share link." : "Connected — no events returned.");
+  } catch (e) {
+    // listItems throws "not yet captured" until #69's data path is live; surface it.
+    setNote("Connected, but the read path isn't live yet (" + String(e.message || e) + "). You can still mint a share link for a known event id below.", true);
+  }
+  renderEventList(items);
+}
+
+function renderEventList(items) {
+  const known = items.map((it) => `<article class=row>
+    <div style=flex:1;min-width:0>
+      <div><b>${esc(it.title || "(untitled)")}</b></div>
+      ${it.date ? `<div class=ev-meta>${fmtDate(it.date)}</div>` : ""}
+      <div class=ev-id>${esc(it.id)}</div>
+    </div>
+    <div><button class="btn ghost" data-mint="${esc(it.id)}">Mint share link</button></div>
+  </article>`).join("");
+  // Even with no live list (data path pending), the owner can mint for a known event id —
+  // the cap envelope is independent of the read path. This keeps the delegation demo shippable.
+  $("events").innerHTML = `<div class=card>
+    <b class=title>Upcoming events</b>
+    <div class=ev-meta id=listMeta>${items.length} event(s).</div>
+    ${known || `<div class=note>No events loaded. Paste an event id to mint its share link anyway:</div>`}
+    <label class=fld><span>event id (if not listed above)</span><input id=manualId placeholder="calendar event id"></label>
+    <div class=acts><button id=manualMint class="btn ghost">Mint share link for this id</button></div>
+    <div id=mintResult></div>
+  </div>`;
+  wireMintButtons();
+}
+
+function wireMintButtons() {
+  document.querySelectorAll("[data-mint]").forEach((b) => b.addEventListener("click", () => mintShare(b.getAttribute("data-mint"))));
+  const manual = $("manualMint"); if (!manual) return;
+  manual.addEventListener("click", () => { const id = ($("manualId").value || "").trim(); if (id) mintShare(id); else setNote("Enter an event id first.", true); });
+}
+
+// Mints the share code: a scoped token carrying exactly "write:event:<id>". Via the
+// extension we ask window.oauth3.connect to carry the cap; via the wallet path we put
+// caps in the /api/connect body directly. Either way the minted token attenuates to
+// this one event — verifyCap() on the node rejects it for any other id.
+async function mintShare(eventId) {
+  const cap = "write:event:" + eventId;
+  setNote("Minting a share code carrying " + cap + " …");
+  let token;
+  try {
+    if (window.oauth3) {
+      token = await window.oauth3.connect({ plugin: PLUGIN, app: APP, node: NODE, caps: [cap] });
+    } else {
+      token = await connectViaWallet([cap]);
+    }
+  } catch (e) { setNote(String(e.message || e), true); return; }
+  const url = location.origin + location.pathname + "?code=" + encodeURIComponent(token) + "&event=" + encodeURIComponent(eventId);
+  storeShare(token, eventId, cap);
+  renderStored();
+  $("mintResult").innerHTML = `<div class=card>
+    <b class=title>Share link ready</b>
+    <div class=ev-meta>whoever opens this can edit <b>only</b> event ${esc(eventId)} on the account's behalf.</div>
+    <div class=share-url style=margin-top:10px><input id=shareurl readonly value="${esc(url)}"><button class="btn quiet" id=copyurl>copy</button></div>
+    <div class=acts><span class=chip>${esc(cap)}</span></div>
+  </div>`;
+  $("copyurl").addEventListener("click", () => {
+    const inp = $("shareurl"); inp.select(); inp.setSelectionRange(0, 99999);
+    try { navigator.clipboard.writeText(inp.value); $("copyurl").textContent = "copied"; } catch { document.execCommand("copy"); }
+  });
+  setNote("");
+}
+
+// --- stored share codes (localStorage) so Revoke survives a reload ---
+const STORE = "calendar_share_codes";
+function readStore() { try { return JSON.parse(localStorage.getItem(STORE) || "[]"); } catch { return []; } }
+function storeShare(token, eventId, cap) {
+  const all = readStore().filter((x) => x.token !== token);
+  all.unshift({ token, eventId, cap, createdAt: Date.now() });
+  localStorage.setItem(STORE, JSON.stringify(all));
+}
+function forgetShare(token) {
+  localStorage.setItem(STORE, JSON.stringify(readStore().filter((x) => x.token !== token)));
+}
+function renderStored() {
+  const all = readStore();
+  const box = $("stored");
+  if (!box) return;
+  if (!all.length) { box.innerHTML = ""; box.hidden = true; return; }
+  box.hidden = false;
+  box.innerHTML = `<div class=card><b class=title>Share links you've minted</b>` +
+    all.map((s) => `<article class=row>
+      <div style=flex:1;min-width:0>
+        <div><span class=chip>${esc(s.cap)}</span></div>
+        <div class=ev-id>${esc(s.token)}</div>
+      </div>
+      <div><button class="btn danger" data-revoke="${esc(s.token)}">Revoke</button></div>
+    </article>`).join("") + `</div>`;
+  box.querySelectorAll("[data-revoke]").forEach((b) => b.addEventListener("click", () => revokeShare(b.getAttribute("data-revoke"))));
+}
+
+// DELETE /api/tokens/:token — allowed for the owner secret OR any web session. On the
+// wallet path we have the session in-browser; on the extension path the wallet session
+// is held by the extension, so we attempt the call and surface the real result (it 401s
+// from a raw browser context until the extension exposes a revoke bridge — honest).
+async function revokeShare(token) {
+  const headers = { "Content-Type": "application/json" };
+  if (walletSession) headers.Authorization = "Bearer " + walletSession;
+  setNote("Revoking " + token.slice(0, 20) + "…");
+  try {
+    const r = await fetch(NODE + "/api/tokens/" + encodeURIComponent(token), { method: "DELETE", headers });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || ("revoke " + r.status));
+    forgetShare(token); renderStored(); setNote(token.slice(0, 20) + "… revoked.");
+  } catch (e) { setNote(String(e.message || e), true); }
+}
+
+// --- wallet self-provision path (no extension) — same shape timeline-peek uses ---
+const DK = "oauth3_didkey", SK = "oauth3_session";
+const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const b64 = (u) => btoa(String.fromCharCode(...u));
+const b64uDec = (s) => { s = s.replace(/-/g, "+").replace(/_/g, "/"); return Uint8Array.from(atob(s + "=".repeat((4 - s.length % 4) % 4)), c => c.charCodeAt(0)); };
+const b58e = (b) => { const d = [0]; for (const x of b) { let c = x; for (let j = 0; j < d.length; j++) { c += d[j] << 8; d[j] = c % 58; c = (c / 58) | 0; } while (c) { d.push(c % 58); c = (c / 58) | 0; } } let s = ""; for (const x of b) { if (x === 0) s += "1"; else break; } for (let k = d.length - 1; k >= 0; k--) s += B58[d[k]]; return s; };
+async function walletKey() {
+  let jwk = JSON.parse(localStorage.getItem(DK) || "null");
+  if (!jwk) {
+    const kp = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+    jwk = await crypto.subtle.exportKey("jwk", kp.privateKey);
+    localStorage.setItem(DK, JSON.stringify(jwk));
+  }
+  const priv = await crypto.subtle.importKey("jwk", jwk, { name: "Ed25519" }, false, ["sign"]);
+  const did = "did:key:z" + b58e(Uint8Array.from([0xed, 0x01, ...b64uDec(jwk.x)]));
+  return { priv, did };
+}
+async function walletSignIn() {
+  const stored = localStorage.getItem(SK);
+  if (stored) { try { const me = await (await fetch(NODE + "/api/me", { headers: { Authorization: "Bearer " + stored } })).json(); if (me && me.signedIn) return stored; } catch (_) {} }
+  const { priv, did } = await walletKey();
+  const { challenge } = await (await fetch(NODE + "/api/login/challenge")).json();
+  const sig = b64(new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, priv, new TextEncoder().encode(challenge))));
+  const r = await fetch(NODE + "/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ did, challenge, signature: sig }) });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || ("login " + r.status));
+  localStorage.setItem(SK, body.session);
+  return body.session;
+}
+// connect handshake without the extension, now carrying caps. The /api/connect body
+// accepts caps (oauth3-server#69); approveConnect mints a token that carries them only
+// AFTER the approver (this wallet session) consents. Real errors at every step.
+async function connectViaWallet(caps) {
+  const session = await walletSignIn();
+  const cr = await fetch(NODE + "/api/connect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(caps && caps.length ? { plugin: PLUGIN, app: APP, caps } : { plugin: PLUGIN, app: APP }) });
+  const c = await cr.json().catch(() => ({}));
+  if (!cr.ok) throw new Error(c.error || ("connect " + cr.status));
+  const ar = await fetch(NODE + "/api/connect/" + c.requestId + "/approve", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + session }, body: "{}" });
+  if (!ar.ok) { const e = await ar.json().catch(() => ({})); throw new Error(e.error || ("approve " + ar.status)); }
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const s = await (await fetch(NODE + "/api/connect/" + c.requestId)).json().catch(() => ({}));
+    if (s.status === "approved" && s.token) return s.token;
+    if (s.status === "denied") throw new Error("connect denied by user");
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  throw new Error("connect timed out");
+}
+</script>

@@ -1,0 +1,7 @@
+{
+  "name": "teleport-probe",
+  "runtime": "dockerfile",
+  "image_port": 8080,
+  "oci_runtime": "runc",
+  "isolation": "container"
+}

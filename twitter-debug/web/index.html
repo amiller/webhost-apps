@@ -3,69 +3,130 @@
 <base href="/twitter-debug/">
 <title>OAuth3 debug console · Twitter</title>
 <style>
+/* pod design system · constructivist overprint · grape-acid inking */
 :root{
-  --bg:#f4f6f8; --card:#ffffff; --line:#e4e8ee; --line2:#eef1f5;
-  --tx:#111827; --dim:#6b7280; --faint:#9aa3b0;
-  --tee:#0e9f6e; --tee-bg:#e7f7f0; --tee-line:#b7e6d2;
-  --acc:#2563eb; --acc-bg:#eaf1fe;
-  --bad:#dc2626; --bad-bg:#fdecec;
-  --warn:#b45309; --code:#1f2937; --code-bg:#f5f7fa;
-  --shadow:0 1px 2px rgba(16,24,40,.04),0 4px 16px rgba(16,24,40,.06);
+  --ink1:#6f57a8; --ink2:#b5d33d; --paper:#f8f7f3; --deep:#2e2745; --overprint:#31491f;
+  --bg:var(--paper); --text:var(--deep);
+  --faint:color-mix(in srgb,var(--deep) 55%,var(--paper));
+  --rule:color-mix(in srgb,var(--deep) 16%,var(--paper));
+  --card:#fff; --block:var(--deep); --block-text:#f8f7f3;
+  --wash1:color-mix(in srgb,var(--ink1) 15%,var(--paper));
+  --wash2:color-mix(in srgb,var(--ink2) 17%,var(--paper));
+  --i1-text:#5a4590; --i2-text:#6d8317;
+  --warn:#a8780c; --warn-wash:color-mix(in srgb,#e0a41a 22%,var(--paper));
+  --sans:"Helvetica Neue",Arial,sans-serif;
+  --cond:"Arial Narrow","Helvetica Neue",sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace; --off:1px;
+  /* app aliases → tokens (existing markup references these) */
+  --tx:var(--text); --dim:var(--faint);
+  --tee:var(--ink1); --tee-bg:var(--wash1); --tee-line:var(--rule);
+  --acc:var(--ink1); --acc-bg:var(--wash1);
+  --bad:var(--ink2); --bad-bg:var(--wash2);
+  --line:var(--rule); --line2:var(--rule);
+}
+@media (prefers-color-scheme: dark){ :root{
+  --ink1:#9b82d6; --ink2:#cbe85c; --paper:#181524; --deep:#100d1a;
+  --bg:#181524; --text:#e8e3f0;
+  --faint:color-mix(in srgb,#e8e3f0 55%,#181524);
+  --rule:color-mix(in srgb,#e8e3f0 14%,#181524);
+  --card:#221d33; --block:#100d1a; --block-text:#e8e3f0;
+  --wash1:color-mix(in srgb,#9b82d6 20%,#181524);
+  --wash2:color-mix(in srgb,#cbe85c 20%,#181524);
+  --i1-text:#b9a4e2; --i2-text:#d6f07a;
+  --warn:#e0b34a; --warn-wash:color-mix(in srgb,#e0b34a 18%,#181524);
+  --tx:var(--text); --dim:var(--faint);
+  --tee:var(--ink1); --tee-bg:var(--wash1); --tee-line:var(--rule);
+  --acc:var(--ink1); --acc-bg:var(--wash1);
+  --bad:var(--ink2); --bad-bg:var(--wash2);
+  --line:var(--rule); --line2:var(--rule);
+}}
+:root[data-theme="dark"]{
+  --ink1:#9b82d6; --ink2:#cbe85c; --paper:#181524; --deep:#100d1a;
+  --bg:#181524; --text:#e8e3f0;
+  --faint:color-mix(in srgb,#e8e3f0 55%,#181524);
+  --rule:color-mix(in srgb,#e8e3f0 14%,#181524);
+  --card:#221d33; --block:#100d1a; --block-text:#e8e3f0;
+  --wash1:color-mix(in srgb,#9b82d6 20%,#181524);
+  --wash2:color-mix(in srgb,#cbe85c 20%,#181524);
+  --i1-text:#b9a4e2; --i2-text:#d6f07a;
+  --warn:#e0b34a; --warn-wash:color-mix(in srgb,#e0b34a 18%,#181524);
+  --tx:var(--text); --dim:var(--faint);
+  --tee:var(--ink1); --tee-bg:var(--wash1); --tee-line:var(--rule);
+  --acc:var(--ink1); --acc-bg:var(--wash1);
+  --bad:var(--ink2); --bad-bg:var(--wash2);
+  --line:var(--rule); --line2:var(--rule);
+}
+:root[data-theme="light"]{
+  --ink1:#6f57a8; --ink2:#b5d33d; --paper:#f8f7f3; --deep:#2e2745;
+  --bg:#f8f7f3; --text:#2e2745;
+  --faint:color-mix(in srgb,#2e2745 55%,#f8f7f3);
+  --rule:color-mix(in srgb,#2e2745 16%,#f8f7f3);
+  --card:#fff; --block:#2e2745; --block-text:#f8f7f3;
+  --wash1:color-mix(in srgb,#6f57a8 15%,#f8f7f3);
+  --wash2:color-mix(in srgb,#b5d33d 17%,#f8f7f3);
+  --i1-text:#5a4590; --i2-text:#6d8317;
+  --warn:#a8780c; --warn-wash:color-mix(in srgb,#e0a41a 22%,#f8f7f3);
+  --tx:var(--text); --dim:var(--faint);
+  --tee:var(--ink1); --tee-bg:var(--wash1); --tee-line:var(--rule);
+  --acc:var(--ink1); --acc-bg:var(--wash1);
+  --bad:var(--ink2); --bad-bg:var(--wash2);
+  --line:var(--rule); --line2:var(--rule);
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.55 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--i1-text)}:focus-visible{outline:2px solid var(--ink2);outline-offset:2px}
 .wrap{max-width:1180px;margin:0 auto;padding:26px 20px 72px}
 header{margin-bottom:20px}
-h1{font-size:22px;margin:0 0 4px;letter-spacing:-.02em;font-weight:700}
-h1 b{color:var(--tee)}
+h1{font:800 22px var(--cond);text-transform:uppercase;letter-spacing:.02em;margin:0 0 4px;color:var(--ink1);text-shadow:var(--off) var(--off) 0 var(--ink2)}
+h1 b{color:var(--ink1);font-weight:inherit}
 .sub{color:var(--dim);font-size:13.5px;margin:0;max-width:820px}
 .sub b{color:var(--tx);font-weight:600}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:820px){.grid{grid-template-columns:1fr}}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 17px;margin-bottom:16px;box-shadow:var(--shadow)}
-.card h2{font-size:14px;margin:0 0 12px;display:flex;align-items:center;gap:9px;font-weight:650}
-.badge{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 6px;border-radius:7px;background:var(--tee-bg);color:var(--tee);font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+.card{background:var(--card);border:2px solid var(--ink1);padding:16px 17px;margin-bottom:16px}
+.card h2{font:800 13px var(--cond);text-transform:uppercase;letter-spacing:.08em;margin:0 0 12px;display:flex;align-items:center;gap:9px}
+.badge{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 6px;background:var(--tee-bg);color:var(--tee);font:700 12px var(--mono);font-variant-numeric:tabular-nums}
 .full{grid-column:1/-1}
-img#live{width:100%;border:1px solid var(--line);border-radius:10px;background:#0b0d10;min-height:180px;display:block}
-button{background:#fff;color:var(--tx);border:1px solid var(--line);border-radius:9px;padding:8px 13px;font-size:13px;font-weight:550;cursor:pointer;margin:2px 6px 2px 0;transition:.12s;box-shadow:0 1px 1px rgba(16,24,40,.03)}
+img#live{width:100%;border:2px solid var(--rule);background:var(--block);min-height:180px;display:block}
+button{display:inline-flex;align-items:center;gap:6px;background:var(--card);color:var(--tx);border:1px solid var(--rule);padding:8px 13px;font:600 13px var(--sans);cursor:pointer;margin:2px 6px 2px 0}
 button:hover{border-color:var(--acc);color:var(--acc)}
 button:disabled{opacity:.5;cursor:wait}
-button.go{background:var(--tee);border-color:var(--tee);color:#fff}button.go:hover{filter:brightness(1.05);color:#fff}
-button.warn{background:#fff;border-color:#e6b980;color:var(--warn)}button.warn:hover{border-color:var(--warn);color:var(--warn)}
-button.big{font-size:14px;padding:10px 18px}
-input[type=text]{background:#fff;border:1px solid var(--line);border-radius:9px;color:var(--tx);padding:8px 11px;font-size:13px;width:min(56%,340px)}
+button.go{background:var(--ink1);border-color:var(--ink1);color:#fff;box-shadow:3px 3px 0 var(--ink2)}button.go:hover{color:#fff;border-color:var(--ink1)}
+button.warn{background:var(--card);border-color:var(--warn);color:var(--warn)}button.warn:hover{border-color:var(--warn);color:var(--warn)}
+button.big{font:800 14px var(--cond);text-transform:uppercase;letter-spacing:.1em;padding:10px 18px}
+input[type=text]{background:var(--card);border:1px solid var(--rule);color:var(--tx);padding:8px 11px;font:13px var(--mono);width:min(56%,340px)}
 input[type=text]:focus{outline:none;border-color:var(--acc)}
 input::placeholder{color:var(--faint)}
-pre{background:var(--code-bg);border:1px solid var(--line2);border-radius:9px;padding:11px 12px;overflow:auto;max-height:300px;font:11.5px/1.55 ui-monospace,"SF Mono",Menlo,monospace;color:var(--code);white-space:pre-wrap;word-break:break-word;margin:4px 0 0}
+pre{background:var(--block);color:var(--block-text);border-left:12px solid var(--ink2);padding:11px 14px;overflow:auto;max-height:300px;font:11.5px/1.55 var(--mono);white-space:pre-wrap;word-break:break-word;margin:4px 0 0}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
-.pill{font-size:11.5px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);color:var(--dim);background:#fff;font-weight:550}
+.pill{display:inline-flex;align-items:center;gap:6px;font:500 11.5px var(--mono);padding:3px 10px;border-radius:999px;border:1px solid var(--rule);color:var(--dim);background:var(--card)}
 .pill.tee{color:var(--tee);border-color:var(--tee-line);background:var(--tee-bg)}
-.pill.warn{color:var(--warn);border-color:#e6c48c;background:#fdf6ec}
+.pill.warn{color:var(--warn);border-color:var(--warn);background:var(--warn-wash)}
 .pill.dot::before{content:"●";margin-right:5px;font-size:9px;vertical-align:middle}
 .muted{color:var(--dim);font-size:12.5px;margin:6px 0 0}
-code{font:12px ui-monospace,Menlo,monospace;color:var(--acc);background:var(--acc-bg);padding:1px 5px;border-radius:5px}
+code{font:12px var(--mono);color:var(--acc);background:var(--acc-bg);padding:1px 5px}
 .tee{color:var(--tee)}.bad{color:var(--bad)}
 /* reify */
 .cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:4px}@media(max-width:760px){.cols{grid-template-columns:1fr}}
-.col{border:1px solid var(--line);border-radius:11px;padding:12px 13px;background:#fcfdfe}
-.col h3{margin:0 0 8px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;font-weight:700;display:flex;align-items:center;gap:6px}
-.col.api{border-color:#f3d3d3;background:var(--bad-bg)}.col.api h3{color:var(--bad)}
-.col.br{border-color:#cfe0fb;background:var(--acc-bg)}.col.br h3{color:var(--acc)}
-.col.re{border-color:var(--tee-line);background:var(--tee-bg)}.col.re h3{color:var(--tee)}
-.col .m{font:11.5px ui-monospace,Menlo,monospace;color:#374151;word-break:break-all;margin:3px 0}
+.col{border:1px solid var(--rule);padding:12px 13px;background:var(--card)}
+.col h3{margin:0 0 8px;font:800 11px var(--cond);letter-spacing:.08em;text-transform:uppercase;display:flex;align-items:center;gap:6px}
+.col.api{border:2px solid var(--ink2);background:var(--bad-bg)}.col.api h3{color:var(--bad)}
+.col.br{border:1px solid var(--rule);background:var(--card)}.col.br h3{color:var(--i1-text)}
+.col.re{border:2.5px solid var(--ink1);background:var(--tee-bg)}.col.re h3{color:var(--tee)}
+.col .m{font:11.5px var(--mono);color:var(--text);word-break:break-all;margin:3px 0}
 .col .m .k{color:var(--faint)}
-table.diff{width:100%;border-collapse:collapse;margin-top:14px;font-size:12.5px;background:#fff;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+table.diff{width:100%;border-collapse:collapse;margin-top:14px;font-size:12.5px;background:var(--card);overflow:hidden;border:2px solid var(--rule)}
 table.diff th,table.diff td{border-bottom:1px solid var(--line2);padding:9px 11px;text-align:left;vertical-align:top}
 table.diff tr:last-child td{border-bottom:none}
-table.diff th{color:var(--dim);font-weight:650;background:#fafbfc;font-size:11.5px}
-table.diff td.f{color:var(--tx);white-space:nowrap;font-weight:600}
+table.diff th{color:var(--dim);background:var(--wash1);font:11.5px var(--mono)}
+table.diff td.f{color:var(--tx);white-space:nowrap;font-weight:600;font-family:var(--mono)}
 table.diff th.bad{color:var(--bad)}table.diff th.acc{color:var(--acc)}
-.verdict{margin-top:14px;padding:13px 14px;border:1px solid var(--tee-line);border-radius:11px;background:var(--tee-bg);color:#0a6b4a;font-size:13.5px;line-height:1.5}
+.verdict{margin-top:14px;padding:13px 14px;border:2px solid var(--ink1);background:var(--tee-bg);color:var(--i1-text);font-size:13.5px;line-height:1.5}
 .verdict::before{content:"✓ ";font-weight:700}
 </style></head><body><div class=wrap>
 
 <header>
   <h1><b>OAuth3</b> debug console <span style="color:var(--faint);font-weight:400">— Twitter as a case study</span></h1>
-  <p class=sub>Your cookies stay sealed in the TEE. Act on a site you're logged into three ways — a blind reverse-engineered API, a real browser driven by vision + xdotool, and a <b class=tee>reified</b> headless replay of what the browser observed — and watch every capability. <span id=jarpill class="pill">jar: checking…</span> <span id=lockpill class="pill" onclick="unlock()" style="cursor:pointer" title="reads are open; writes/posting need the secret">🔒 read-only</span></p>
+  <p class=sub>Your cookies stay sealed in the TEE. Act on a site you're logged into three ways — a blind reverse-engineered API, a real browser driven by vision + xdotool, and a <b class=tee>reified</b> headless replay of what the browser observed — and watch every capability. <span id=jarpill class="pill">jar: checking…</span> <span id=lockpill class="pill" onclick="connectX()" style="cursor:pointer" title="reads are open; writes/posting unlock when you connect X via OAuth3">🔒 read-only</span></p>
 </header>
 
 <div class="card full">
@@ -114,7 +175,7 @@ table.diff th.bad{color:var(--bad)}table.diff th.acc{color:var(--acc)}
 
 <div class="card full">
   <h2><span class=badge>⑦</span> Headless engine — the reified rung <span class="pill tee">no browser · no xctid</span></h2>
-  <p class=muted>The same capability, collapsed to pure HTTP: the sealed jar + a queryId grep'd <i>live</i> from X's JS bundle + feature flags. <b>No browser, no <code>x-client-transaction-id</code></b> — the browser was only ever needed to discover the request shape once. Reads are open; posting needs the secret.</p>
+  <p class=muted>The same capability, collapsed to pure HTTP: the sealed jar + a queryId grep'd <i>live</i> from X's JS bundle + feature flags. <b>No browser, no <code>x-client-transaction-id</code></b> — the browser was only ever needed to discover the request shape once. Reads are open; posting needs OAuth3 consent (connect X).</p>
   <div class=row><button class=go onclick="engine('timeline')">read timeline</button><input id=eng-text type=text placeholder="tweet text"><button class=warn onclick="engine('post')">tweet (headless)</button></div>
   <pre id=out-engine>—</pre>
 </div>
@@ -124,11 +185,10 @@ const live = document.getElementById('live')
 function tick(){const i=new Image();i.onload=()=>{live.src=i.src;setTimeout(tick,800)};i.onerror=()=>setTimeout(tick,1600);i.src='twitter/shot?'+Date.now()}tick()
 const show=(id,v)=>document.getElementById(id).textContent=(typeof v==='string')?v:JSON.stringify(v,null,2)
 async function call(id,fn){const el=document.getElementById(id);el.textContent='… running …';try{show(id,await fn())}catch(e){show(id,'ERROR: '+e.message)}}
-let SECRET=localStorage.getItem('oauth3_debug_secret')||''
-function refreshLock(){const p=document.getElementById('lockpill');p.textContent=SECRET?'🔓 unlocked':'🔒 read-only';p.className='pill'+(SECRET?' tee':'')}
-function unlock(){const s=prompt('Debug secret — enables writes/posting on the owner’s account. Leave blank to lock:','');if(s===null)return;SECRET=s.trim();SECRET?localStorage.setItem('oauth3_debug_secret',SECRET):localStorage.removeItem('oauth3_debug_secret');refreshLock()}
+let WRITES=false   // writes unlock when the owner approves the OAuth3 connect (the "jar" cap)
+function refreshLock(){const p=document.getElementById('lockpill');p.textContent=WRITES?'🔓 writes on':'🔒 read-only';p.className='pill'+(WRITES?' tee':'')}
 const getJSON=(u)=>fetch(u).then(r=>r.json())
-const postJSON=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json',...(SECRET?{'X-Debug-Secret':SECRET}:{})},body:JSON.stringify(b)}).then(r=>r.json())
+const postJSON=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json())
 function wake(){postJSON('api/bridge',{tool:'navigate',args:['https://x.com/home']}).catch(()=>{})}
 const cookies=()=>call('out-cookies',()=>getJSON('twitter/cookies'))
 async function connectX(){
@@ -177,5 +237,7 @@ function pollStatus(){getJSON('twitter/status').then(s=>{
   else{busy.textContent='idle';busy.className='pill'}
 }).catch(()=>{}).finally(()=>setTimeout(pollStatus,1200))}
 pollStatus()
+function pollConn(){getJSON('twitter/oauth3/status').then(s=>{WRITES=!!s.connected;refreshLock()}).catch(()=>{}).finally(()=>setTimeout(pollConn,3000))}
+pollConn()
 </script>
 </div></body></html>
