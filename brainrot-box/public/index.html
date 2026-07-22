@@ -169,8 +169,13 @@
   #mic.on { background: var(--teal); color: #fff; }
   #mic.talking { animation: blink .5s steps(2) infinite; }
   .graph { flex: 1; overflow: auto; padding: 12px; }
-  .topic { margin: 0 0 14px; border: 3px solid var(--line); background: #fff; }
+  .graph { position: relative; }
+  .graph::before { content: ""; position: absolute; left: 18px; top: 12px; bottom: 12px; width: 3px; background: var(--line); }
+  .topic { margin: 0 0 14px 26px; border: 3px solid var(--line); background: #fff; position: relative; }
+  .topic::before { content: ""; position: absolute; left: -17px; top: 12px; width: 12px; height: 12px; background: var(--teal); border: 3px solid var(--line); }
   .topic h3 { margin: 0; padding: 6px 10px; background: var(--wash); border-bottom: 2px solid var(--line); font-size: 13px; text-transform: uppercase; }
+  .topic h3 .when { float: right; color: var(--muted); font-weight: 700; text-transform: none; }
+  .rail { margin-left: 26px; }
   .gnode { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; border-bottom: 1px solid #e3e3e3; font-size: 14px; }
   .gnode:last-child { border-bottom: 0; }
   .kind { font-size: 10px; font-weight: 950; text-transform: uppercase; border: 2px solid var(--line); padding: 1px 6px; white-space: nowrap; }
@@ -325,22 +330,27 @@ document.querySelectorAll(".tabs button").forEach((b) => {
   };
 });
 
-// --- conversation graph pane ---
-const topicEls = new Map();
+// --- conversation graph pane: a TIMELINE of topic frames (otterpilot-style). A new frame opens
+// whenever the topic SHIFTS — returning to an earlier topic opens a fresh "back to" frame, so the
+// pane reads top-to-bottom as the conversation actually flowed.
+let curFrame = null, curFrameTopic = null;
+const seenTopics = new Set();
 function addGraphNode(node) {
   clearEmpty("graph");
-  let box = topicEls.get(node.topic);
-  if (!box) {
-    box = document.createElement("div");
-    box.className = "topic";
-    box.innerHTML = `<h3>${esc(node.topic)}</h3>`;
-    topicEls.set(node.topic, box);
-    $("graph").appendChild(box);
+  if (!curFrame || curFrameTopic !== node.topic) {
+    const revisit = seenTopics.has(node.topic);
+    seenTopics.add(node.topic);
+    curFrame = document.createElement("div");
+    curFrame.className = "topic";
+    const when = new Date(node.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    curFrame.innerHTML = `<h3>${revisit ? "↩ back to · " : ""}${esc(node.topic)} <span class="when">${when}</span></h3>`;
+    curFrameTopic = node.topic;
+    $("graph").appendChild(curFrame);
   }
   const row = document.createElement("div");
   row.className = "gnode";
   row.innerHTML = `<span class="kind ${esc(node.kind)}">${esc(node.kind.replace("_", " "))}</span><span>${esc(node.label)}</span>`;
-  box.appendChild(row);
+  curFrame.appendChild(row);
   if (node.kind === "decision" || node.kind === "action_item") {
     let rail = $("rail");
     if (!rail) {
