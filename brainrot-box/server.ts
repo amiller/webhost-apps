@@ -130,7 +130,9 @@ topics already open and a batch of new numbered segments. Emit one node per SUBS
 pure filler/backchannel ('yeah', 'right'). Kinds: topic (frames a subject), question, point (a
 substantive claim/idea), decision (something agreed/chosen), divergence (a tangent/disagreement),
 action_item (a to-do), aside. Give each node a short label (<=8 words) and a topic, REUSING an open
-topic label verbatim when it fits, else a new short label.
+topic label verbatim when it fits, else a new short label. When the SUBJECT clearly changes
+("switching to", "now about", a different domain), OPEN A NEW topic — never stretch an old label to
+cover a new subject; distinct subjects get distinct topics even within one batch.
 Return STRICT JSON only: {"nodes":[{"seg":<segment number>,"kind":"point","label":"...","topic":"..."}]}`;
 
 const JUDGE_SYSTEM = `You judge a live meeting transcript for genuinely useful "good points".
@@ -468,14 +470,27 @@ export class GoodpointRuntime {
   async toolsmithTurn(signal: AbortSignal): Promise<void> {
     this.push({ type: "activity", who: "toolsmith", state: "thinking" });
     const existing = [...this.registry.keys()].join(", ") || "(none)";
+    // stream the build so the workflow tab can show code being written live (interleave-style)
+    let deltaBuf = "";
+    let lastFlush = Date.now();
+    const flush = () => {
+      if (!deltaBuf) return;
+      this.push({ type: "build-delta", text: deltaBuf });
+      deltaBuf = "";
+      lastFlush = Date.now();
+    };
     const raw = await this.streamComplete(
       this.cfg.toolsmithModel,
       TOOLSMITH_SYSTEM,
       `Existing tools: ${existing}\nBrief: ${JSON.stringify(this.brief)}\nBuild one distinct compact layer tool. JSON only:`,
       1600,
-      () => {},
+      (t) => {
+        deltaBuf += t;
+        if (deltaBuf.length > 120 || Date.now() - lastFlush > 400) flush();
+      },
       signal,
     );
+    flush();
     const tool = extractJson(raw) as ToolDef | null;
     if (!tool || typeof tool.name !== "string" || typeof tool.draw !== "string" || !Array.isArray(tool.params)) {
       this.push({ type: "activity", who: "toolsmith", state: "parse miss" });
