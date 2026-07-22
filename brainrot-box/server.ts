@@ -696,6 +696,16 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
   const path = url.pathname.replace(/\/+$/, "") || "/";
 
   if (req.method === "GET" && path === "/") return await readPublic("landing.html");
+  const img = path.match(/^\/([a-z0-9-]+\.(jpg|png))$/);
+  if (req.method === "GET" && img) {
+    try {
+      const body = await Deno.readFile(new URL(`./public/${img[1]}`, import.meta.url));
+      return new Response(body, { headers: { "content-type": img[2] === "jpg" ? "image/jpeg" : "image/png", "cache-control": "public, max-age=300" } });
+    } catch (e) {
+      if (e instanceof Deno.errors.NotFound) return new Response("not found", { status: 404 });
+      throw e;
+    }
+  }
   if (req.method === "GET" && (path === "/app" || path === "/index.html")) {
     // a viewer loading the UI resumes the runtime (best-effort: the page is served even when
     // the box's env isn't provisioned yet).
