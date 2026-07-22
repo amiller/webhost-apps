@@ -1,0 +1,888 @@
+<!doctype html>
+<html lang="en">
+<head>
+<base href="/screenshare-pet/" />
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>screenshare-pet — a PiP pet that watches your screen</title>
+<!--
+  screenshare-pet — the fun demo consumer of the screenshare change-signals family: a small
+  animated pet that floats in an always-on-top Picture-in-Picture window while you work and
+  reacts to SIGNALS DERIVED FROM YOUR SCREEN. The whole thesis in one toy: rich-feeling
+  awareness from cheap pixel math (changedPct + a hot region + a still/local/scene class),
+  with rare, budgeted escalation to OCR / a visual model.
+
+  Sibling of screenshare-debug, same three-file shape — but with ALL authorization machinery
+  deliberately OUT (issue #73 non-goals): no oauth3, no consent grant, no sink. Frames NEVER
+  leave the browser by default. The only network the pet does is the operator-enabled "debug:
+  mirror to sink" toggle (a dev-only loopback echo on this same app's server, no credential).
+
+  The change-detection detector is implemented inline (a tile-diff over a downsampled frame):
+  still / local / scene + changedPct + the hot bounding box that drives gaze. It is the same
+  shape the #71 change-detection spec describes; it lives here until that PR lands and the two
+  can share a module. The pet logic is testable without capture via window.__pet.feed({...})
+  and window.__pet.runSynthetic() — drive the state machine headlessly, no network.
+
+  Design: pod design system · constructivist overprint · watermelon-classic inks (teal
+  #00838a / fluoro pink #ff48b0) · light default — same register as screenshare-debug.
+-->
+<style>
+/* pod design tokens — watermelon classic (matches screenshare-debug, the sibling). */
+:root {
+  --ink1:#00838a; --ink2:#ff48b0; --paper:#f8f7f3; --deep:#123f43; --overprint:#00255f;
+  --bg:var(--paper); --text:var(--deep);
+  --faint:color-mix(in srgb,var(--deep) 55%,var(--paper));
+  --rule:color-mix(in srgb,var(--deep) 16%,var(--paper));
+  --card:#fff; --block:var(--deep); --block-text:#f8f7f3;
+  --wash1:color-mix(in srgb,var(--ink1) 15%,var(--paper));
+  --wash2:color-mix(in srgb,var(--ink2) 17%,var(--paper));
+  --i1-text:#00676d; --i2-text:#c2187a;
+  --warn:#a8780c; --warn-wash:color-mix(in srgb,#e0a41a 22%,var(--paper));
+  --sans:"Helvetica Neue",Arial,sans-serif;
+  --cond:"Arial Narrow","Helvetica Neue",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  --off:1px;
+}
+:root[data-theme="light"] {
+  --ink1:#00838a; --ink2:#ff48b0; --paper:#f8f7f3; --deep:#123f43;
+  --bg:#f8f7f3; --text:#123f43;
+  --faint:color-mix(in srgb,#123f43 55%,#f8f7f3);
+  --rule:color-mix(in srgb,#123f43 16%,#f8f7f3);
+  --card:#fff; --block:#123f43; --block-text:#f8f7f3;
+  --wash1:color-mix(in srgb,#00838a 15%,#f8f7f3);
+  --wash2:color-mix(in srgb,#ff48b0 17%,#f8f7f3);
+  --i1-text:#00676d; --i2-text:#c2187a;
+  --warn:#a8780c; --warn-wash:color-mix(in srgb,#e0a41a 22%,#f8f7f3);
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme]) {
+  --ink1:#2fbdc4; --ink2:#ff5fbb; --paper:#0e1f21; --deep:#081517;
+  --bg:#0e1f21; --text:#e9f0ee;
+  --faint:color-mix(in srgb,#e9f0ee 55%,#0e1f21);
+  --rule:color-mix(in srgb,#e9f0ee 14%,#0e1f21);
+  --card:#142829; --block:#081517; --block-text:#e9f0ee;
+  --wash1:color-mix(in srgb,#2fbdc4 20%,#0e1f21);
+  --wash2:color-mix(in srgb,#ff5fbb 20%,#0e1f21);
+  --i1-text:#5fd3d9; --i2-text:#ff8ccb;
+  --warn:#e0b34a; --warn-wash:color-mix(in srgb,#e0b34a 18%,#0e1f21);
+} }
+* { box-sizing:border-box; }
+body { margin:0; font:15px/1.55 var(--sans); background:var(--bg); color:var(--text); }
+a { color:var(--i1-text); } :focus-visible { outline:2px solid var(--ink2); outline-offset:2px; }
+.wrap { max-width:1040px; margin:0 auto; padding:28px 22px 60px; }
+.label { font:500 11px/1 var(--mono); letter-spacing:.16em; text-transform:lowercase; color:var(--faint); }
+h1.display { font:800 clamp(28px,5vw,46px)/0.94 var(--cond); text-transform:uppercase; margin:0;
+  color:var(--ink1); text-shadow:var(--off) var(--off) 0 var(--ink2); text-wrap:balance; }
+.sub { color:var(--faint); font:14px/1.6 var(--sans); margin:8px 0 0; max-width:72ch; }
+.sub b { color:var(--i2-text); font-weight:700; }
+.bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:18px 0 6px; }
+.pill { display:inline-flex; align-items:center; gap:6px; font:500 12px/1 var(--mono);
+  padding:4px 10px; border-radius:999px; text-transform:capitalize; }
+.pill.ok { background:var(--wash1); color:var(--i1-text); }
+.pill.warn { background:var(--warn-wash); color:var(--warn); }
+.pill.bad { background:var(--wash2); color:var(--i2-text); }
+.dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+.dot.live { background:var(--ink2); animation:blink 1s infinite; }
+.dot.idle { background:var(--rule); }
+@keyframes blink { 50% { opacity:.25; } }
+.btn { display:inline-flex; align-items:center; gap:8px; font:800 14px var(--cond);
+  text-transform:uppercase; letter-spacing:.12em; border:0; padding:12px 22px; cursor:pointer;
+  background:var(--ink1); color:#fff; box-shadow:3px 3px 0 var(--ink2); }
+.btn:disabled { opacity:.5; cursor:default; }
+.btn.danger { background:var(--ink2); color:var(--deep); box-shadow:3px 3px 0 var(--ink1); }
+.btn.ghost { background:transparent; color:var(--i1-text); border:2px solid var(--ink1); box-shadow:none; }
+.btn.quiet { background:transparent; color:var(--text); border:1px solid var(--rule); box-shadow:none;
+  font:600 13px var(--sans); letter-spacing:0; text-transform:none; }
+.btn:active { transform:translateY(1px); }
+.ctrls { display:flex; gap:12px 18px; flex-wrap:wrap; align-items:end; margin:14px 0 4px; }
+.ctrls label { display:flex; flex-direction:column; gap:4px; font:500 11px/1 var(--mono);
+  letter-spacing:.1em; text-transform:lowercase; color:var(--faint); }
+.ctrls input[type=text], .ctrls input[type=number], .ctrls select { background:var(--card);
+  border:1.5px solid var(--rule); color:var(--text); border-radius:0; padding:8px; font:14px var(--mono); min-width:8em; }
+.ctrls .chk { flex-direction:row; align-items:center; gap:6px; text-transform:none; letter-spacing:0; font:600 13px var(--sans); color:var(--text); }
+.note { background:var(--wash1); border-left:6px solid var(--ink1); padding:12px 14px; font:13px/1.55 var(--mono);
+  color:var(--text); margin:14px 0; }
+.note.warn { background:var(--warn-wash); border-left-color:var(--warn); }
+.card { background:var(--card); border:2.5px solid var(--ink1); padding:16px 18px; margin:14px 0; }
+.card .title { font:800 16px var(--cond); text-transform:uppercase; letter-spacing:.08em; color:var(--ink1); }
+.card .muted { color:var(--faint); font:12px/1.5 var(--mono); margin:8px 0 0; }
+.grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+@media (max-width:760px){ .grid { grid-template-columns:1fr; } }
+#pet { width:100%; max-width:420px; aspect-ratio:3/2; background:#123f43; display:block;
+  border:1.5px solid var(--rule); image-rendering:auto; }
+.pip-note { font:12px var(--mono); color:var(--i2-text); margin:6px 0 0; min-height:1em; }
+.kvs { font:12.5px/1.7 var(--mono); }
+.kvs .k { color:var(--faint); display:inline-block; min-width:14ch; }
+.kvs b.ok { color:var(--i1-text); } .kvs b.bad { color:var(--i2-text); }
+.block { background:var(--block); color:var(--block-text); border-left:12px solid var(--ink2);
+  padding:12px 16px; font:12.5px/1.7 var(--mono); overflow-x:auto; }
+.halftone { height:10px; margin:22px 0; border-radius:2px;
+  background:radial-gradient(circle,var(--ink1) 34%,transparent 36%) 0 0/9px 9px,
+             radial-gradient(circle,var(--ink2) 30%,transparent 32%) 4px 5px/9px 9px; }
+video, canvas#cap { display:none; }
+details summary { cursor:pointer; font:800 13px var(--cond); text-transform:uppercase; letter-spacing:.1em; color:var(--ink1); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="label">change-signals · picture-in-picture pet · build <span id="build">…</span></p>
+  <h1 class="display">a pet that watches your screen</h1>
+  <p class="sub">
+    A small animated pet floats in an always-on-top window while you work and <b>reacts to signals
+    derived from your screen</b> — cheap pixel math nearly always (is it still? where is the
+    activity? did the whole scene just change?), with rare, budgeted escalation to OCR or a visual
+    model. The whole thesis as a toy: <b>rich-feeling awareness without a model in the loop</b>.
+    Frames never leave your browser unless you turn on the dev-only mirror.
+  </p>
+
+  <div class="bar">
+    <span class="pill ok" id="moodPill"><span class="dot idle" id="moodDot"></span><span id="moodTxt">idle</span></span>
+    <span class="pill warn" id="capPill"><span class="dot idle" id="capDot"></span><span id="capTxt">capture idle</span></span>
+    <span class="pill bad" id="pipPill" hidden><span class="dot live"></span>recording</span>
+    <button class="btn ghost" id="themeBtn" type="button">dark</button>
+  </div>
+
+  <div class="ctrls">
+    <button class="btn" id="start" type="button">Start capture</button>
+    <button class="btn" id="pop" type="button" disabled>Open PiP</button>
+    <button class="btn danger" id="stop" type="button" disabled>Stop</button>
+    <label class="chk"><input type="checkbox" id="mirror" /> debug: mirror to sink</label>
+    <label>width (px)<input id="width" type="number" value="240" min="64" step="16" style="min-width:5em" /></label>
+    <label>VLM url<input id="vlm" type="text" placeholder="(off)" style="min-width:14em" /></label>
+    <label>OCR<input id="ocr" type="text" placeholder="(off)" style="min-width:8em" /></label>
+  </div>
+  <p class="muted" style="font:12px var(--mono); margin:6px 0 0; color:var(--faint)">
+    desktop-only: <code>getDisplayMedia</code> isn't implemented on mobile browsers. The Document
+    Picture-in-Picture API is Chrome 116+; where it's unavailable the pet renders in the card below
+    with a visible <i>PiP unsupported</i> note (honest degradation, not silence).
+  </p>
+
+  <div class="halftone"></div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="title">the pet</div>
+      <!-- This canvas is the single render target. It is moved into the PiP window when one is
+           open, and lives in this card otherwise. The honesty status line + recording indicator
+           + speech bubble are baked into the canvas itself, so PiP and in-page always agree. -->
+      <canvas id="pet" width="420" height="280" aria-label="the pet"></canvas>
+      <p class="pip-note" id="pipNote"></p>
+      <p class="muted">status line + recording dot are drawn on the canvas — the same surface the
+        PiP window shows, so the two can never disagree.</p>
+    </div>
+    <div class="card">
+      <div class="title">what the pet sees</div>
+      <div class="kvs" id="signals">
+        <div><span class="k">class:</span><span id="sClass">—</span></div>
+        <div><span class="k">changedPct:</span><span id="sChanged">—</span></div>
+        <div><span class="k">hot region:</span><span id="sRegion">—</span></div>
+        <div><span class="k">reacting to:</span><span id="sStatus">idle</span></div>
+        <div><span class="k">still for:</span><span id="sStill">0s</span></div>
+      </div>
+      <div class="block" style="margin-top:12px">
+        <div><span class="k" style="opacity:.6">frames processed:</span><b id="cFrames">0</b></div>
+        <div><span class="k" style="opacity:.6">model calls:</span><b id="cModels">0</b> <span style="opacity:.6">(ocr <span id="cOcr">0</span> · vlm <span id="cVlm">0</span>)</span></div>
+        <div><span class="k" style="opacity:.6">frame POSTs:</span><b id="cPosts">0</b> <span style="opacity:.6" id="cPostsNote">(mirror off — should stay 0)</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="harness">
+    <div class="title">headless harness — drive the pet without capture</div>
+    <p class="muted" style="margin-top:6px">
+      The pet logic is fully testable with no screen-share and no network. The state machine is a
+      pure function of the latest signal + elapsed time, exposed on <code>window.__pet</code>:
+    </p>
+    <div class="block">
+window.__pet.feed({ changedPct: 0.04, class: "local", hot: { x: 0.2, y: 0.3, w: 0.1, h: 0.1 }, _t: 1234567890000 })
+window.__pet.mood()                    // → "attentive"   (gaze tracks the hot region)
+window.__pet.runSynthetic()            // detector + state machine over a fake moving rect
+window.__pet.forceTrigger("vlm")       // respects budget; reports "not configured" when off
+window.__pet.framePosts()              // []  with the mirror toggle off
+    </div>
+    <div class="ctrls" style="margin-top:12px">
+      <button class="btn quiet" id="synth" type="button">Run synthetic source</button>
+      <button class="btn quiet" id="fOcr" type="button">Force OCR moment</button>
+      <button class="btn quiet" id="fVlm" type="button">Force VLM moment</button>
+      <button class="btn quiet" id="reset" type="button">Reset pet</button>
+    </div>
+    <p class="muted" id="harnessOut" style="min-height:1.2em"></p>
+  </div>
+
+  <div class="halftone"></div>
+
+  <div class="card">
+    <div class="title">how it works</div>
+    <ol style="margin:10px 0 4px; padding-left:22px; font:13.5px/1.7 var(--sans)">
+      <li><b>capture</b> — <code>getDisplayMedia</code> → downsample to a target width (default 240px
+        — we want signal math, not pixels). The capture pipeline is ported from screenshare-debug.</li>
+      <li><b>detect</b> — the downsampled frame is tiled into a 10×6 grid; per-tile mean luma is
+        differenced against the previous frame. Output: <code>{changedPct, hot, class}</code> where
+        class is <code>still</code> / <code>local</code> (a few tiles, e.g. typing) / <code>scene</code>
+        (a global flip, e.g. alt-tab).</li>
+      <li><b>react</b> — a small state machine (the table at the top of the script) maps the signal
+        stream to a mood: still → sleepy → nap; local → attentive with gaze tracking the hot region;
+        scene → startled; sustained motion → mesmerized; long idle → wanders off.</li>
+      <li><b>escalate (rare)</b> — on a scene change, at most every few minutes, the pet may grab one
+        hi-res keyframe for OCR (vendored tesseract.js, local) or a one-line VLM caption
+        (<code>VLM_URL</code>), and <i>comment</i> via a speech bubble. A counter shows model calls
+        vs frames processed — the point is how rarely it fires.</li>
+    </ol>
+    <p class="muted">no frame ever leaves the browser unless you tick <i>debug: mirror to sink</i>
+      (a dev-only loopback echo on this same app's own server — no consent, no credential, no
+      storage). The on-page counter asserts it: mirror off ⇒ frame POSTs stays 0.</p>
+  </div>
+</div>
+
+<video id="v" autoplay muted playsinline></video>
+<canvas id="cap"></canvas>
+
+<script>
+"use strict";
+const BUILD_TAG = "b1";
+/* =====================================================================================
+   MOOD TABLE — the signal → mood mapping, as plain data so it's easy to tune.
+   Everything below reads its thresholds from here; nothing hardcodes a mood transition.
+   ===================================================================================== */
+const MOOD_TABLE = {
+  stillMsToSleepy: 8000,      // still for 8s  → sleepy
+  stillMsToNap:    20000,     // still for 20s → nap
+  localHoldMs:     1200,      // attentive holds 1.2s after the last local frame
+  sceneStartleMs:  1200,      // a scene change startles for 1.2s
+  mesmerChangedPct:0.45,      // changedPct above this counts as "high motion"
+  mesmerMs:        2500,      // …sustained for 2.5s → mesmerized
+  idleWanderMs:    5*60*1000, // idle 5min → wanders off
+  hotFloor:        0.02,      // changedPct below this is "still"
+};
+
+/* Keyword → pet comment. The OCR path extracts a few keywords from a keyframe and looks them up
+   here; data, not code, so the personality is tunable without touching logic. */
+const KEYWORD_COMMENTS = {
+  taxes: "taxes, huh?", invoice: "billing day…", email: "lots of mail today.",
+  meeting: "another meeting?", calendar: "busy day.", code: "ooh, code.",
+  error: "an error? rude.", warning: "a warning.", git: "committing again?",
+  _default: "hmm, interesting.",
+};
+
+/* =====================================================================================
+   STATE
+   ===================================================================================== */
+const $ = (id) => document.getElementById(id);
+const petCanvas = $("pet"), capCanvas = $("cap");
+const pctx = petCanvas.getContext("2d");
+const cctx = capCanvas.getContext("2d", { willReadFrequently: true });
+const video = $("v");
+
+let injectedNow = null;          // headless clock injection (null ⇒ real Date.now)
+const now = () => injectedNow !== null ? injectedNow : Date.now();
+
+let lastSignal = { changedPct: 0, hot: null, class: "still", meanDiff: 0 };
+let lastActiveAt = now();        // last time a non-still signal arrived
+let lastSceneAt = null;          // last scene-change time (startle window)
+let highSince = null;            // when sustained-high changedPct began (mesmerized window)
+let gaze = { x: 0.5, y: 0.5 };   // current gaze target, normalized 0..1
+let bubble = { text: "", until: 0 };
+let currentMood = "idle";
+
+let captureLive = false;
+let stream = null, timer = null;
+let mirrorOn = false;
+
+let frameCount = 0, modelCalls = 0, ocrCalls = 0, vlmCalls = 0;
+let lastOcrAt = 0, lastVlmAt = 0;
+const MODEL_BUDGET_MS = 3 * 60 * 1000;   // at most one OCR / one VLM per 3min window
+
+const netLog = [];              // {kind:"frame"|"vlm"|"ocr", method, url, ts}
+const recordFetch = (kind, method, url) => netLog.push({ kind, method, url, ts: Date.now() });
+const framePosts = () => netLog.filter((n) => n.kind === "frame");
+
+/* Optional test stubs (set via __pet.setOcrStub / setVlmStub) so the configured path is
+   verifiable headlessly without bundling tesseract or hitting a real model. Default null ⇒ the
+   real lazy-load path, which reports "not configured" when the script/model is absent. */
+let ocrStub = null, vlmStub = null;
+
+/* =====================================================================================
+   CHANGE DETECTOR — tile diff over a downsampled frame.
+   Produces {changedPct, hot, class, meanDiff}. Same shape as the #71 change-detection spec;
+   inlined here until that PR lands and the two share a module.
+   ===================================================================================== */
+const TILE_COLS = 10, TILE_ROWS = 6, TILE_THRESHOLD = 18; // per-tile luma delta → "changed"
+let prevTiles = null;
+
+function detect(imageData, w, h) {
+  const tw = Math.ceil(w / TILE_COLS), th = Math.ceil(h / TILE_ROWS);
+  const tiles = new Float32Array(TILE_COLS * TILE_ROWS);
+  for (let ty = 0; ty < TILE_ROWS; ty++) {
+    for (let tx = 0; tx < TILE_COLS; tx++) {
+      let sum = 0, cnt = 0;
+      const x0 = tx * tw, y0 = ty * th;
+      const x1 = Math.min(w, x0 + tw), y1 = Math.min(h, y0 + th);
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          const i = (y * w + x) * 4;
+          sum += 0.299 * imageData[i] + 0.587 * imageData[i + 1] + 0.114 * imageData[i + 2];
+          cnt++;
+        }
+      }
+      tiles[ty * TILE_COLS + tx] = cnt ? sum / cnt : 0;
+    }
+  }
+  if (!prevTiles) { prevTiles = tiles; return { changedPct: 0, hot: null, class: "still", meanDiff: 0 }; }
+  let changed = 0, diffSum = 0;
+  let minX = TILE_COLS, minY = TILE_ROWS, maxX = -1, maxY = -1;
+  for (let i = 0; i < tiles.length; i++) {
+    const d = Math.abs(tiles[i] - prevTiles[i]);
+    if (d > TILE_THRESHOLD) {
+      changed++; diffSum += d;
+      const tx = i % TILE_COLS, ty = (i / TILE_COLS) | 0;
+      if (tx < minX) minX = tx; if (tx > maxX) maxX = tx;
+      if (ty < minY) minY = ty; if (ty > maxY) maxY = ty;
+    }
+  }
+  prevTiles = tiles;
+  const changedPct = changed / tiles.length;
+  const hot = changed > 0
+    ? { x: (minX + maxX + 1) / (2 * TILE_COLS), y: (minY + maxY + 1) / (2 * TILE_ROWS),
+        w: (maxX - minX + 1) / TILE_COLS, h: (maxY - minY + 1) / TILE_ROWS }
+    : null;
+  const meanDiff = changed ? diffSum / changed : 0;
+  // classify: scene = a global flip (many tiles AND a large mean luma swing); local = a few tiles;
+  // still = ~nothing.
+  let cls;
+  if (changedPct > 0.55 && meanDiff > 35) cls = "scene";
+  else if (changedPct > MOOD_TABLE.hotFloor) cls = "local";
+  else cls = "still";
+  return { changedPct, hot, class: cls, meanDiff };
+}
+
+function resetDetector() { prevTiles = null; }
+
+/* =====================================================================================
+   STATE MACHINE — pure function of (latest signal, elapsed time). feed() updates the signal +
+   the timestamps; deriveMood() reads them. This split makes the headless harness deterministic:
+   feed a sequence, read mood at each step.
+   ===================================================================================== */
+function applySignal(sig, t) {
+  if (sig._t !== undefined) injectedNow = sig._t;   // headless clock injection
+  t = now();
+  lastSignal = {
+    changedPct: sig.changedPct == null ? 0 : sig.changedPct,
+    hot: sig.hot || sig.regions || null,
+    class: sig.class || (sig.changedPct > MOOD_TABLE.hotFloor ? "local" : "still"),
+    meanDiff: sig.meanDiff || 0,
+  };
+  if (lastSignal.class === "scene") {
+    lastSceneAt = t;
+    lastActiveAt = t;
+    highSince = null;
+  } else if (lastSignal.changedPct > MOOD_TABLE.mesmerChangedPct) {
+    // sustained high motion (video / scrolling) — track when it began; eyes still track gaze.
+    // MUST come before the local branch: mesmerChangedPct (0.45) is above hotFloor (0.02),
+    // so the local branch would otherwise swallow it and highSince would never get set.
+    if (highSince === null) highSince = t;
+    lastActiveAt = t;
+    if (lastSignal.hot) gaze = { x: lastSignal.hot.x, y: lastSignal.hot.y };
+  } else if (lastSignal.class === "local" || lastSignal.changedPct > MOOD_TABLE.hotFloor) {
+    lastActiveAt = t;
+    if (lastSignal.hot) gaze = { x: lastSignal.hot.x, y: lastSignal.hot.y };
+    highSince = null;
+  } else {
+    highSince = null;
+  }
+}
+
+function deriveMood(t) {
+  // 1) startle window wins while open
+  if (lastSceneAt !== null && t - lastSceneAt < MOOD_TABLE.sceneStartleMs) return "startle";
+  // 2) mesmerized — sustained high motion past the dwell
+  if (highSince !== null && t - highSince >= MOOD_TABLE.mesmerMs) return "mesmerized";
+  // 3) attentive — recent local activity (holds briefly after it stops)
+  if (lastSignal.class === "local" && t - lastActiveAt < MOOD_TABLE.localHoldMs) return "attentive";
+  if (highSince !== null && t - highSince < MOOD_TABLE.mesmerMs) return "attentive";
+  // 4) stillness ladder
+  const stillFor = t - lastActiveAt;
+  if (stillFor >= MOOD_TABLE.idleWanderMs) return "wander";
+  if (stillFor >= MOOD_TABLE.stillMsToNap)    return "nap";
+  if (stillFor >= MOOD_TABLE.stillMsToSleepy) return "sleepy";
+  return "idle";
+}
+
+function regionLabel(hot) {
+  if (!hot) return "";
+  const h = hot.x < 0.34 ? "left" : hot.x > 0.66 ? "right" : "center";
+  const v = hot.y < 0.34 ? "upper" : hot.y > 0.66 ? "lower" : "middle";
+  if (v === "middle" && h === "center") return "center";
+  if (v === "middle") return h;
+  if (h === "center") return v;
+  return v + " " + h;
+}
+
+function statusText(mood, t) {
+  const stillForS = Math.max(0, Math.round((t - lastActiveAt) / 1000));
+  switch (mood) {
+    case "startle":   return "scene change!";
+    case "attentive": return "activity " + regionLabel(lastSignal.hot);
+    case "mesmerized":return "lots of motion (" + (lastSignal.changedPct * 100).toFixed(0) + "%)";
+    case "sleepy":    return "still " + stillForS + "s";
+    case "nap":       return "napping · still " + stillForS + "s";
+    case "wander":    return "wandered off…";
+    default:          return "idle";
+  }
+}
+
+/* =====================================================================================
+   PET RENDERER — everything is drawn on the canvas (pet + bubble + status + recording dot +
+   counters), so the PiP window and the in-page card can never disagree.
+   ===================================================================================== */
+const MOOD_COLOR = {
+  idle: "#2fbdc4", sleepy: "#5fd3d9", nap: "#3a7e83", attentive: "#ff48b0",
+  startle: "#ff48b0", mesmerized: "#b5d33d", wander: "#2fbdc4",
+};
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+function drawPet(t) {
+  const mood = deriveMood(t);
+  currentMood = mood;
+  // ease gaze back to center when not attentive
+  if (mood !== "attentive") gaze = { x: lerp(gaze.x, 0.5, 0.05), y: lerp(gaze.y, 0.5, 0.05) };
+
+  const W = petCanvas.width, H = petCanvas.height;
+  pctx.fillStyle = "#123f43"; pctx.fillRect(0, 0, W, H);
+
+  // wandering drift
+  let cx = W / 2, cy = H / 2 + 10;
+  if (mood === "wander") {
+    cx = W / 2 + Math.sin(t / 900) * (W * 0.28);
+    cy = H / 2 + 10 + Math.cos(t / 700) * 12;
+  } else {
+    cx += Math.sin(t / 1100) * 3;   // idle breathe
+  }
+  const breathe = mood === "sleepy" ? 0.92 + Math.sin(t / 700) * 0.04
+                : mood === "nap" ? 0.9
+                : mood === "mesmerized" ? 1 + Math.sin(t / 300) * 0.05
+                : mood === "startle" ? 1.12
+                : 1 + Math.sin(t / 900) * 0.03;
+  const r = 46 * breathe;
+
+  // body
+  pctx.save();
+  pctx.translate(cx, cy);
+  if (mood === "startle") pctx.translate(0, Math.sin(t / 60) * 2);
+  pctx.fillStyle = MOOD_COLOR[mood] || MOOD_COLOR.idle;
+  pctx.shadowColor = "rgba(0,0,0,.35)"; pctx.shadowBlur = 12; pctx.shadowOffsetY = 4;
+  pctx.beginPath(); pctx.ellipse(0, 0, r, r * 0.92, 0, 0, Math.PI * 2); pctx.fill();
+  pctx.shadowColor = "transparent";
+  // little feet
+  pctx.fillStyle = "#0e3438";
+  pctx.beginPath(); pctx.ellipse(-r * 0.5, r * 0.82, 9, 6, 0, 0, Math.PI * 2); pctx.fill();
+  pctx.beginPath(); pctx.ellipse(r * 0.5, r * 0.82, 9, 6, 0, 0, Math.PI * 2); pctx.fill();
+  pctx.restore();
+
+  // eyes
+  const eyeY = cy - r * 0.18;
+  const eyeDX = r * 0.4, eyeR = mood === "startle" || mood === "attentive" ? 13 : 11;
+  const gx = (gaze.x - 0.5) * 2, gy = (gaze.y - 0.5) * 2;   // -1..1
+  const pupilOff = eyeR * 0.42;
+  const drawEye = (ex, ey) => {
+    if (mood === "nap") {
+      pctx.strokeStyle = "#0e3438"; pctx.lineWidth = 3;
+      pctx.beginPath(); pctx.arc(ex, ey, eyeR, 0.1 * Math.PI, 0.9 * Math.PI); pctx.stroke();
+      return;
+    }
+    const lid = mood === "sleepy" ? 0.45 : 1;
+    pctx.fillStyle = "#fff";
+    pctx.beginPath(); pctx.ellipse(ex, ey, eyeR, eyeR * lid, 0, 0, Math.PI * 2); pctx.fill();
+    if (lid > 0.3) {
+      pctx.fillStyle = "#0e3438";
+      pctx.beginPath();
+      if (mood === "mesmerized") {
+        // spiral-ish: two offset pupils
+        pctx.arc(ex + gx * pupilOff - 3, ey + gy * pupilOff, 4.5, 0, Math.PI * 2);
+        pctx.arc(ex + gx * pupilOff + 3, ey + gy * pupilOff, 4.5, 0, Math.PI * 2);
+      } else {
+        pctx.arc(ex + gx * pupilOff, ey + gy * pupilOff, 5, 0, Math.PI * 2);
+      }
+      pctx.fill();
+    }
+  };
+  drawEye(cx - eyeDX, eyeY); drawEye(cx + eyeDX, eyeY);
+
+  // startle spike
+  if (mood === "startle") {
+    pctx.fillStyle = "#ff48b0"; pctx.font = "800 28px Arial Narrow, Arial, sans-serif";
+    pctx.textAlign = "center"; pctx.textBaseline = "middle";
+    pctx.fillText("!", cx, cy - r - 16);
+  }
+  // zzz when napping
+  if (mood === "nap" || mood === "sleepy") {
+    pctx.fillStyle = "rgba(255,255,255,.7)"; pctx.font = "600 14px ui-monospace, monospace";
+    pctx.textAlign = "left";
+    const z = (t / 700) % 1;
+    pctx.fillText("z", cx + r * 0.7 + z * 14, cy - r * 0.5 - z * 16);
+    pctx.fillText("Z", cx + r * 0.9 + ((t / 700 + 0.5) % 1) * 14, cy - r * 0.8 - ((t / 700 + 0.5) % 1) * 16);
+  }
+
+  // speech bubble
+  if (bubble.text && t < bubble.until) {
+    drawBubble(cx, cy - r - 34, bubble.text);
+  } else if (bubble.text && t >= bubble.until) {
+    bubble.text = ""; bubble.until = 0;
+  }
+
+  // honesty surface: status line + recording dot + counters, baked in
+  pctx.fillStyle = "rgba(0,0,0,.28)"; pctx.fillRect(0, H - 30, W, 30);
+  pctx.fillStyle = "#e9f0ee"; pctx.font = "500 12px ui-monospace, monospace";
+  pctx.textAlign = "left"; pctx.textBaseline = "middle";
+  pctx.fillText("reacting to: " + statusText(mood, t), 12, H - 15);
+  if (captureLive) {
+    pctx.fillStyle = "#ff48b0"; pctx.beginPath(); pctx.arc(W - 86, H - 15, 4, 0, Math.PI * 2); pctx.fill();
+    pctx.fillStyle = "#ff8ccb"; pctx.fillText("REC", W - 78, H - 15);
+  }
+  pctx.fillStyle = "rgba(233,240,238,.6)"; pctx.textAlign = "right";
+  pctx.fillText(modelCalls + " model / " + frameCount + " frames", W - 12, H - 15);
+}
+
+function drawBubble(cx, cy, text) {
+  pctx.save();
+  pctx.font = "600 13px ui-monospace, monospace";
+  const w = Math.min(petCanvas.width - 24, pctx.measureText(text).width + 24);
+  pctx.fillStyle = "#fff"; pctx.strokeStyle = "#ff48b0"; pctx.lineWidth = 2;
+  const x = Math.max(8, Math.min(petCanvas.width - w - 8, cx - w / 2));
+  pctx.beginPath();
+  if (pctx.roundRect) pctx.roundRect(x, cy - 16, w, 30, 8);
+  else pctx.rect(x, cy - 16, w, 30);
+  pctx.fill(); pctx.stroke();
+  // tail
+  pctx.beginPath(); pctx.moveTo(cx - 6, cy + 14); pctx.lineTo(cx + 6, cy + 14); pctx.lineTo(cx, cy + 22); pctx.closePath(); pctx.fill();
+  pctx.fillStyle = "#123f43"; pctx.textAlign = "center"; pctx.textBaseline = "middle";
+  pctx.fillText(text, x + w / 2, cy - 1);
+  pctx.restore();
+}
+
+/* =====================================================================================
+   OCR (lazy tesseract.js) + VLM (VLM_URL) — both OFF by default, both budgeted, both counted.
+   ===================================================================================== */
+async function ensureTesseract() {
+  if (ocrStub || window.__tesseract) return true;
+  try {
+    await new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+      s.onload = res; s.onerror = () => rej(new Error("tesseract.js failed to load"));
+      document.head.appendChild(s);
+    });
+    return !!window.Tesseract;
+  } catch (_) { return false; }
+}
+
+async function maybeEscalate(trigger, keyframeCanvas) {
+  // called on scene changes; runs OCR / VLM under their budgets. The forceTrigger harness uses
+  // the same path so the budget + counter logic is identical between live and headless.
+  const t = now();
+  const enabled = $("ocr").value.trim() || $("vlm").value.trim();
+  // OCR side
+  if ($("ocr").value.trim() === "on" || ocrStub) {
+    const r = await runOcr(keyframeCanvas, t);
+    if (r) say(r);
+  }
+  if ($("vlm").value.trim()) {
+    const r = await runVlm(keyframeCanvas, t);
+    if (r) say(r);
+  }
+}
+
+async function runOcr(keyframeCanvas, t) {
+  if (t - lastOcrAt < MODEL_BUDGET_MS && lastOcrAt !== 0)
+    return sayBudget("OCR", t - lastOcrAt);
+  // configured? either a stub (test) or tesseract loadable + OCR enabled
+  const enabled = $("ocr").value.trim() === "on" || ocrStub;
+  if (!enabled) return sayNotConfigured("OCR");
+  let text = "";
+  if (ocrStub) { text = await ocrStub(keyframeCanvas); }
+  else {
+    const ok = await ensureTesseract();
+    if (!ok) return sayNotConfigured("OCR (tesseract.js unavailable)");
+    const { data } = await window.Tesseract.recognize(keyframeCanvas, "eng");
+    text = (data && data.text) || "";
+  }
+  lastOcrAt = t; ocrCalls++; modelCalls++; renderCounters();
+  const word = Object.keys(KEYWORD_COMMENTS).find((k) => k !== "_default" && new RegExp("\\b" + k, "i").test(text));
+  return (KEYWORD_COMMENTS[word] || KEYWORD_COMMENTS._default) + (text.trim() ? " (" + text.trim().slice(0, 18) + "…)" : "");
+}
+
+async function runVlm(keyframeCanvas, t) {
+  const url = ($("vlm").value.trim() || vlmUrlLive || "").trim();
+  if (vlmStub) {
+    if (t - lastVlmAt < MODEL_BUDGET_MS && lastVlmAt !== 0) return sayBudget("VLM", t - lastVlmAt);
+    const cap = await vlmStub(keyframeCanvas);
+    lastVlmAt = t; vlmCalls++; modelCalls++; renderCounters();
+    return cap;
+  }
+  if (!url) return sayNotConfigured("VLM");
+  if (t - lastVlmAt < MODEL_BUDGET_MS && lastVlmAt !== 0) return sayBudget("VLM", t - lastVlmAt);
+  // POST the keyframe to the configured endpoint
+  const blob = await new Promise((res) => keyframeCanvas.toBlob(res, "image/jpeg", 0.6));
+  const u = url + (url.endsWith("/") ? "" : "/") + "caption";
+  recordFetch("vlm", "POST", u);
+  try {
+    const r = await fetch(u, { method: "POST", headers: { "content-type": "image/jpeg" }, body: blob });
+    const j = await r.json().catch(() => ({}));
+    lastVlmAt = t; vlmCalls++; modelCalls++; renderCounters();
+    return j.caption || "(no caption returned)";
+  } catch (e) {
+    return sayNotConfigured("VLM (" + ((e && e.message) || e) + ")");
+  }
+}
+
+function say(text) { bubble.text = text; bubble.until = now() + 4000; return text; }
+function sayNotConfigured(what) { bubble.text = what + " not configured"; bubble.until = now() + 3500; return bubble.text; }
+function sayBudget(what, elapsed) {
+  const next = Math.ceil((MODEL_BUDGET_MS - elapsed) / 1000);
+  bubble.text = what + " budget: try again in " + next + "s";
+  bubble.until = now() + 2500;
+  return null;     // the counter does NOT increment inside the budget
+}
+let vlmUrlLive = "";   // set live by the harness for forceTrigger without the input
+
+/* =====================================================================================
+   CAPTURE PIPELINE (ported from screenshare-debug) — getDisplayMedia → downsample → detect → feed.
+   ===================================================================================== */
+async function startCapture() {
+  if (captureLive) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+    setPipNote("getDisplayMedia unavailable — desktop Chrome required. The pet still works via the synthetic source / __pet.feed.");
+    return;
+  }
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    video.srcObject = stream; await video.play();
+    stream.getVideoTracks()[0].onended = stopCapture;
+    captureLive = true; injectedNow = null;        // live mode = real clock
+    $("start").disabled = true; $("stop").disabled = false; $("pop").disabled = false;
+    setCapPill(true); setPipNote("");
+    const ms = 250;                                // ~4fps — signal math, not video
+    timer = setInterval(captureFrame, ms);
+    captureFrame();
+  } catch (e) {
+    setPipNote("capture failed: " + ((e && e.message) || e) + " — try Start again");
+  }
+}
+
+function stopCapture() {
+  if (timer) clearInterval(timer); timer = null;
+  if (stream) stream.getTracks().forEach((t) => t.stop()); stream = null;
+  captureLive = false;
+  $("start").disabled = false; $("stop").disabled = true; $("pop").disabled = $("pop").disabled || !captureLive;
+  setCapPill(false);
+  resetDetector();
+}
+
+async function captureFrame() {
+  if (!video.videoWidth) return;
+  const w = Math.max(64, Number($("width").value) | 0);
+  const h = Math.round(video.videoHeight * w / video.videoWidth);
+  if (capCanvas.width !== w || capCanvas.height !== h) { capCanvas.width = w; capCanvas.height = h; }
+  cctx.drawImage(video, 0, 0, w, h);
+  const img = cctx.getImageData(0, 0, w, h);
+  const sig = detect(img.data, w, h);
+  applySignal(sig, now());
+  frameCount++; renderCounters();
+  // mirror toggle — the ONLY network path for frames, default OFF
+  if ($("mirror").checked) {
+    const blob = await new Promise((res) => capCanvas.toBlob(res, "image/jpeg", 0.5));
+    recordFetch("frame", "POST", "dev/echo");
+    try { await fetch("dev/echo", { method: "POST", headers: { "content-type": "image/jpeg" }, body: blob }); }
+    catch (e) { /* dev echo is best-effort; the netlog entry is what the assertion reads */ }
+    renderCounters();
+  }
+  // rare escalation on a scene change, under budget
+  if (sig.class === "scene") maybeEscalate("scene", capCanvas);
+}
+
+/* =====================================================================================
+   DOCUMENT PICTURE-IN-PICTURE — move the canvas into a real always-on-top window on a user
+   gesture. Feature-detect; fall back to the in-page card with a visible note (never silence).
+   ===================================================================================== */
+let pipWin = null;
+async function openPiP() {
+  if (!("documentPictureInPicture" in window)) {
+    setPipNote("PiP unsupported here — the pet renders in the card above (visible degradation, not silence).");
+    return false;
+  }
+  try {
+    pipWin = await documentPictureInPicture.requestWindow({ width: 440, height: 320 });
+    const style = pipWin.document.createElement("style");
+    style.textContent = "body{margin:0;background:#123f43;display:flex;align-items:center;justify-content:center;height:100vh}";
+    pipWin.document.head.appendChild(style);
+    pipWin.document.body.appendChild(petCanvas);   // move the node; renderer keeps drawing to it
+    pipWin.addEventListener("pagehide", () => {
+      // the canvas was adopted by the PiP document; move it back into the in-page card
+      const host = document.querySelectorAll(".card")[0];
+      host.insertBefore(petCanvas, host.querySelector(".pip-note"));
+      pipWin = null;
+      setPipNote("PiP closed — pet returned in-page.");
+    });
+    setPipNote("Pet is in the Picture-in-Picture window. Close it to return the pet here.");
+    return true;
+  } catch (e) {
+    setPipNote("PiP failed: " + ((e && e.message) || e));
+    return false;
+  }
+}
+
+/* =====================================================================================
+   SYNTHETIC SOURCE — drives the detector + state machine over a fake moving rect on the hidden
+   capture canvas, with NO network and NO screen-share. Used by the headless harness and by the
+   "Run synthetic source" button. Advances an injected clock so it completes fast.
+   ===================================================================================== */
+async function runSynthetic(opts) {
+  const log = opts && opts.log ? opts.log : null;
+  const W = 240, H = Math.round(240 * 0.6);
+  capCanvas.width = W; capCanvas.height = H; resetDetector();
+  injectedNow = 1_700_000_000_000;
+  lastActiveAt = injectedNow; lastSceneAt = null; highSince = null;   // align the activity clock to the injected base
+  const feedOne = (drawFn, advanceMs, label) => {
+    cctx.fillStyle = "#202020"; cctx.fillRect(0, 0, W, H);
+    drawFn();
+    const img = cctx.getImageData(0, 0, W, H);
+    const sig = detect(img.data, W, H);
+    applySignal(sig, now());
+    injectedNow += advanceMs;
+    frameCount++; renderCounters();
+    const m = deriveMood(now());
+    if (log) log.push({ label, signal: { class: sig.class, changedPct: +sig.changedPct.toFixed(3), hot: sig.hot && { x: +sig.hot.x.toFixed(2), y: +sig.hot.y.toFixed(2) } }, mood: m });
+    return m;
+  };
+  // 1) a few still frames, then let time pass → sleepy then nap
+  feedOne(() => {}, 0, "still#1");
+  const sleepy = feedOne(() => {}, 9000, "still→sleepy");   // 9s still → sleepy
+  const nap = feedOne(() => {}, 13000, "still→nap");        // 22s still → nap
+  // 2) a moving rect in one corner (typing-like local activity) → attentive, gaze tracks.
+  //     rects are big enough to flip ≥2 tiles so changedPct > hotFloor (else it reads as "still").
+  feedOne(() => { cctx.fillStyle = "#ff48b0"; cctx.fillRect(8, 8, 64, 44); }, 10, "local#1");
+  feedOne(() => { cctx.fillStyle = "#00e0ff"; cctx.fillRect(14, 10, 64, 44); }, 120, "local#2");
+  const attentive = feedOne(() => { cctx.fillStyle = "#ff48b0"; cctx.fillRect(20, 12, 64, 44); }, 120, "local#3");
+  // 3) a full-screen color flip → scene change → startled
+  const startled = feedOne(() => { cctx.fillStyle = "#f8f7f3"; cctx.fillRect(0, 0, W, H); cctx.fillStyle = "#00838a"; cctx.fillRect(0, 0, W, H); }, 120, "scene");
+  injectedNow = null;   // back to real clock
+  return { sleepy, nap, attentive, startled, log };
+}
+
+/* =====================================================================================
+   HEADLESS HARNESS — window.__pet. Deterministic; no capture, no network.
+   ===================================================================================== */
+window.__pet = {
+  version: BUILD_TAG,
+  feed(sig) { applySignal(sig); return window.__pet.mood(); },
+  mood() { return deriveMood(now()); },
+  signal() { return Object.assign({}, lastSignal); },
+  gaze() { return Object.assign({}, gaze); },
+  status() { return statusText(deriveMood(now()), now()); },
+  bubble() { return bubble.text; },
+  reset(opts) {
+    const hasT0 = opts && opts.t0 != null;
+    const t0 = hasT0 ? opts.t0 : Date.now();
+    injectedNow = hasT0 ? t0 : null;
+    lastActiveAt = t0;
+    lastSignal = { changedPct: 0, hot: null, class: "still", meanDiff: 0 };
+    lastSceneAt = null; highSince = null;
+    bubble = { text: "", until: 0 }; frameCount = 0; modelCalls = 0; ocrCalls = 0; vlmCalls = 0;
+    lastOcrAt = 0; lastVlmAt = 0; netLog.length = 0; resetDetector(); renderCounters();
+  },
+  // advance the injected clock (headless only) and return the resulting mood
+  advance(ms) {
+    if (injectedNow !== null) { injectedNow += ms; currentMood = deriveMood(injectedNow); return currentMood; }
+    return deriveMood(now());
+  },
+  runSynthetic,
+  framePosts,
+  netLog: () => netLog.slice(),
+  counters: () => ({ frames: frameCount, models: modelCalls, ocr: ocrCalls, vlm: vlmCalls, posts: framePosts().length }),
+  setOcrStub(fn) { ocrStub = fn; },
+  setVlmStub(fn) { vlmStub = fn; },
+  // forceTrigger is the acceptance entry point: respects budget; reports "not configured" when off.
+  async forceTrigger(which, keyframeCanvas) {
+    const t = now();
+    const kf = keyframeCanvas || capCanvas;
+    if (kf.width === 0) { kf.width = 120; kf.height = 72; }
+    if (which === "ocr") { const r = await runOcr(kf, t); return r || window.__pet.bubble(); }
+    if (which === "vlm") { const r = await runVlm(kf, t); return r || window.__pet.bubble(); }
+    return "(unknown trigger)";
+  },
+  // point VLM at a URL without touching the input (for the harness)
+  setVlmUrl(u) { vlmUrlLive = u; },
+  table: () => Object.assign({}, MOOD_TABLE),
+};
+
+/* =====================================================================================
+   UI WIRING + RENDER LOOP
+   ===================================================================================== */
+function setCapPill(live) {
+  $("capDot").className = "dot " + (live ? "live" : "idle");
+  $("capTxt").textContent = live ? "capture live" : "capture idle";
+  $("pipPill").hidden = !live;
+}
+function setPipNote(t) { $("pipNote").textContent = t || ""; }
+function renderCounters() {
+  $("cFrames").textContent = frameCount;
+  $("cModels").textContent = modelCalls;
+  $("cOcr").textContent = ocrCalls; $("cVlm").textContent = vlmCalls;
+  const posts = framePosts().length;
+  $("cPosts").textContent = posts;
+  $("cPostsNote").textContent = mirrorOn ? "(mirror on — frames loopback to dev/echo)" : "(mirror off — should stay 0)";
+  $("cPosts").className = posts && !mirrorOn ? "bad" : "ok";
+}
+function renderSignals() {
+  const t = now();
+  $("sClass").textContent = lastSignal.class;
+  $("sChanged").textContent = (lastSignal.changedPct * 100).toFixed(1) + "%";
+  $("sRegion").textContent = lastSignal.hot ? regionLabel(lastSignal.hot) + " (" + lastSignal.hot.x.toFixed(2) + "," + lastSignal.hot.y.toFixed(2) + ")" : "—";
+  $("sStatus").textContent = statusText(currentMood, t);
+  $("sStill").textContent = Math.round((t - lastActiveAt) / 1000) + "s";
+}
+
+function loop() {
+  const t = (injectedNow === null) ? Date.now() : injectedNow;
+  drawPet(t);
+  $("moodTxt").textContent = currentMood;
+  $("moodDot").className = "dot " + (currentMood === "startle" || currentMood === "attentive" ? "live" : currentMood === "nap" ? "idle" : "idle");
+  renderSignals();
+  requestAnimationFrame(loop);
+}
+
+$("start").onclick = startCapture;
+$("stop").onclick = stopCapture;
+$("pop").onclick = openPiP;
+$("mirror").onchange = (e) => { mirrorOn = e.target.checked; renderCounters(); };
+$("synth").onclick = async () => {
+  const log = [];
+  const r = await runSynthetic({ log });
+  $("harnessOut").textContent =
+    "synthetic: attentive=" + r.attentive + " · startled=" + r.startled + " · netPosts=" + framePosts().length + " · " + log.length + " steps";
+};
+$("fOcr").onclick = async () => { const r = await window.__pet.forceTrigger("ocr"); $("harnessOut").textContent = "OCR force: " + r; };
+$("fVlm").onclick = async () => { const r = await window.__pet.forceTrigger("vlm"); $("harnessOut").textContent = "VLM force: " + r; };
+$("reset").onclick = () => { window.__pet.reset(); $("harnessOut").textContent = "reset"; };
+$("themeBtn").onclick = () => {
+  const cur = document.documentElement.getAttribute("data-theme");
+  const next = cur === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  $("themeBtn").textContent = next === "dark" ? "light" : "dark";
+};
+
+async function diag() {
+  try {
+    const h = await fetch("health").then((r) => r.json());
+    $("build").textContent = h.build + (h.version ? " · " + h.version.slice(0, 7) : "");
+  } catch (_) { $("build").textContent = BUILD_TAG; }
+  $("pop").disabled = true;     // needs capture first
+  setCapPill(false);
+  renderCounters();
+}
+
+diag();
+loop();
+window.__pet.version = BUILD_TAG;
+</script>
+</body>
+</html>

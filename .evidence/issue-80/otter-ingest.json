@@ -1,0 +1,6 @@
+{
+  "ok": false,
+  "error": "otter 409: {\"error\":\"challenge_pending\",\"challengeId\":\"chal-53a6847d31e44947a23f348d8dc46312\",\"message\":\"Read requires step-up approval. Poll /api/challenge/:id for status.\"}",
+  "cursor": 0,
+  "segment_count": 0
+}

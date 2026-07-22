@@ -1,0 +1,1 @@
+./goodpoint-box/deploy.sh: line 13: NEAR_API_KEY: set NEAR_API_KEY

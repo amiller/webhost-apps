@@ -1,6 +1,6 @@
 // OAuth3 debug console — data hub. The dashboard (web/index.html, served by the
 // ws-bridge at /) calls these same-origin /twitter/* endpoints. Two paths over ONE
-// sealed jar (held server-side in the TEE, set via /setjar):
+// sealed jar (held server-side in the TEE, sourced from the OAuth3 vault):
 //   - API path: rettiwt-api (reverse-engineered client) — blind, guesses the request
 //   - BROWSER path: real Brave via the extension + xdotool, GLM-4.5V vision, CDP trace → reify
 //   - REIFY: replay the browser's captured request headlessly — the browser is spent ONCE
@@ -37,11 +37,13 @@ const HTTPONLY = new Set(['auth_token', 'kdt'])
 // Last browser-observed request per graphql op (the ground truth the API path is diffed against).
 const lastTrace: Record<string, { req: any; ts: number }> = {}
 
-// Access control. Reads/observation are public; WRITES (post/like/unlike, jar upload) and the
-// mouse-moving probe require the shared secret. Browser-driving is lock+cooldown'd so the single
-// in-TEE browser can't be hogged. No secret set → writes are hard-disabled (safe default).
-const SECRET = process.env.DEBUG_SECRET || ''
-const authed = (req: http.IncomingMessage) => SECRET !== '' && req.headers['x-debug-secret'] === SECRET
+// Access control. Reads/observation are public. WRITES (post/like/unlike) and the mouse-moving
+// probe are gated on the owner's OAuth3 consent: the dashboard calls /twitter/oauth3/connect,
+// the owner approves in the OAuth3 popup, and writes unlock only once that connect is approved
+// (oauthToken set — see writeOk below). The connect asks for the "jar" cap, which is the raw
+// session credential, so approving it IS consent for this enclave to act on the account; the
+// approval screen replaces the former shared DEBUG_SECRET (kept out entirely, no second path).
+// Not connected → writes are hard-disabled (safe default).
 let browserLock = false, lastBrowserRun = 0
 const BROWSER_COOLDOWN = 20_000
 
@@ -79,6 +81,11 @@ const cookieHeader = (jar: Record<string, string>) => Object.entries(jar).map(([
 const OAUTH3 = process.env.OAUTH3_SERVER || 'https://pod.dstack.soc1024.com/oauth3'
 const TOKEN_PATH = process.env.OAUTH3_TOKEN_PATH || '/data/oauth3-token'
 let oauthToken: string | null = null
+// Writes unlock once the owner has approved the OAuth3 connect (the "jar" cap = the raw session
+// credential, so approving it is consent for this enclave to act on the account). The token is
+// opaque, so the client can't distinguish caps — today the deployed OAuth3 server grants only
+// 'jar'; once it grants a distinct 'write' cap and reflects it here, narrow this to write-only.
+const writeOk = () => !!oauthToken
 let connectPending: { requestId: string; approveUrl: string } | null = null
 
 async function saveToken(tok: string) {
@@ -115,7 +122,10 @@ async function pollApproval(requestId: string) {
 async function startConnect(): Promise<{ approveUrl: string; requestId: string }> {
   const r = await fetch(`${OAUTH3}/api/connect`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ plugin: 'twitter', caps: ['jar'], app: 'twitter-debug' }), signal: AbortSignal.timeout(15_000),
+    // 'jar' = the raw session credential (what we act with); 'write' = consent to post/like on the
+    // owner's behalf. The deployed OAuth3 server grants 'jar' today; 'write' is requested so the
+    // approve page discloses it the moment the server supports the cap.
+    body: JSON.stringify({ plugin: 'twitter', caps: ['jar', 'write'], app: 'twitter-debug' }), signal: AbortSignal.timeout(15_000),
   })
   const j = await r.json()
   if (!r.ok) throw new Error(`connect ${r.status}: ${j.error || 'failed'}`)
@@ -195,7 +205,7 @@ async function locate(task: string, step: string, desc: string, offsetY: number,
 }
 
 async function runBrowser(task: string, text?: string) {
-  if (!currentJar.auth_token) throw new Error('no jar loaded — POST /twitter/setjar')
+  if (!currentJar.auth_token) throw new Error('no jar loaded — connect X via OAuth3')
   activity = { task, step: 'starting', startedAt: Date.now() }
   try {
     setAct(task, 'injecting cookies'); await cmdSoft('setCookies', [jarToCookies(currentJar)])
@@ -253,7 +263,7 @@ async function runBrowser(task: string, text?: string) {
 
 // ---- API path (rettiwt-api, reverse-engineered) — instrumented on the wire ----
 async function rettiwt() {
-  if (!currentJar.auth_token || !currentJar.ct0 || !currentJar.twid) throw new Error('no jar loaded — POST /twitter/setjar')
+  if (!currentJar.auth_token || !currentJar.ct0 || !currentJar.twid) throw new Error('no jar loaded — connect X via OAuth3')
   const { Rettiwt } = await import('rettiwt-api')
   // Only the auth-essential cookies — other values (personalization_id="v1_…") contain
   // quotes/specials that break rettiwt's cookie parser and corrupt the twid read.
@@ -369,7 +379,7 @@ async function operationIds() {
   return opCache
 }
 function engineHeaders() {
-  if (!currentJar.auth_token || !currentJar.ct0) throw new Error('no jar loaded — POST /twitter/setjar')
+  if (!currentJar.auth_token || !currentJar.ct0) throw new Error('no jar loaded — connect X via OAuth3')
   return { authorization: WEB_BEARER, 'x-csrf-token': currentJar.ct0, 'content-type': 'application/json', 'x-twitter-active-user': 'yes', 'x-twitter-auth-type': 'OAuth2Session', 'x-twitter-client-language': 'en', accept: '*/*', 'user-agent': UA, referer: 'https://x.com/home', origin: 'https://x.com', cookie: cookieHeader(currentJar) }
 }
 async function engine(op: string, p: any) {
@@ -445,7 +455,7 @@ http.createServer(async (req, res) => {
       return send(200, { injected, cookies: Object.keys(currentJar).map(n => ({ name: n, domain: '.x.com', httpOnly: HTTPONLY.has(n), value: '‹sealed in TEE›' })) })
     }
     if (url === '/twitter/probe') {
-      if (!authed(req)) return send(403, { error: 'probe needs the debug secret' })
+      if (!writeOk()) return send(403, { error: 'probe needs OAuth3 consent — connect X on the dashboard first' })
       const run = (c: string) => execAsync(c).then(r => r.stdout.trim()).catch((e: Error) => `ERR:${e.message}`)
       const geom = await run('xdotool getdisplaygeometry')
       const win = await run('xdotool getactivewindow getwindowname')
@@ -458,13 +468,13 @@ http.createServer(async (req, res) => {
     if (url === '/twitter/ip') return send(200, await egress())
     if (post && url === '/twitter/api') {
       const b = await readBody(req)
-      if (b.op !== 'timeline' && !authed(req)) return send(403, { error: `read-only: '${b.op}' writes to the account and needs the debug secret` })
+      if (b.op !== 'timeline' && !writeOk()) return send(403, { error: `read-only: '${b.op}' writes to the account — connect X via OAuth3 to unlock writes` })
       return send(200, await runApi(b.op, b))
     }
     // Fully-headless reified engine (no browser, no xctid). Same read/write gate as the API path.
     if (post && url === '/twitter/engine') {
       const b = await readBody(req)
-      if (b.op !== 'timeline' && !authed(req)) return send(403, { error: `read-only: '${b.op}' writes to the account and needs the debug secret` })
+      if (b.op !== 'timeline' && !writeOk()) return send(403, { error: `read-only: '${b.op}' writes to the account — connect X via OAuth3 to unlock writes` })
       return send(200, await engine(b.op, b))
     }
     // Browser-driving: one at a time (never hog the single browser) + a cooldown between runs.
@@ -477,7 +487,7 @@ http.createServer(async (req, res) => {
     }
     if (post && url === '/twitter/browser') {
       const b = await readBody(req)
-      if (b.task === 'post' && !authed(req)) return send(403, { error: 'read-only: posting to the account needs the debug secret' })
+      if (b.task === 'post' && !writeOk()) return send(403, { error: 'read-only: posting to the account — connect X via OAuth3 to unlock writes' })
       if (!guardBrowser()) return
       browserLock = true
       try { return send(200, await runBrowser(b.task, b.text)) } finally { browserLock = false; lastBrowserRun = Date.now() }

@@ -1,133 +1,963 @@
 <!doctype html>
 <html lang="en">
 <head>
+<base href="/otterpilot/" />
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>otter — what were we talking about?</title>
+<title>otter — follow a live meeting</title>
+<!--
+  Two modes, one file (model on timeline-peek / calendar-share):
+   • owner   — watches their own live meeting (transcript + shared-screen slides + a
+               "what were we talking about?" recap) through the server's owner token.
+               With the OAuth3 extension, a "Share this live meeting" button mints a
+               scoped, read-only otter token and renders a share link (?token=<scoped>)
+               + a Revoke control (share-kit). The scoped cap is read /live + /frame only.
+   • follow  — ?token=<scoped> in the URL: no wallet, no extension. Polls /live and /frame
+               through otterpilot with that scoped token and renders the transcript stream
+               + slides as they arrive. Read-only — no recap, no actions. The otter jar
+               stays sealed in the TEE; the follower only ever reads through the scoped cap.
+  Honest end-states throughout: a rejected token flips the banner to revoked/gone, and a
+  meeting that isn't live says so (no silent stall). Errors are surfaced, never masked.
+  Design: pod design system · constructivist overprint · grape-acid inking · light mode.
+-->
 <style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; }
-  body { margin: 0; font: 15px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
-         background: #0b0c10; color: #d7dae0; display: flex; flex-direction: column; height: 100vh; }
-  header { padding: 12px 18px; border-bottom: 1px solid #1e2029; display: flex; gap: 12px; align-items: center; }
-  header b { color: #8ad; font-size: 16px; }
-  header .meet { color: #6b7080; font-size: 13px; margin-right: auto; }
-  .dot { width: 9px; height: 9px; border-radius: 50%; background: #2a2e3b; display: inline-block; margin-right: 6px; vertical-align: -1px; }
-  .dot.live { background: #2b6; animation: blink .9s infinite; } @keyframes blink { 50% { opacity: .25; } }
-  button { border: 0; border-radius: 7px; padding: 9px 16px; font: inherit; font-weight: 700; cursor: pointer; }
-  #recap { background: #c9a227; color: #1a1500; font-size: 15px; }
-  #recap:active { transform: translateY(1px); }
-  #recap:disabled { opacity: .5; cursor: default; }
-  select { background: #15171f; border: 1px solid #2a2e3b; color: #cdd2da; border-radius: 6px; padding: 8px; font: inherit; }
-  .main { flex: 1; display: grid; grid-template-columns: 1fr 420px; min-height: 0; }
-  .feed { overflow-y: auto; padding: 16px 22px; border-right: 1px solid #1e2029; }
-  .feed .u { margin: 0 0 11px; color: #c3c8d2; }
-  .feed .u:last-child { color: #eef1f6; }
-  .side { display: flex; flex-direction: column; min-height: 0; }
-  .side h3 { margin: 0; padding: 11px 18px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #c9a227; border-bottom: 1px solid #16181f; }
-  #slides { padding: 10px 14px; border-bottom: 1px solid #16181f; display: none; flex: 0 0 auto; max-height: 38%; overflow-y: auto; }
-  #slides.has { display: block; }
-  #slides .big { width: 100%; max-height: 180px; object-fit: contain; border-radius: 6px; border: 1px solid #232734; display: block; }
-  #slides .row { display: flex; gap: 6px; margin-top: 6px; overflow-x: auto; }
-  #slides .row img { height: 46px; border-radius: 4px; border: 1px solid #232734; cursor: pointer; opacity: .65; }
-  #slides .row img:hover { opacity: 1; }
-  #slides .cap { color: #5f6470; font-size: 10px; margin-top: 4px; }
-  #out { padding: 16px 20px; overflow-y: auto; white-space: pre-wrap; font-size: 14.5px; line-height: 1.6; color: #e6e9ef; flex: 1; }
-  #out .ph { color: #5f6470; }
-  #out .when { color: #6b7080; font-size: 11px; margin-bottom: 10px; }
-  .err { color: #c0524a; }
+:root{
+  --ink1:#6f57a8; --ink2:#b5d33d; --paper:#f8f7f3; --deep:#2e2745; --overprint:#31491f;
+  --bg:var(--paper); --text:var(--deep);
+  --faint:color-mix(in srgb,var(--deep) 55%,var(--paper));
+  --rule:color-mix(in srgb,var(--deep) 16%,var(--paper));
+  --card:#fff; --block:var(--deep); --block-text:#f8f7f3;
+  --wash1:color-mix(in srgb,var(--ink1) 15%,var(--paper));
+  --wash2:color-mix(in srgb,var(--ink2) 17%,var(--paper));
+  --i1-text:#5a4590; --i2-text:#6d8317;
+  --warn:#a8780c; --warn-wash:color-mix(in srgb,#e0a41a 22%,var(--paper));
+  --sans:"Helvetica Neue",Arial,sans-serif;
+  --cond:"Arial Narrow","Helvetica Neue",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  --off:1px;
+}
+/* light mode only — per issue (pod design system, light mode) */
+:root[data-theme="light"]{
+  --ink1:#6f57a8; --ink2:#b5d33d; --paper:#f8f7f3; --deep:#2e2745;
+  --bg:#f8f7f3; --text:#2e2745;
+  --faint:color-mix(in srgb,#2e2745 55%,#f8f7f3);
+  --rule:color-mix(in srgb,#2e2745 16%,#f8f7f3);
+  --card:#fff; --block:#2e2745; --block-text:#f8f7f3;
+  --wash1:color-mix(in srgb,#6f57a8 15%,#f8f7f3);
+  --wash2:color-mix(in srgb,#b5d33d 17%,#f8f7f3);
+  --i1-text:#5a4590; --i2-text:#6d8317;
+  --warn:#a8780c; --warn-wash:color-mix(in srgb,#e0a41a 22%,#f8f7f3);
+}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.55 var(--sans);background:var(--bg);color:var(--text);
+     display:flex;flex-direction:column;height:100vh}
+header{padding:12px 20px;border-bottom:2.5px solid var(--ink1);display:flex;gap:14px;
+       align-items:center;flex-wrap:wrap;background:var(--paper)}
+header h1{font:800 clamp(20px,3vw,26px)/0.96 var(--cond);text-transform:uppercase;margin:0;
+          color:var(--ink1);text-shadow:var(--off) var(--off) 0 var(--ink2)}
+.meet{color:var(--faint);font:13px var(--mono);margin-right:auto;min-width:0}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--rule);display:inline-block;
+     margin-right:6px;vertical-align:-1px}
+.dot.live{background:var(--ink2);animation:blink .9s infinite}
+@keyframes blink{50%{opacity:.25}}
+.btn{display:inline-flex;align-items:center;gap:8px;font:800 13px var(--cond);
+     text-transform:uppercase;letter-spacing:.1em;border:0;padding:10px 18px;cursor:pointer;
+     background:var(--ink1);color:#fff;box-shadow:3px 3px 0 var(--ink2);border-radius:0}
+.btn:disabled{opacity:.5;cursor:default}
+.btn.warn{background:var(--ink2);color:var(--deep);box-shadow:3px 3px 0 var(--ink1)}
+.btn:active{transform:translateY(1px)}
+select{background:var(--card);border:1.5px solid var(--rule);color:var(--text);
+       border-radius:0;padding:8px;font:inherit}
+.share-panel{padding:14px 20px;border-bottom:1.5px solid var(--rule);display:flex;
+             flex-direction:column;gap:12px;background:var(--bg)}
+.note{color:var(--faint);font:13px/1.55 var(--mono)}
+.main{flex:1;display:grid;grid-template-columns:1fr 420px;min-height:0}
+.feed{overflow-y:auto;padding:16px 22px;border-right:1.5px solid var(--rule)}
+.feed .u{margin:0 0 11px;color:var(--faint)}
+.feed .u:last-child{color:var(--text)}
+.side{display:flex;flex-direction:column;min-height:0}
+.side h3{margin:0;padding:11px 18px;font:800 11px var(--cond);letter-spacing:.14em;
+         text-transform:uppercase;color:var(--ink1);border-bottom:1.5px solid var(--rule);
+         background:var(--paper)}
+#slides{padding:10px 14px;border-bottom:1.5px solid var(--rule);display:none;
+        flex:0 0 auto;max-height:38%;overflow-y:auto;background:var(--bg)}
+#slides.has{display:block}
+#slides .big{width:100%;max-height:180px;object-fit:contain;border:1.5px solid var(--rule);
+             display:block}
+#slides .row{display:flex;gap:6px;margin-top:6px;overflow-x:auto}
+#slides .row img{height:46px;border:1.5px solid var(--rule);cursor:pointer;opacity:.65}
+#slides .row img:hover{opacity:1}
+#slides .cap{color:var(--faint);font:11px var(--mono);margin-top:4px}
+#out{padding:16px 20px;overflow-y:auto;white-space:pre-wrap;font-size:14.5px;line-height:1.6;
+     flex:1;color:var(--text)}
+#out .ph{color:var(--faint)}
+#out .when{color:var(--faint);font:11px var(--mono);margin-bottom:10px}
+.err{color:var(--i2-text)}
+/* responsive — narrow screens stack and the page flows (page-scroll) instead of the
+   desktop 100vh split panes, so the transcript feed, slides, and recap all stay
+   reachable without deleting anything (issue: mobile view broken / panels lost).
+   Root-cause fix for the 420px side column overflowing a phone viewport — no
+   overflow-x:hidden masking, the columns actually collapse. */
+@media (max-width:860px){
+  body{height:auto;min-height:100vh}
+  .main{flex:none;display:block}
+  .feed{overflow-y:visible;border-right:0;border-bottom:1.5px solid var(--rule)}
+}
+@media (max-width:480px){
+  header{padding:10px 14px;gap:10px}
+  .share-panel{padding:12px 14px}
+  .feed{padding:14px 16px}
+  #out{padding:14px 16px}
+  #slides{padding:8px 10px}
+  .btn{padding:10px 14px}
+}
+/* conversation call-stack rail — temporal navigation (#30). pod tokens only. */
+.btn.quiet{background:transparent;color:var(--text);border:1.5px solid var(--rule);box-shadow:none;
+  font:600 13px var(--sans);letter-spacing:0;text-transform:none;padding:9px 14px}
+.btn.quiet:hover{border-color:var(--ink1);color:var(--ink1)}
+#stackToggle{background:transparent;color:var(--ink1);border:1.5px solid var(--ink1);box-shadow:none;
+  font:700 12px var(--cond);text-transform:uppercase;letter-spacing:.12em;padding:9px 13px}
+#stackToggle:hover{background:var(--wash1)}
+#stackToggle[aria-expanded="true"]{background:var(--wash2);color:var(--i2-text)}
+.stack-backdrop[hidden],.stack-rail[hidden]{display:none}
+.stack-backdrop{position:fixed;inset:0;background:color-mix(in srgb,var(--deep) 45%,transparent);
+  z-index:30;cursor:pointer}
+.stack-rail{position:fixed;top:0;left:0;bottom:0;width:344px;max-width:88vw;background:var(--paper);
+  border-right:2.5px solid var(--ink1);z-index:31;display:flex;flex-direction:column;
+  box-shadow:6px 0 0 var(--ink2)}
+.rail-head{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;
+  border-bottom:1.5px solid var(--rule)}
+.rail-title{font:800 14px var(--cond);text-transform:uppercase;letter-spacing:.12em;color:var(--ink1)}
+.rail-x{background:none;border:0;font:800 16px var(--cond);color:var(--faint);cursor:pointer;padding:4px 8px}
+.rail-x:hover{color:var(--ink1)}
+.rail-sub{font:12px/1.5 var(--mono);color:var(--faint);padding:10px 16px 6px;margin:0;
+  border-bottom:1.5px solid var(--rule)}
+.rail-scroll{flex:1;overflow-y:auto;padding:8px 0}
+.stack-list{list-style:none;margin:0;padding:0}
+.stk-empty{padding:18px 16px;font:13px/1.6 var(--mono);color:var(--faint)}
+.stk-row{display:grid;grid-template-columns:auto 1fr auto;
+  grid-template-areas:"depth label meta" "depth prev prev";
+  gap:2px 10px;padding:10px 14px;border-bottom:1px solid var(--rule);cursor:pointer;align-items:baseline}
+.stk-row:hover{background:var(--wash1)}
+.stk-row.cur{background:var(--wash2);box-shadow:inset 5px 0 0 var(--ink2)}
+.stk-row.head .stk-label{font-weight:800}
+.stk-depth{grid-area:depth;font:500 11px var(--mono);color:var(--i1-text);white-space:nowrap;
+  align-self:start;padding-top:2px}
+.stk-label{grid-area:label;font:800 13px var(--cond);text-transform:uppercase;letter-spacing:.04em;
+  color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stk-meta{grid-area:meta;font:11px var(--mono);color:var(--faint);white-space:nowrap}
+.stk-prev{grid-area:prev;font:12px/1.45 var(--mono);color:var(--faint);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.stk-tag{display:inline-block;margin-left:6px;font:500 10px var(--mono);text-transform:uppercase;
+  letter-spacing:.1em;color:var(--i2-text);background:var(--wash2);padding:2px 6px}
+.fork-box{border-top:2px solid var(--ink1);margin-top:8px;padding:8px 0 0}
+.fork-head{display:flex;justify-content:space-between;align-items:center;padding:0 14px 8px}
+.fork-label{font:800 11px var(--cond);text-transform:uppercase;letter-spacing:.12em;color:var(--ink1)}
+.fork-nav{display:inline-flex;align-items:center;gap:6px;font:11px var(--mono);color:var(--faint)}
+.fork-arrow{width:24px;height:24px;border:1.5px solid var(--rule);background:var(--card);color:var(--text);
+  font:800 14px var(--cond);cursor:pointer;border-radius:0;padding:0}
+.fork-arrow:disabled{opacity:.4;cursor:default}
+.fork-arrow:hover:not(:disabled){border-color:var(--ink1);color:var(--ink1)}
+.fork-list{padding:0 8px}
+.fork-row{display:grid;grid-template-columns:auto 1fr auto;
+  grid-template-areas:"num label meta" "num prev prev";
+  gap:2px 8px;padding:8px 10px;border:1.5px solid var(--rule);margin:0 6px 6px;cursor:pointer;background:var(--card)}
+.fork-row:hover{border-color:var(--ink1)}
+.fork-row.sel{border-color:var(--ink2);box-shadow:3px 3px 0 var(--ink2)}
+.fork-row.main{border-left:5px solid var(--ink1)}
+.fork-num{grid-area:num;font:800 11px var(--mono);color:var(--i1-text);align-self:start;padding-top:2px}
+.fork-label{grid-area:label;font:800 13px var(--cond);text-transform:uppercase;letter-spacing:.04em;
+  color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fork-meta{grid-area:meta;font:11px var(--mono);color:var(--faint);white-space:nowrap}
+.fork-prev{grid-area:prev;font:12px/1.45 var(--mono);color:var(--faint);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.rail-live{margin:10px 14px 16px}
+.feed p.u.hl{background:var(--wash2);box-shadow:inset 4px 0 0 var(--ink2)}
 </style>
 </head>
 <body>
+<div id="sk-banner"></div>
 <header>
-  <b>otter live</b>
+  <h1>otter live</h1>
   <span class="meet" id="meet"><span class="dot" id="dot"></span>looking for a live meeting…</span>
+  <button id="stackToggle" class="btn" type="button" aria-expanded="false" aria-controls="stackRail" title="browse the meeting as a topic call stack (Go-browser style)">call stack</button>
   <select id="win" title="how far back to recap">
     <option value="40">last bit</option>
     <option value="120" selected>~last few min</option>
     <option value="400">longer</option>
   </select>
-  <button id="recap">what were we talking about?</button>
+  <button id="recap" class="btn warn">what were we talking about?</button>
 </header>
+
+<div id="share-panel" class="share-panel">
+  <div id="sk-share"></div>
+  <div id="sk-receipt"></div>
+</div>
+
+<aside id="stackRail" class="stack-rail" hidden aria-label="conversation call stack">
+  <div class="rail-head">
+    <b class="rail-title">call stack</b>
+    <button id="stackClose" class="rail-x" type="button" aria-label="close call stack">✕</button>
+  </div>
+  <p class="rail-sub">topic frames · up the stack = further back · the frame two levels above the cursor is tagged “two frames ago”. heuristic grouping: time gaps + keyword shifts fork returns — Go-game-browser style. no LLM, labels are approximate.</p>
+  <div class="rail-scroll">
+    <ol id="stackList" class="stack-list"></ol>
+    <div id="forkBox" class="fork-box" hidden>
+      <div class="fork-head">
+        <span class="fork-label">variations after this frame</span>
+        <span class="fork-nav">
+          <button id="forkPrev" class="fork-arrow" type="button" aria-label="previous variation">‹</button>
+          <span id="forkPos"></span>
+          <button id="forkNext" class="fork-arrow" type="button" aria-label="next variation">›</button>
+        </span>
+      </div>
+      <div id="forkList" class="fork-list"></div>
+    </div>
+  </div>
+  <button id="stackLive" class="btn quiet rail-live" type="button" hidden>↩ back to live</button>
+</aside>
+<div id="stackBackdrop" class="stack-backdrop" hidden></div>
 <div class="main">
   <div class="feed" id="feed"></div>
   <section class="side">
     <div id="slides">
-      <img class="big" id="slideBig" />
+      <img class="big" id="slideBig" alt="" />
       <div class="row" id="slideRow"></div>
       <div class="cap" id="slideCap"></div>
     </div>
-    <h3>recap</h3>
-    <div id="out"><span class="ph">Hit the button during a meeting and I'll tell you what's being discussed right now.</span></div>
+    <div id="recap-section">
+      <h3>recap</h3>
+      <div id="out"><span class="ph">Hit the button during a meeting and I'll tell you what's being discussed right now.</span></div>
+    </div>
   </section>
 </div>
+
+<!-- share-kit:inline — canonical source: share-kit/share-kit.js (v0.1.0).
+     Re-run: share-kit/inline.sh otterpilot (app uses public/index.html) — do not edit the block by hand. -->
 <script>
-const feed = document.getElementById('feed'), out = document.getElementById('out');
-const meet = document.getElementById('meet'), dot = document.getElementById('dot');
-const btn = document.getElementById('recap'), win = document.getElementById('win');
-const slides = document.getElementById('slides'), slideBig = document.getElementById('slideBig');
-const slideRow = document.getElementById('slideRow'), slideCap = document.getElementById('slideCap');
-let after = 0, segs = [], live = false, lastSlide = '';
+/*
+ * share-kit.js — one shared capability-share UI for the webhost-app suite.
+ *
+ * The apps on this pod are all one primitive — "share a scoped, revocable capability
+ * over something that's mine, without handing over the credential" — but each was
+ * expressing it differently (or not at all). share-kit is the small shared UI that makes
+ * that shape visible and consistent, so learning one app teaches all of them.
+ *
+ * It exports THREE pieces (plus the observable ShareHandle that wires them together):
+ *   1. ShareKit.shareAction(el, {label, onShare})       — the journey-labeled button
+ *   2. ShareKit.capabilityReceipt(el, handle)            — link + scope sentence + revoke + status pill
+ *   3. ShareKit.recipientBanner(el, handleOrOpts)        — top strip on a shared view, honest end-states
+ *
+ * DESIGN SYSTEM: share-kit is a *component* layer, not a token layer — exactly like the
+ * pod's components.css. It CONSUMES the host app's pod design tokens (--ink1/--ink2/
+ * --paper/--deep/--wash1/--wash2/--i1-text/--i2-text/--warn/--warn-wash/--block/
+ * --block-text/--rule/--faint/--card/--cond/--mono/--sans/--off), so it inherits each
+ * app's own inking (watermelon classic, grape-acid webhost, …) and light/dark register.
+ * Your app must already define them (inline tokens.css / your :root block) — see README.
+ * All styles are scoped under `.sk` and every class is `.sk-*`, so the kit never collides
+ * with a host app's own .btn / .pill / .card classes.
+ *
+ * No dependencies, no build, no network. Adopt by inlining this one file into your app's
+ * index.html (run share-kit/inline.sh <app>).
+ */
+(function () {
+  "use strict";
+  var VERSION = "0.1.0";
+
+  var CSS = [
+/* base — consumes host tokens; scoped so it never touches host styles */
+".sk{font:15px/1.6 var(--sans);color:var(--text)}",
+".sk *{box-sizing:border-box}",
+".sk :focus-visible{outline:2px solid var(--ink2);outline-offset:2px}",
+".sk .sk-err{font:13px/1.5 var(--mono);color:var(--i2-text);margin-top:8px;min-height:1px}",
+/* buttons — hard-edged, two-ink shadow; same grammar as components.css .btn */
+".sk .sk-btn{display:inline-flex;align-items:center;gap:8px;font:800 14px var(--cond);text-transform:uppercase;letter-spacing:.12em;border:0;padding:12px 22px;cursor:pointer;background:var(--ink1);color:#fff;box-shadow:3px 3px 0 var(--ink2);border-radius:0}",
+".sk .sk-btn:disabled{opacity:.5;cursor:default}",
+".sk .sk-btn.danger{background:var(--ink2);color:var(--deep);box-shadow:3px 3px 0 var(--ink1)}",
+".sk .sk-btn.quiet{background:transparent;color:var(--text);border:1px solid var(--rule);box-shadow:none;font:600 13px var(--sans);letter-spacing:0;text-transform:none;padding:9px 14px}",
+/* status pills — mono; ok/warn/bad (warn is the only third ink) */
+".sk .sk-pill{display:inline-flex;align-items:center;gap:6px;font:500 12px/1 var(--mono);padding:4px 10px;border-radius:999px;text-transform:capitalize}",
+".sk .sk-pill.ok{background:var(--wash1);color:var(--i1-text)}",
+".sk .sk-pill.warn{background:var(--warn-wash);color:var(--warn)}",
+".sk .sk-pill.bad{background:var(--wash2);color:var(--i2-text)}",
+/* capability receipt — white card with an ink1 frame, like components.css .card */
+".sk .sk-card{background:var(--card);border:2.5px solid var(--ink1);padding:16px 18px}",
+".sk .sk-receipt-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}",
+".sk .sk-title{font:800 16px var(--cond);text-transform:uppercase;letter-spacing:.08em}",
+".sk .sk-scope{font:13px/1.5 var(--mono);color:var(--text);margin:10px 0}",
+".sk .sk-link-row{display:flex;gap:8px;align-items:stretch}",
+".sk .sk-link{flex:1;min-width:0;font:12px var(--mono);padding:8px 10px;border:1.5px solid var(--rule);background:var(--paper);color:var(--text);border-radius:0}",
+".sk .sk-acts{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}",
+/* recipient banner — full-width top strip; wash ground + ink1 rule, bad/warn variants */
+".sk.sk-banner{display:block;background:var(--wash1);border-bottom:2.5px solid var(--ink1);padding:10px 16px;font:13px/1.5 var(--mono);color:var(--text)}",
+".sk.sk-banner.bad{background:var(--wash2);border-bottom-color:var(--ink2)}",
+".sk.sk-banner.warn{background:var(--warn-wash);border-bottom-color:var(--warn)}",
+".sk .sk-banner-inner{max-width:920px;margin:0 auto}",
+".sk .sk-cap{font-weight:700;color:var(--i1-text)}",
+".sk .sk-sep{color:var(--faint)}"
+  ].join("\n");
+
+  // inject <style id=share-kit-css> once. root defaults to document.head.
+  function init(root) {
+    var r = root || document.head;
+    if (!r || r.querySelector("#share-kit-css")) return;
+    var s = document.createElement("style");
+    s.id = "share-kit-css";
+    s.textContent = CSS;
+    r.appendChild(s);
+  }
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+  function el(tag, cls, txt) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (txt != null) e.textContent = txt;
+    return e;
+  }
+
+  /*
+   * ShareHandle — the live, observable state of one shared capability.
+   *
+   * The app creates a handle after it mints a token; BOTH the owner-side receipt and the
+   * recipient-side banner subscribe to it, so an owner revoking flips the recipient view
+   * to the honest revoked state on its next render. Fields:
+   *   link       — the ?token= (or ?code=) URL the recipient opens
+   *   scope      — plain-English scope sentence (MUST be true; see README)
+   *   owner      — who shared ("you" / a handle)
+   *   thing      — what was shared ("X feed" / "one calendar event" / "live meeting")
+   *   capability — recipient capability phrase ("read-only" / "edit this event" / …)
+   *   status     — "active" | "revoked" | "expired"
+   *   onRevoke   — async () => {} that performs the REAL revoke server-side and resolves
+   *                only once confirmed. If it throws, the status is NOT flipped (the
+   *                receipt re-enables and surfaces the real error — nothing masked).
+   */
+  function handle(opts) {
+    opts = opts || {};
+    var h = {
+      version: VERSION,
+      link: opts.link || "",
+      scope: opts.scope || "",
+      owner: opts.owner || "the owner",
+      thing: opts.thing || "view",
+      capability: opts.capability || "read-only",
+      status: opts.status || "active",
+      onRevoke: typeof opts.onRevoke === "function" ? opts.onRevoke : null,
+      _subs: new Set(),
+      subscribe: function (fn) { this._subs.add(fn); fn(this); return this; },
+      set: function (patch) { Object.assign(this, patch); this._subs.forEach(function (f) { f(h); }); return this; },
+      revoke: async function () {
+        if (this.status !== "active") return;
+        if (this.onRevoke) await this.onRevoke(); // may throw — propagate, do NOT flip
+        this.set({ status: "revoked" });
+      }
+    };
+    return h;
+  }
+
+  /*
+   * 1) SHARE ACTION — the primary button, labeled by the JOURNEY ("Share my feed →"),
+   *    never by the mechanism ("mint token"). Renders into `el`.
+   *    opts.label   — journey label
+   *    opts.onShare — async () => ShareHandle ; mint the capability however your app does
+   *    opts.onShared(handle) — called once minted (typically render the receipt here)
+   *    While minting the button is disabled; a mint failure is shown inline (no silent stall).
+   */
+  function shareAction(el, opts) {
+    init(); opts = opts || {};
+    var host = typeof el === "string" ? document.getElementById(el) : el;
+    host.className = "sk"; host.innerHTML = "";
+    var btn = el2(host, "button", "sk-btn");
+    btn.type = "button"; btn.textContent = opts.label || "Share →";
+    var err = el2(host, "div", "sk-err");
+    btn.addEventListener("click", async function () {
+      btn.disabled = true; var prev = btn.textContent; btn.textContent = "Sharing…"; err.textContent = "";
+      try {
+        var h = await opts.onShare();
+        btn.textContent = "Shared ✓";
+        if (typeof opts.onShared === "function") opts.onShared(h);
+      } catch (e) {
+        btn.disabled = false; btn.textContent = prev;
+        err.textContent = String((e && e.message) || e);
+      }
+    });
+    return { button: btn };
+  }
+  function el2(parent, tag, cls) { var e = el(tag, cls); parent.appendChild(e); return e; }
+
+  /*
+   * 2) CAPABILITY RECEIPT — link + plain-English scope sentence + status pill + Revoke.
+   *    Renders into `el` from a ShareHandle and re-renders on any handle change, so a
+   *    successful revoke flips the pill to "revoked" and disables Revoke.
+   */
+  function capabilityReceipt(host, h) {
+    init();
+    host = typeof host === "string" ? document.getElementById(host) : host;
+    host.className = "sk";
+    h.subscribe(render);
+    function render(hh) {
+      var st = hh.status;
+      var pillCls = st === "active" ? "sk-pill ok" : st === "expired" ? "sk-pill warn" : "sk-pill bad";
+      host.innerHTML =
+        '<div class="sk-card">' +
+          '<div class="sk-receipt-head">' +
+            '<b class="sk-title">Shared link</b>' +
+            '<span class="' + pillCls + '">' + esc(st) + '</span>' +
+          '</div>' +
+          '<div class="sk-scope">' + esc(hh.scope) + '</div>' +
+          '<div class="sk-link-row">' +
+            '<input class="sk-link" readonly value="' + esc(hh.link) + '">' +
+            '<button class="sk-btn quiet" type="button" data-act="copy">copy</button>' +
+          '</div>' +
+          '<div class="sk-acts">' +
+            '<button class="sk-btn danger" type="button" data-act="revoke"' + (st === "active" ? "" : " disabled") + '>' +
+              (st === "active" ? "Revoke" : "Revoked") + '</button>' +
+          '</div>' +
+          '<div class="sk-err" data-role="err"></div>' +
+        '</div>';
+      var copyBtn = host.querySelector('[data-act="copy"]');
+      var revokeBtn = host.querySelector('[data-act="revoke"]');
+      var errEl = host.querySelector('[data-role="err"]');
+      copyBtn.addEventListener("click", function () {
+        var inp = host.querySelector(".sk-link");
+        inp.select(); inp.setSelectionRange(0, 99999);
+        try {
+          navigator.clipboard.writeText(inp.value);
+          copyBtn.textContent = "copied";
+          setTimeout(function () { copyBtn.textContent = "copy"; }, 1200);
+        } catch (_) { try { document.execCommand("copy"); } catch (_) {} }
+      });
+      revokeBtn.addEventListener("click", async function () {
+        revokeBtn.disabled = true; var prev = revokeBtn.textContent; revokeBtn.textContent = "Revoking…"; errEl.textContent = "";
+        try { await h.revoke(); }
+        catch (e) { revokeBtn.disabled = false; revokeBtn.textContent = prev; errEl.textContent = String((e && e.message) || e); }
+      });
+    }
+    return h;
+  }
+
+  /*
+   * 3) RECIPIENT BANNER — top strip on a shared view.
+   *    "You're viewing <owner>'s shared <thing> · <capability>", and an HONEST end-state
+   *    when revoked / expired / gone — never a silent stall (anti-hollow-green, applied to UX).
+   *    Pass a ShareHandle to stay in sync with an owner-side revoke, or a static opts
+   *    object ({owner, thing, capability, status}) to render once.
+   */
+  function recipientBanner(host, h) {
+    init();
+    host = typeof host === "string" ? document.getElementById(host) : host;
+    function render(hh) {
+      var state = hh.status || "active";
+      var cap = hh.capability || "read-only";
+      var cls = "sk sk-banner";
+      var body;
+      if (state === "active") {
+        body = "You're viewing <b>" + esc(hh.owner) + "</b>'s shared " + esc(hh.thing) +
+               ' <span class="sk-sep">·</span> <span class="sk-cap">' + esc(cap) + "</span>";
+      } else if (state === "revoked") {
+        cls += " bad";
+        body = "This share was <b>revoked by the owner</b>. The link no longer works.";
+      } else if (state === "expired") {
+        cls += " warn";
+        body = "This share has <b>expired</b>. Ask the owner for a fresh link.";
+      } else { // "gone" or anything unknown — honest, doesn't over-claim a specific reason
+        cls += " bad";
+        body = "This share is <b>no longer available</b> — it was revoked or has expired.";
+      }
+      host.className = cls;
+      host.innerHTML = '<div class="sk-banner-inner">' + body + "</div>";
+    }
+    if (h && typeof h.subscribe === "function") { h.subscribe(render); return h; }
+    render(Object.assign({ capability: "read-only", status: "active" }, h || {}));
+    return h || {};
+  }
+
+  window.ShareKit = {
+    VERSION: VERSION,
+    CSS: CSS,
+    init: init,
+    handle: handle,
+    shareAction: shareAction,
+    capabilityReceipt: capabilityReceipt,
+    recipientBanner: recipientBanner,
+    esc: esc
+  };
+})();
+
+</script>
+<!-- /share-kit:inline -->
+
+<script>
+const $ = (id) => document.getElementById(id);
+const feed = $("feed"), out = $("out"), meet = $("meet"), dot = $("dot");
+const btn = $("recap"), win = $("win"), recapSection = $("recap-section");
+const slides = $("slides"), slideBig = $("slideBig");
+const slideRow = $("slideRow"), slideCap = $("slideCap");
+const NODE = location.origin + "/oauth3";
+ShareKit.init();   // inject the share-kit <style> once (consumes the pod tokens above)
+
+let after = 0, segs = [], live = false, lastSlide = "", lastTitle = "";
+let pollTimer = null, followBanner = null;
+// step-up (RFC 0005): when /live returns challenge-pending we pause the live poll and
+// poll the challenge instead, resuming the feed the moment the owner approves — so a
+// core restart that re-triggers first-use step-up no longer takes otterpilot down (#61).
+let challengeId = null, challengeTimer = null;
+
+const shareToken = new URLSearchParams(location.search).get("token");
+const FOLLOW = !!shareToken;
+
+// follow mode: the <img> can't carry an Authorization header, so the scoped token rides
+// on the frame URL as &token=. Owner mode uses the server's owner token (no query needed).
+const imgSrc = (src) => FOLLOW ? src + "&token=" + encodeURIComponent(shareToken) : src;
 
 function renderSlides(images, isLive) {
-  if (!isLive) { slides.classList.remove('has'); return; }
-  slides.classList.add('has');
+  if (!isLive) { slides.classList.remove("has"); return; }
+  slides.classList.add("has");
   if (!images.length) {
-    slideBig.style.display = 'none'; slideRow.innerHTML = '';
-    slideCap.textContent = 'no screenshots yet — Otter only captures the shared screen when OtterPilot joins the call (not in record mode)';
+    slideBig.style.display = "none"; slideRow.innerHTML = "";
+    slideCap.textContent = "no screenshots yet — Otter only captures the shared screen when OtterPilot joins the call";
     return;
   }
-  slideBig.style.display = 'block';
-  const newest = images[images.length - 1].src;
+  slideBig.style.display = "block";
+  const newest = imgSrc(images[images.length - 1].src);
   if (newest !== lastSlide) { slideBig.src = newest; lastSlide = newest; }
-  slideRow.innerHTML = '';
+  slideRow.innerHTML = "";
   for (const im of images.slice().reverse()) {
-    const t = document.createElement('img'); t.src = im.src;
-    t.onclick = () => { slideBig.src = im.src; };
+    const t = document.createElement("img"); t.src = imgSrc(im.src);
+    t.onclick = () => { slideBig.src = imgSrc(im.src); };
     slideRow.appendChild(t);
   }
-  slideCap.textContent = images.length + ' screenshot' + (images.length > 1 ? 's' : '') + ' captured';
+  slideCap.textContent = images.length + " screenshot" + (images.length > 1 ? "s" : "") + " captured";
 }
 
 async function poll() {
   try {
-    const r = await fetch('live?after=' + after);
+    const headers = FOLLOW ? { Authorization: "Bearer " + shareToken } : {};
+    const r = await fetch("live?after=" + after, { headers });
     const d = await r.json();
-    if (d.error) { meet.innerHTML = '<span class="dot"></span>' + d.error; live = false; renderSlides([], false); }
-    else if (!d.live) { meet.innerHTML = '<span class="dot"></span>no live meeting right now'; live = false; renderSlides([], false); }
-    else {
+    if (d.state === "auth") {
+      // token rejected: honest end-state. In follow mode the share is gone; stop polling.
+      live = false; renderSlides([], false);
+      meet.innerHTML = '<span class="dot"></span>' + (d.message || "token rejected") +
+        (d.reading_as ? ' · reading as ' + d.reading_as : '');
+      if (FOLLOW && followBanner) followBanner.set({ status: "gone" });
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    } else if (d.state === "no-otter") {
+      // Otter isn't connected for the subject this token reads as — a truthful setup status,
+      // NOT an alarm and NOT masked as 'no live meeting'. Keep polling; it recovers the
+      // moment the jar is synced / the token rebound. States the subject it read as (#44).
+      live = false; renderSlides([], false);
+      meet.innerHTML = '<span class="dot"></span>' + (d.message || "Otter isn't connected") +
+        (d.reading_as ? ' · reading as ' + d.reading_as : '');
+    } else if (d.state === "challenge-pending") {
+      // Otter read is held for step-up approval. Surface a legible, actionable status
+      // (NEVER the raw node 409) and hand off to the challenge poller, which resumes the
+      // live feed on approval. Stop hitting /live while we wait — it would just re-trip
+      // the same challenge. (#61)
+      live = false; renderSlides([], false);
+      const id = d.challenge_id;
+      if (id && id !== challengeId) startChallengePoll(id);
+      return;
+    } else if (d.state || d.error) {
+      live = false; renderSlides([], false);
+      meet.innerHTML = '<span class="dot"></span>' + (d.message || d.error || "couldn't reach otter");
+    } else if (!d.live) {
+      live = false; renderSlides([], false);
+      meet.innerHTML = '<span class="dot"></span>' +
+        (FOLLOW ? "waiting for the live meeting to start…" : "no live meeting right now");
+    } else {
       live = true;
-      meet.innerHTML = '<span class="dot live"></span>' + (d.title || 'live meeting');
+      // a different meeting (title change) starts a fresh call stack + recap window.
+      if (d.title && d.title !== lastTitle) {
+        lastTitle = d.title;
+        if (segs.length) { segs = []; feed.innerHTML = ""; }
+        if (window.__stackReset) window.__stackReset();
+      }
+      meet.innerHTML = '<span class="dot live"></span>' + (d.title || "live meeting");
       for (const s of d.segments) {
-        segs.push(s.text);
-        const p = document.createElement('p'); p.className = 'u'; p.textContent = s.text;
+        segs.push(s);
+        const fr = window.FrameModel ? FrameModel.ingest(s) : null;
+        const p = document.createElement("p"); p.className = "u"; p.textContent = s.text;
+        if (s && s.order != null) p.dataset.order = String(s.order);
+        if (fr) p.dataset.frame = fr.id;
         feed.appendChild(p);
       }
       if (d.segments.length) feed.scrollTop = feed.scrollHeight;
       after = d.max_order;
+      if (d.segments.length && window.__stackIngested) window.__stackIngested();
       renderSlides(d.images || [], true);
     }
-  } catch (e) { meet.innerHTML = '<span class="dot"></span>server unreachable'; }
+  } catch (e) {
+    meet.innerHTML = '<span class="dot"></span>server unreachable';
+  }
 }
 
-btn.onclick = async () => {
-  const n = parseInt(win.value, 10);
-  const text = segs.slice(-n).join(' ');
-  if (!text.trim()) { out.innerHTML = '<span class="ph">No transcript captured yet.</span>'; return; }
-  btn.disabled = true; out.innerHTML = '<span class="ph">thinking…</span>';
+// Poll the step-up challenge status through otterpilot's /challenge/:id proxy and RESUME
+// the live feed the moment the owner approves. This is the recover half of #61: a core
+// restart re-triggers first-use step-up on the standing token, and rather than go down,
+// otterpilot shows the approve-prompt and bounces back automatically on approval.
+// denied/expired/unknown are honest terminal states (follow mode flips the banner to gone).
+async function pollChallenge(id) {
   try {
-    const r = await fetch('recap', { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text }) });
+    const headers = FOLLOW ? { Authorization: "Bearer " + shareToken } : {};
+    const r = await fetch("challenge/" + encodeURIComponent(id), { headers });
     const d = await r.json();
-    if (d.error) out.innerHTML = '<span class="err">' + d.error + '</span>';
-    else out.innerHTML = '<div class="when">' + new Date().toLocaleTimeString() +
-      (d.used_slide ? ' · read the current slide 🖼️' : '') + '</div>' +
-      d.summary.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-  } catch (e) { out.innerHTML = '<span class="err">recap failed: ' + e + '</span>'; }
-  btn.disabled = false;
-};
+    if (d.status === "approved") {
+      stopChallengePoll();
+      challengeId = null;
+      meet.innerHTML = '<span class="dot live"></span>approved — resuming the live feed…';
+      poll();
+      if (!pollTimer) pollTimer = setInterval(poll, 8000);
+    } else if (d.status === "denied" || d.status === "expired" || d.status === "unknown") {
+      stopChallengePoll();
+      challengeId = null;
+      live = false; renderSlides([], false);
+      meet.innerHTML = '<span class="dot"></span>step-up ' +
+        (d.status === "unknown" ? "challenge expired" : d.status) +
+        " — re-mint the otter token";
+      if (FOLLOW && followBanner) followBanner.set({ status: "gone" });
+    }
+    // pending: keep polling; the banner below stays up.
+  } catch (e) {
+    // network blip — keep the challenge poll alive; the banner still says "waiting".
+  }
+}
+function startChallengePoll(id) {
+  challengeId = id;
+  stopChallengePoll();
+  // pause /live while we wait on approval — it would just re-trip the same challenge.
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  live = false; renderSlides([], false);
+  meet.innerHTML = '<span class="dot"></span>Otter read needs step-up approval — approve it in your OAuth3 console (challenge ' +
+    String(id).slice(0, 14) + '…). Waiting for approval…';
+  pollChallenge(id);
+  challengeTimer = setInterval(function () { pollChallenge(id); }, 4000);
+}
+function stopChallengePoll() {
+  if (challengeTimer) { clearInterval(challengeTimer); challengeTimer = null; }
+}
 
-poll(); setInterval(poll, 8000);
+// recap is owner-only — follow mode hides the button + section entirely.
+if (!FOLLOW) {
+  // On the stacked (mobile) layout the recap output sits below the transcript feed, so
+  // bring it into view when it updates — otherwise tapping the button looks like nothing
+  // happened, the very "lost the good-points list" symptom from the issue. No-op on
+  // desktop, where the side panel is already in view.
+  const revealRecap = () => {
+    if (window.matchMedia("(max-width:860px)").matches) {
+      recapSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+  btn.onclick = async () => {
+    const n = parseInt(win.value, 10);
+    const text = segs.slice(-n).map((s) => s.text).join(" ");
+    if (!text.trim()) { out.innerHTML = '<span class="ph">No transcript captured yet.</span>'; revealRecap(); return; }
+    btn.disabled = true; out.innerHTML = '<span class="ph">thinking…</span>'; revealRecap();
+    try {
+      const r = await fetch("recap", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }) });
+      const d = await r.json();
+      if (d.error) out.innerHTML = '<span class="err">' + d.error + '</span>';
+      else out.innerHTML = '<div class="when">' + new Date().toLocaleTimeString() +
+        (d.used_slide ? ' · read the current slide 🖼️' : '') + '</div>' +
+        d.summary.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    } catch (e) { out.innerHTML = '<span class="err">recap failed: ' + e + '</span>'; }
+    btn.disabled = false; revealRecap();
+  };
+}
+
+// --- conversation call stack: temporal navigation (#30) ---
+// A "frame" = a run of consecutive transcript segments that form one topic episode.
+// Frames are grouped cheaply and locally (no LLM): a time gap, a run cap, or a keyword
+// shift opens a new frame. The frames form a TREE, not a list: a new frame normally
+// extends the current branch (parent = previous frame), but if its keywords strongly
+// match an EARLIER frame we treat that as a RETURN and fork from that earlier frame —
+// a Go-game-browser variation off that point. The "call stack" = path root → cursor;
+// "two stack frames ago" = the frame two levels up from the cursor. Heuristic by design
+// (the UI says so); a meeting with no detected returns degrades to a linear stack, which
+// is still a valid, browsable call stack.
+(function () {
+  const STOP = new Set(("the a an and or but of to in on for with is are was were be been being i you he she we they it " +
+    "this that these those there here so just like yeah okay ok um uh oh hi hey as at by from your my our their his her " +
+    "its not no yes do does did done doing have has had having will would can could should shall may might must about " +
+    "into over under again more most very really gonna want wants wanted go goes went going get gets got getting make " +
+    "makes made making say says said saying one two three if then than because when while where what who whom which how " +
+    "why up down out back now then also only we're i'm you're they're that's it's").split(/\s+/));
+  const KW = (txt) => (txt || "").toLowerCase().replace(/[^a-z0-9\s']/g, " ").split(/\s+/)
+    .filter((w) => w.length > 2 && !STOP.has(w));
+
+  const FM = {
+    frames: [], byId: new Map(), headId: null, _seq: 0,
+    GAP_S: 45, MAX_RUN: 6, FORK_OVERLAP: 0.34,
+    reset() { this.frames = []; this.byId.clear(); this.headId = null; this._seq = 0; },
+    _newFrame(parentId) {
+      const id = "f" + (++this._seq);
+      const f = { id, parentId, childIds: [], order0: null, order1: null, count: 0,
+        kw: new Map(), text: "", label: "(empty)", preview: "", lastT: null };
+      this.byId.set(id, f); this.frames.push(f);
+      if (parentId && this.byId.has(parentId)) this.byId.get(parentId).childIds.push(id);
+      return f;
+    },
+    _label(f) {
+      const ranked = [...f.kw.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, 2);
+      if (ranked.length) return ranked.map((r) => r[0]).join(" · ");
+      const w = f.text.trim().split(/\s+/).slice(0, 4).join(" ");
+      return w || "(empty)";
+    },
+    _overlap(segKw, frame) {
+      if (!frame.kw.size || !segKw.length) return 0;
+      let hit = 0;
+      for (const w of segKw) if (frame.kw.has(w)) hit++;
+      return hit / segKw.length;
+    },
+    _shift(seg, cur) {
+      if (!cur.kw.size) return false;
+      return this._overlap(KW(seg.text), cur) < 0.18;
+    },
+    _forkTarget(seg, cur) {
+      // strongest earlier frame (not cur, not a descendant of cur — those would loop) whose
+      // overlap clearly beats continuing the current branch. Ancestors ARE allowed: that's
+      // the canonical "return to an earlier topic" fork.
+      const sk = KW(seg.text);
+      let best = null, bestO = 0;
+      for (const f of this.frames) {
+        if (f === cur) continue;
+        let isDesc = false;
+        for (let p = f; p; p = p.parentId ? this.byId.get(p.parentId) : null) {
+          if (p.id === cur.id) { isDesc = true; break; }
+        }
+        if (isDesc) continue;
+        const o = this._overlap(sk, f);
+        if (o > bestO) { bestO = o; best = f; }
+      }
+      const curO = this._overlap(sk, cur);
+      if (best && bestO >= this.FORK_OVERLAP && bestO > curO + 0.15) return best.id;
+      return null;
+    },
+    ingest(seg) {
+      const t = (seg && Number.isFinite(seg.start_time)) ? Number(seg.start_time) : null;
+      const cur = this.headId ? this.byId.get(this.headId) : null;
+      let f = cur;
+      if (!cur) f = this._newFrame(null);
+      else {
+        const runFull = cur.count >= this.MAX_RUN;
+        const gap = (t != null && cur.lastT != null && (t - cur.lastT) > this.GAP_S);
+        const shift = this._shift(seg, cur);
+        if (runFull || gap || shift) {
+          const forkTo = this._forkTarget(seg, cur);
+          f = this._newFrame(forkTo || cur.id);
+        }
+      }
+      f.count++; f.order1 = seg && seg.order;
+      if (f.order0 == null) f.order0 = seg && seg.order;
+      if (t != null) f.lastT = t;
+      f.text = (f.text ? f.text + " " : "") + ((seg && seg.text) || "");
+      for (const w of KW(seg && seg.text)) f.kw.set(w, (f.kw.get(w) || 0) + 1);
+      f.label = this._label(f);
+      f.preview = f.text.length > 140 ? f.text.slice(0, 140) + "…" : f.text;
+      this.headId = f.id;
+      return f;
+    },
+    pathTo(id) {
+      const path = []; let f = this.byId.get(id);
+      while (f) { path.unshift(f); f = f.parentId ? this.byId.get(f.parentId) : null; }
+      return path;
+    },
+  };
+  window.FrameModel = FM;
+
+  const rail = document.getElementById("stackRail");
+  const backdrop = document.getElementById("stackBackdrop");
+  const toggleBtn = document.getElementById("stackToggle");
+  const closeBtn = document.getElementById("stackClose");
+  const liveBtn = document.getElementById("stackLive");
+  const listEl = document.getElementById("stackList");
+  const forkBox = document.getElementById("forkBox");
+  const forkList = document.getElementById("forkList");
+  const forkPos = document.getElementById("forkPos");
+  const forkPrev = document.getElementById("forkPrev");
+  const forkNext = document.getElementById("forkNext");
+
+  let cursorId = null, followLive = true, forkIndex = 0;
+
+  function escS(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  }
+  function depthLabel(d) { return d === 0 ? "now" : d === 1 ? "1 up" : d + " up"; }
+  function isOnLiveBranch(id) { return FM.pathTo(FM.headId).some((p) => p.id === id); }
+
+  function openRail() {
+    rail.hidden = false; backdrop.hidden = false; document.body.style.overflow = "hidden";
+    toggleBtn.setAttribute("aria-expanded", "true"); render();
+  }
+  function closeRail() {
+    rail.hidden = true; backdrop.hidden = true; document.body.style.overflow = "";
+    toggleBtn.setAttribute("aria-expanded", "false");
+  }
+  toggleBtn.addEventListener("click", () => (rail.hidden ? openRail() : closeRail()));
+  closeBtn.addEventListener("click", closeRail);
+  backdrop.addEventListener("click", closeRail);
+  liveBtn.addEventListener("click", () => {
+    followLive = true; cursorId = FM.headId; forkIndex = 0; render(); scrollFeedToFrame(FM.headId, true);
+  });
+  forkPrev.addEventListener("click", () => stepFork(-1));
+  forkNext.addEventListener("click", () => stepFork(1));
+
+  function selectFrame(id) {
+    followLive = false;
+    cursorId = id;
+    const cur = FM.byId.get(id);
+    const kids = cur ? cur.childIds : [];
+    let li = 0;
+    for (let i = 0; i < kids.length; i++) if (isOnLiveBranch(kids[i])) { li = i; break; }
+    forkIndex = li;
+    render();
+    scrollFeedToFrame(id, false);
+  }
+  function stepFork(d) {
+    const cur = FM.byId.get(cursorId);
+    const kids = cur ? cur.childIds : [];
+    if (!kids.length) return;
+    const i = forkIndex + d;
+    if (i < 0 || i >= kids.length) return;
+    forkIndex = i;
+    selectFrame(kids[i]);   // descend into the chosen variation
+  }
+  function scrollFeedToFrame(id, toBottom) {
+    feed.querySelectorAll("p.u.hl").forEach((el) => el.classList.remove("hl"));
+    const p = feed.querySelector('p[data-frame="' + id + '"]');
+    if (p) {
+      feed.querySelectorAll('p[data-frame="' + id + '"]').forEach((el) => el.classList.add("hl"));
+      p.scrollIntoView({ behavior: "smooth", block: toBottom ? "end" : "center" });
+    } else if (toBottom) {
+      feed.scrollTop = feed.scrollHeight;
+    }
+  }
+
+  function render() {
+    if (!FM.frames.length) {
+      listEl.innerHTML = '<li class="stk-empty">no transcript yet — frames appear as the meeting flows.</li>';
+      forkBox.hidden = true; liveBtn.hidden = true; return;
+    }
+    if (followLive || !cursorId || !FM.byId.has(cursorId)) cursorId = FM.headId;
+    const path = FM.pathTo(cursorId);
+    liveBtn.hidden = cursorId === FM.headId;
+    listEl.innerHTML = path.map((f, i) => {
+      const depth = path.length - 1 - i;          // 0 at cursor, 1 one-up, 2 two-up …
+      const isCur = f.id === cursorId;
+      const isHead = f.id === FM.headId;
+      const cls = "stk-row" + (isCur ? " cur" : "") + (isHead ? " head" : "");
+      const tag = depth === 2 ? ' <span class="stk-tag">two frames ago</span>' : "";
+      return '<li class="' + cls + '" data-id="' + f.id + '">' +
+        '<span class="stk-depth">' + escS(depthLabel(depth)) + '</span>' +
+        '<span class="stk-label">' + escS(f.label) + tag + '</span>' +
+        '<span class="stk-meta">' + f.count + ' seg' + (f.count > 1 ? "s" : "") + '</span>' +
+        '<span class="stk-prev">' + escS(f.preview) + '</span>' +
+        '</li>';
+    }).join("");
+    Array.from(listEl.querySelectorAll(".stk-row")).forEach((row) =>
+      row.addEventListener("click", () => selectFrame(row.dataset.id)));
+
+    const cur = FM.byId.get(cursorId);
+    const kids = cur ? cur.childIds.map((id) => FM.byId.get(id)) : [];
+    if (kids.length) {
+      forkBox.hidden = false;
+      if (forkIndex >= kids.length) forkIndex = 0;
+      forkPos.textContent = (forkIndex + 1) + " / " + kids.length;
+      forkPrev.disabled = forkIndex <= 0;
+      forkNext.disabled = forkIndex >= kids.length - 1;
+      forkList.innerHTML = kids.map((k, i) => {
+        const sel = i === forkIndex ? " sel" : "";
+        const main = isOnLiveBranch(k.id) ? " main" : "";
+        const tag = isOnLiveBranch(k.id) ? " · live branch" : "";
+        return '<div class="fork-row' + sel + main + '" data-id="' + k.id + '">' +
+          '<span class="fork-num">' + (i + 1) + '</span>' +
+          '<span class="fork-label">' + escS(k.label) + '</span>' +
+          '<span class="fork-meta">' + k.count + ' seg' + (k.count > 1 ? "s" : "") + tag + '</span>' +
+          '<span class="fork-prev">' + escS(k.preview) + '</span>' +
+          '</div>';
+      }).join("");
+      Array.from(forkList.querySelectorAll(".fork-row")).forEach((r) =>
+        r.addEventListener("click", () => {
+          forkIndex = kids.findIndex((k) => k.id === r.dataset.id);
+          selectFrame(r.dataset.id);
+        }));
+    } else {
+      forkBox.hidden = true;
+    }
+  }
+
+  window.__stackReset = function () {
+    FM.reset(); cursorId = null; followLive = true; forkIndex = 0;
+    if (!rail.hidden) render();
+  };
+  window.__stackIngested = function () {
+    if (followLive) cursorId = FM.headId;
+    if (!rail.hidden) render();
+  };
+})();
+
+// --- mode wiring ---
+if (FOLLOW) {
+  // read-only live follow: no recap/share UI; banner up top; honest end-states on revoke.
+  $("share-panel").style.display = "none";
+  $("recap").style.display = "none";
+  $("win").style.display = "none";
+  $("recap-section").style.display = "none";
+  followBanner = ShareKit.handle({
+    owner: "the owner", thing: "live meeting", capability: "read-only", status: "active"
+  });
+  ShareKit.recipientBanner($("sk-banner"), followBanner);
+  poll(); pollTimer = setInterval(poll, 8000);
+} else {
+  // owner mode: live view via the server's owner token; Share needs the extension to mint
+  // a scoped otter token from the browser.
+  $("sk-banner").style.display = "none";
+  if (window.oauth3 && window.ShareKit) {
+    renderOwnerShare();
+  } else {
+    $("share-panel").innerHTML =
+      '<div class="note">Sharing needs the OAuth3 extension — open otterpilot in a browser with it to mint a read-only follow link. Your own live view + recap work without it.</div>';
+  }
+  poll(); pollTimer = setInterval(poll, 8000);
+}
+
+// --- share-kit wiring (owner mode) ---
+// The Share button mints a scoped otter token via the extension (the browser holds it for
+// sharing only; the owner's own view still goes through the server's owner token). The
+// receipt carries a TRUE scope sentence + a Revoke that DELETEs the token at the node.
+// share-kit only flips the pill to "revoked" once that resolves — nothing masked.
+function renderOwnerShare() {
+  ShareKit.shareAction($("sk-share"), {
+    label: "Share this live meeting →",
+    async onShare() {
+      const tok = await window.oauth3.connect({ plugin: "otter", app: "otterpilot", caps: ["otter:live-follow"], node: NODE });
+      const here = location.pathname.replace(/(index\.html)?$/, "");
+      const link = location.origin + here + "?token=" + encodeURIComponent(tok);
+      return ShareKit.handle({
+        link,
+        scope: "read-only · this live meeting, until it ends · no recap, no actions",
+        owner: "you", thing: "live meeting", capability: "read-only",
+        onRevoke: () => revokeToken(tok),
+      });
+    },
+    onShared(h) { ShareKit.capabilityReceipt($("sk-receipt"), h); $("sk-share").hidden = true; }
+  });
+}
+
+// DELETE /api/tokens/:token — on the extension path the wallet holds the session, so this
+// may 401 from a raw browser context until the extension exposes a revoke bridge. share-kit
+// surfaces the real error and leaves the pill active (honest — not masked).
+async function revokeToken(t) {
+  const headers = { "Content-Type": "application/json" };
+  const r = await fetch(NODE + "/api/tokens/" + encodeURIComponent(t), { method: "DELETE", headers });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || ("revoke " + r.status));
+}
 </script>
 </body>
 </html>

@@ -9,7 +9,6 @@ SEC=~/projects/teleport/login-with-anything/deploy/secrets.env
 OU=$(grep -E '^OPENVPN_USER=' "$SEC" | cut -d= -f2-)
 OP=$(grep -E '^OPENVPN_PASS=' "$SEC" | cut -d= -f2-)
 OC=$(grep -E '^OVPN_CONFIG_BASE64=' "$SEC" | cut -d= -f2-)
-DS=$(cat "$(dirname "$0")/.debug-secret")   # gates writes/posting + browser-driving
 : "${ZAI_API_KEY:?set ZAI_API_KEY}"
 EMPTY=$(mktemp -u).tgz; tar czf "$EMPTY" -T /dev/null
 MANIFEST=$(python3 -c "
@@ -17,6 +16,6 @@ import json,os
 print(json.dumps({'name':'twitter-debug','runtime':'image','image':'ghcr.io/amiller/tiktok-dstack:twitter-debug',
  'image_port':3000,'oci_runtime':'runc','mode':'attested','caps':['NET_ADMIN'],
  'volumes':[{'name':'twitter-debug-data','mount':'/data'}],
- 'env':{'ZAI_API_KEY':os.environ['ZAI_API_KEY'],'OPENVPN_USER':'''$OU''','OPENVPN_PASS':'''$OP''','OVPN_CONFIG_BASE64':'''$OC''','DEBUG_SECRET':'''$DS''','OAUTH3_SERVER':'https://pod.dstack.soc1024.com/oauth3'}}))")
+ 'env':{'ZAI_API_KEY':os.environ['ZAI_API_KEY'],'OPENVPN_USER':'''$OU''','OPENVPN_PASS':'''$OP''','OVPN_CONFIG_BASE64':'''$OC''','OAUTH3_SERVER':'https://pod.dstack.soc1024.com/oauth3'}}))")
 curl -s -X POST "$DAEMON/_api/projects" -H "Authorization: Bearer $TOKEN" \
   -F "manifest=${MANIFEST};type=application/json" -F "files=@${EMPTY}" | python3 -m json.tool
