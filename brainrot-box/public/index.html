@@ -168,6 +168,11 @@
   .pane.active { display: flex; }
   #mic.on { background: var(--teal); color: #fff; }
   #mic.talking { animation: blink .5s steps(2) infinite; }
+  .meter { width: 74px; height: 16px; border: 2px solid var(--line); background: #fff; position: relative; display: inline-block; }
+  .meter i { position: absolute; top: 0; bottom: 0; }
+  #meterFill { left: 0; width: 0; background: var(--teal); transition: width .12s linear; }
+  #meterFill.hot { background: var(--pink); }
+  #meterMark { left: 24%; width: 2px; background: var(--line); }
   .graph { flex: 1; overflow: auto; padding: 12px; }
   .graph { position: relative; }
   .graph::before { content: ""; position: absolute; left: 18px; top: 12px; bottom: 12px; width: 3px; background: var(--line); }
@@ -225,6 +230,7 @@
     <span><i class="dot" id="compDot"></i>compositor</span>
   </div>
   <button class="ghost" id="mic">🎤 mic</button>
+  <span class="meter" id="meter" hidden><i id="meterFill"></i><i id="meterMark"></i></span>
   <button id="pop">popout</button>
   <button class="ghost" id="stop">stop</button>
 </header>
@@ -463,20 +469,33 @@ async function blobToWav(blob) {
 async function sendClip(blob) {
   if (inflight >= 2) return;
   inflight++;
+  setRunState("mic: transcribing…");
   try {
     const wav = await blobToWav(blob);
     const j = await (await fetch("listen", { method: "POST", headers: { "content-type": "application/octet-stream" }, body: wav })).json();
     if (j.error) setRunState("mic: " + j.error);
+    else if (j.text) setRunState("mic heard: " + j.text);
+    else setRunState("mic: (nothing recognized in that clip)");
   } catch (e) { setRunState("mic send failed"); } finally { inflight--; }
 }
 async function vadLoop(analyser) {
   const buf = new Float32Array(analyser.fftSize);
   const THRESH = 0.012, SILENCE_MS = 800, MIN_MS = 700, MAX_MS = 12000;
   let rec = null, chunks = [], speaking = false, segStart = 0, lastVoice = 0;
+  const micStart = performance.now();
+  let maxRms = 0, warned = false;
   while (micOn) {
     analyser.getFloatTimeDomainData(buf);
     let sum = 0; for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
     const rms = Math.sqrt(sum / buf.length), now = performance.now();
+    maxRms = Math.max(maxRms, rms);
+    const fill = $("meterFill");
+    fill.style.width = Math.min(100, (rms / 0.05) * 100) + "%";
+    fill.classList.toggle("hot", rms > THRESH);
+    if (!warned && now - micStart > 4000 && maxRms < 0.002) {
+      warned = true;
+      setRunState("mic: NO SIGNAL — check the input device in the browser/site settings");
+    }
     if (rms > THRESH) {
       if (!speaking) {
         speaking = true; segStart = now; chunks = [];
@@ -505,6 +524,8 @@ $("mic").onclick = async () => {
     if (audioCtx) audioCtx.close();
     audioCtx = null;
     $("mic").classList.remove("on", "talking");
+    $("meter").hidden = true;
+    setRunState("mic off");
     return;
   }
   try {
@@ -516,6 +537,8 @@ $("mic").onclick = async () => {
     src.connect(analyser);
     micOn = true;
     $("mic").classList.add("on");
+    $("meter").hidden = false;
+    setRunState("mic on — speak; the meter fills, pink = loud enough to send");
     vadLoop(analyser);
   } catch (e) { setRunState("mic denied: " + e.message); }
 };
