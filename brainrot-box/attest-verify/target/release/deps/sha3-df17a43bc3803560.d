@@ -1,0 +1,10 @@
+/tmp/claude-1000/-home-amiller-projects-shaperotator/705144f0-1d1d-49ae-b534-339e6a17c204/scratchpad/wa-brainrot/brainrot-box/attest-verify/target/release/deps/sha3-df17a43bc3803560.d: /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha3-0.12.0/src/lib.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha3-0.12.0/src/oids.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha3-0.12.0/src/utils.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha3-0.12.0/src/../README.md
+
+/tmp/claude-1000/-home-amiller-projects-shaperotator/705144f0-1d1d-49ae-b534-339e6a17c204/scratchpad/wa-brainrot/brainrot-box/attest-verify/target/release/deps/libsha3-df17a43bc3803560.rlib: /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha3-0.12.0/src/lib.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha3-0.12.0/src/oids.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha3-0.12.0/src/utils.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha3-0.12.0/src/../README.md
+
+/tmp/claude-1000/-home-amiller-projects-shaperotator/705144f0-1d1d-49ae-b534-339e6a17c204/scratchpad/wa-brainrot/brainrot-box/attest-verify/target/release/deps/libsha3-df17a43bc3803560.rmeta: /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha3-0.12.0/src/lib.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha3-0.12.0/src/oids.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha3-0.12.0/src/utils.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha3-0.12.0/src/../README.md
+
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha3-0.12.0/src/lib.rs:
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha3-0.12.0/src/oids.rs:
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha3-0.12.0/src/utils.rs:
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha3-0.12.0/src/../README.md:

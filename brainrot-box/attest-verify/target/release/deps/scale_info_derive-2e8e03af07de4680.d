@@ -1,0 +1,8 @@
+/tmp/claude-1000/-home-amiller-projects-shaperotator/705144f0-1d1d-49ae-b534-339e6a17c204/scratchpad/wa-brainrot/brainrot-box/attest-verify/target/release/deps/scale_info_derive-2e8e03af07de4680.d: /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/scale-info-derive-2.11.6/src/lib.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/scale-info-derive-2.11.6/src/attr.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/scale-info-derive-2.11.6/src/trait_bounds.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/scale-info-derive-2.11.6/src/utils.rs
+
+/tmp/claude-1000/-home-amiller-projects-shaperotator/705144f0-1d1d-49ae-b534-339e6a17c204/scratchpad/wa-brainrot/brainrot-box/attest-verify/target/release/deps/libscale_info_derive-2e8e03af07de4680.so: /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/scale-info-derive-2.11.6/src/lib.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/scale-info-derive-2.11.6/src/attr.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/scale-info-derive-2.11.6/src/trait_bounds.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/scale-info-derive-2.11.6/src/utils.rs
+
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/scale-info-derive-2.11.6/src/lib.rs:
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/scale-info-derive-2.11.6/src/attr.rs:
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/scale-info-derive-2.11.6/src/trait_bounds.rs:
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/scale-info-derive-2.11.6/src/utils.rs:

@@ -1,0 +1,9 @@
+/tmp/claude-1000/-home-amiller-projects-shaperotator/705144f0-1d1d-49ae-b534-339e6a17c204/scratchpad/wa-brainrot/brainrot-box/attest-verify/target/release/deps/find_msvc_tools-ab11b8d5553b6553.d: /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/find-msvc-tools-0.1.9/src/lib.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/find-msvc-tools-0.1.9/src/find_tools.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/find-msvc-tools-0.1.9/src/tool.rs
+
+/tmp/claude-1000/-home-amiller-projects-shaperotator/705144f0-1d1d-49ae-b534-339e6a17c204/scratchpad/wa-brainrot/brainrot-box/attest-verify/target/release/deps/libfind_msvc_tools-ab11b8d5553b6553.rlib: /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/find-msvc-tools-0.1.9/src/lib.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/find-msvc-tools-0.1.9/src/find_tools.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/find-msvc-tools-0.1.9/src/tool.rs
+
+/tmp/claude-1000/-home-amiller-projects-shaperotator/705144f0-1d1d-49ae-b534-339e6a17c204/scratchpad/wa-brainrot/brainrot-box/attest-verify/target/release/deps/libfind_msvc_tools-ab11b8d5553b6553.rmeta: /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/find-msvc-tools-0.1.9/src/lib.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/find-msvc-tools-0.1.9/src/find_tools.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/find-msvc-tools-0.1.9/src/tool.rs
+
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/find-msvc-tools-0.1.9/src/lib.rs:
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/find-msvc-tools-0.1.9/src/find_tools.rs:
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/find-msvc-tools-0.1.9/src/tool.rs:

@@ -1,0 +1,9 @@
+/tmp/claude-1000/-home-amiller-projects-shaperotator/705144f0-1d1d-49ae-b534-339e6a17c204/scratchpad/wa-brainrot/brainrot-box/attest-verify/target/release/deps/futures_macro-6a41b8651e1fdd4f.d: /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.33/src/lib.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.33/src/executor.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.33/src/join.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.33/src/select.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.33/src/stream_select.rs
+
+/tmp/claude-1000/-home-amiller-projects-shaperotator/705144f0-1d1d-49ae-b534-339e6a17c204/scratchpad/wa-brainrot/brainrot-box/attest-verify/target/release/deps/libfutures_macro-6a41b8651e1fdd4f.so: /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.33/src/lib.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.33/src/executor.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.33/src/join.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.33/src/select.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.33/src/stream_select.rs
+
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.33/src/lib.rs:
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.33/src/executor.rs:
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.33/src/join.rs:
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.33/src/select.rs:
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.33/src/stream_select.rs:

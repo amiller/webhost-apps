@@ -1,0 +1,10 @@
+/tmp/claude-1000/-home-amiller-projects-shaperotator/705144f0-1d1d-49ae-b534-339e6a17c204/scratchpad/wa-brainrot/brainrot-box/attest-verify/target/release/deps/litemap-9210f19e7171ccfa.d: /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.2/src/lib.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.2/src/map.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.2/src/store/mod.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.2/src/store/slice_impl.rs
+
+/tmp/claude-1000/-home-amiller-projects-shaperotator/705144f0-1d1d-49ae-b534-339e6a17c204/scratchpad/wa-brainrot/brainrot-box/attest-verify/target/release/deps/liblitemap-9210f19e7171ccfa.rlib: /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.2/src/lib.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.2/src/map.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.2/src/store/mod.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.2/src/store/slice_impl.rs
+
+/tmp/claude-1000/-home-amiller-projects-shaperotator/705144f0-1d1d-49ae-b534-339e6a17c204/scratchpad/wa-brainrot/brainrot-box/attest-verify/target/release/deps/liblitemap-9210f19e7171ccfa.rmeta: /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.2/src/lib.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.2/src/map.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.2/src/store/mod.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.2/src/store/slice_impl.rs
+
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.2/src/lib.rs:
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.2/src/map.rs:
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.2/src/store/mod.rs:
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.2/src/store/slice_impl.rs:

@@ -57,8 +57,8 @@
   }
   .left {
     border-right: 3px solid var(--line);
-    display: grid;
-    grid-template-rows: 52% 48%;
+    display: flex;
+    flex-direction: column;
     min-height: 0;
     background: #fff;
   }
@@ -158,6 +158,36 @@
     10%, 70% { opacity: .96; transform: translateY(0); }
     100% { opacity: 0; transform: translateY(-12px); }
   }
+  .tabs { display: flex; border-bottom: 3px solid var(--line); background: var(--wash); }
+  .tabs button {
+    flex: 1; border: 0; border-right: 2px solid var(--line); box-shadow: none; background: var(--wash);
+    font-size: 12px; text-transform: uppercase; font-weight: 900; padding: 9px 4px; color: var(--muted);
+  }
+  .tabs button.active { background: var(--teal); color: #fff; }
+  .pane { min-height: 0; flex: 1; display: none; flex-direction: column; }
+  .pane.active { display: flex; }
+  #mic.on { background: var(--teal); color: #fff; }
+  #mic.talking { animation: blink .5s steps(2) infinite; }
+  .graph { flex: 1; overflow: auto; padding: 12px; }
+  .topic { margin: 0 0 14px; border: 3px solid var(--line); background: #fff; }
+  .topic h3 { margin: 0; padding: 6px 10px; background: var(--wash); border-bottom: 2px solid var(--line); font-size: 13px; text-transform: uppercase; }
+  .gnode { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; border-bottom: 1px solid #e3e3e3; font-size: 14px; }
+  .gnode:last-child { border-bottom: 0; }
+  .kind { font-size: 10px; font-weight: 950; text-transform: uppercase; border: 2px solid var(--line); padding: 1px 6px; white-space: nowrap; }
+  .kind.topic { background: var(--teal); color: #fff; } .kind.question { background: #ffd83d; }
+  .kind.point { background: #fff; } .kind.decision { background: var(--pink); }
+  .kind.divergence { background: #b7a6ff; } .kind.action_item { background: #7dffb2; } .kind.aside { background: #eee; color: var(--muted); }
+  .rail { border: 3px solid var(--line); background: #fff7fb; box-shadow: 5px 5px 0 var(--pink); padding: 8px 10px; margin: 0 0 14px; }
+  .rail b { display: block; font-size: 12px; text-transform: uppercase; margin-bottom: 4px; }
+  .work { flex: 1; overflow: auto; padding: 12px; }
+  .card { border: 3px solid var(--line); background: #fff; margin: 0 0 12px; }
+  .card header { display: flex; gap: 8px; align-items: baseline; padding: 7px 10px; background: var(--wash); border-bottom: 2px solid var(--line); font-weight: 900; }
+  .card header .who { font-size: 10px; text-transform: uppercase; border: 2px solid var(--line); padding: 1px 6px; background: var(--pink); }
+  .card header .who.comp { background: #7dffb2; }
+  .card pre { margin: 0; padding: 8px 10px; font: 11px/1.4 ui-monospace, Menlo, monospace; max-height: 130px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+  .card .meta { padding: 4px 10px 8px; font-size: 12px; color: var(--muted); }
+  .briefcard { border: 3px solid var(--line); background: var(--wash); padding: 8px 10px; margin: 0 0 12px; font-size: 13px; }
+  .briefcard b { text-transform: uppercase; font-size: 11px; }
   body.pop .top, body.pop .left, body.pop .strip { display: none; }
   body.pop .grid { display: block; height: 100vh; }
   body.pop .right { height: 100vh; display: block; }
@@ -178,19 +208,39 @@
     <span><i class="dot" id="smithDot"></i>toolsmith</span>
     <span><i class="dot" id="compDot"></i>compositor</span>
   </div>
+  <button class="ghost" id="mic">🎤 mic</button>
   <button id="pop">popout</button>
   <button class="ghost" id="stop">stop</button>
 </header>
 <main class="grid">
   <aside class="left">
-    <section class="section">
-      <h2>Live transcript</h2>
-      <div class="transcript" id="transcript"><div class="empty">Waiting for live Otter segments.</div></div>
-    </section>
-    <section class="section">
-      <h2>Good points</h2>
-      <div class="points" id="points"><div class="empty">No bangers yet.</div></div>
-    </section>
+    <nav class="tabs">
+      <button class="active" data-pane="paneLive">live</button>
+      <button data-pane="paneGraph">graph</button>
+      <button data-pane="paneWork">workflow</button>
+    </nav>
+    <div class="pane active" id="paneLive">
+      <section class="section" style="flex:1">
+        <h2>Live transcript</h2>
+        <div class="transcript" id="transcript"><div class="empty">Waiting for speech — Otter feed or the 🎤 mic button.</div></div>
+      </section>
+      <section class="section" style="flex:1">
+        <h2>Good points</h2>
+        <div class="points" id="points"><div class="empty">No bangers yet.</div></div>
+      </section>
+    </div>
+    <div class="pane" id="paneGraph">
+      <section class="section" style="flex:1">
+        <h2>Conversation graph</h2>
+        <div class="graph" id="graph"><div class="empty">Nodes appear as the decoder types the conversation.</div></div>
+      </section>
+    </div>
+    <div class="pane" id="paneWork">
+      <section class="section" style="flex:1">
+        <h2>Toolsmith × compositor</h2>
+        <div class="work" id="work"><div class="empty">Tool builds and compositions stream in here.</div></div>
+      </section>
+    </div>
   </aside>
   <section class="right">
     <canvas id="canvas"></canvas>
@@ -264,7 +314,148 @@ function setComposition(newLayers) {
 function activity(ev) {
   if (ev.who === "toolsmith") $("toolState").textContent = `toolsmith ${ev.state}`;
   if (ev.who === "compositor") $("compState").textContent = `compositor ${ev.state}`;
+  if (ev.who === "toolsmith" && String(ev.state).startsWith("rejected")) addWorkCard("smith", ev.state, "", "sandbox refused the tool");
 }
+
+// --- tabs ---
+document.querySelectorAll(".tabs button").forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("active", x === b));
+    document.querySelectorAll(".pane").forEach((p) => p.classList.toggle("active", p.id === b.dataset.pane));
+  };
+});
+
+// --- conversation graph pane ---
+const topicEls = new Map();
+function addGraphNode(node) {
+  clearEmpty("graph");
+  let box = topicEls.get(node.topic);
+  if (!box) {
+    box = document.createElement("div");
+    box.className = "topic";
+    box.innerHTML = `<h3>${esc(node.topic)}</h3>`;
+    topicEls.set(node.topic, box);
+    $("graph").appendChild(box);
+  }
+  const row = document.createElement("div");
+  row.className = "gnode";
+  row.innerHTML = `<span class="kind ${esc(node.kind)}">${esc(node.kind.replace("_", " "))}</span><span>${esc(node.label)}</span>`;
+  box.appendChild(row);
+  if (node.kind === "decision" || node.kind === "action_item") {
+    let rail = $("rail");
+    if (!rail) {
+      rail = document.createElement("div");
+      rail.className = "rail";
+      rail.id = "rail";
+      rail.innerHTML = `<b>Decisions & actions</b>`;
+      $("graph").prepend(rail);
+    }
+    const d = document.createElement("div");
+    d.textContent = `${node.kind === "decision" ? "✓" : "→"} ${node.label}`;
+    rail.appendChild(d);
+  }
+  $("graph").scrollTop = $("graph").scrollHeight;
+}
+
+// --- workflow pane ---
+function addWorkCard(who, title, code, meta) {
+  clearEmpty("work");
+  const card = document.createElement("article");
+  card.className = "card";
+  card.innerHTML = `<header><span class="who ${who === "comp" ? "comp" : ""}">${who === "comp" ? "compositor" : "toolsmith"}</span><span>${esc(title)}</span></header>` +
+    (code ? `<pre>${esc(code)}</pre>` : "") + (meta ? `<div class="meta">${esc(meta)}</div>` : "");
+  $("work").prepend(card);
+  while ($("work").children.length > 40) $("work").lastElementChild.remove();
+}
+function showBrief(brief) {
+  let bc = $("briefcard");
+  if (!bc) {
+    bc = document.createElement("div");
+    bc.className = "briefcard";
+    bc.id = "briefcard";
+    $("work").prepend(bc);
+  }
+  bc.innerHTML = `<b>brief</b> · ${esc(brief.mood || "—")}<br><b>tone</b> · ${esc(brief.tone || "—")}<br><b>direction</b> · ${esc(brief.direction || "—")}`;
+}
+
+// --- mic: speech-gated capture -> POST listen (same pipeline as otter segments) ---
+let micStream = null, micOn = false, audioCtx = null, inflight = 0;
+function encodeWav(samples, rate) {
+  const buf = new ArrayBuffer(44 + samples.length * 2), v = new DataView(buf);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, "RIFF"); v.setUint32(4, 36 + samples.length * 2, true); str(8, "WAVE");
+  str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, "data"); v.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) { const s = Math.max(-1, Math.min(1, samples[i])); v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true); }
+  return new Blob([buf], { type: "audio/wav" });
+}
+async function blobToWav(blob) {
+  const decoded = await audioCtx.decodeAudioData(await blob.arrayBuffer());
+  const rate = 16000, frames = Math.ceil(decoded.duration * rate);
+  const off = new OfflineAudioContext(1, frames, rate);
+  const src = off.createBufferSource(); src.buffer = decoded; src.connect(off.destination); src.start();
+  return encodeWav((await off.startRendering()).getChannelData(0), rate);
+}
+async function sendClip(blob) {
+  if (inflight >= 2) return;
+  inflight++;
+  try {
+    const wav = await blobToWav(blob);
+    const j = await (await fetch("listen", { method: "POST", headers: { "content-type": "application/octet-stream" }, body: wav })).json();
+    if (j.error) setRunState("mic: " + j.error);
+  } catch (e) { setRunState("mic send failed"); } finally { inflight--; }
+}
+async function vadLoop(analyser) {
+  const buf = new Float32Array(analyser.fftSize);
+  const THRESH = 0.012, SILENCE_MS = 800, MIN_MS = 700, MAX_MS = 12000;
+  let rec = null, chunks = [], speaking = false, segStart = 0, lastVoice = 0;
+  while (micOn) {
+    analyser.getFloatTimeDomainData(buf);
+    let sum = 0; for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+    const rms = Math.sqrt(sum / buf.length), now = performance.now();
+    if (rms > THRESH) {
+      if (!speaking) {
+        speaking = true; segStart = now; chunks = [];
+        try { rec = new MediaRecorder(micStream); } catch (e) { setRunState("mic: " + e.message); micOn = false; break; }
+        rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+        rec.start(); $("mic").classList.add("talking");
+      }
+      lastVoice = now;
+    }
+    if (speaking && ((now - lastVoice > SILENCE_MS && now - segStart > MIN_MS) || now - segStart > MAX_MS)) {
+      speaking = false; $("mic").classList.remove("talking");
+      const r = rec, cs = chunks;
+      const done = new Promise((res) => (r.onstop = res));
+      r.stop(); await done;
+      const blob = new Blob(cs);
+      if (blob.size > 1500) sendClip(blob);
+    }
+    await new Promise((res) => setTimeout(res, 60));
+  }
+}
+$("mic").onclick = async () => {
+  if (micOn) {
+    micOn = false;
+    micStream && micStream.getTracks().forEach((t) => t.stop());
+    micStream = null;
+    if (audioCtx) audioCtx.close();
+    audioCtx = null;
+    $("mic").classList.remove("on", "talking");
+    return;
+  }
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = audioCtx.createMediaStreamSource(micStream);
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 1024;
+    src.connect(analyser);
+    micOn = true;
+    $("mic").classList.add("on");
+    vadLoop(analyser);
+  } catch (e) { setRunState("mic denied: " + e.message); }
+};
 function setRunState(text) {
   const t = String(text || "");
   $("runState").textContent = t.length > 54 ? t.slice(0, 51) + "..." : t;
@@ -286,9 +477,10 @@ async function poll() {
       setRunState(j.running ? "running" : "stopped");
       for (const ev of j.events || []) {
         if (ev.type === "segment") addSegment(ev.segment);
-        else if (ev.type === "goodpoint") addPoint(ev.point);
-        else if (ev.type === "tool") addTool(ev.tool);
-        else if (ev.type === "composition") setComposition(ev.layers);
+        else if (ev.type === "goodpoint") { addPoint(ev.point); if (ev.brief) showBrief(ev.brief); }
+        else if (ev.type === "tool") { addTool(ev.tool); addWorkCard("smith", `${ev.tool.name}${ev.updated ? " (updated)" : ""}`, ev.tool.draw, (ev.tool.params || []).map((p) => p.name).join(" · ")); }
+        else if (ev.type === "composition") { setComposition(ev.layers); addWorkCard("comp", "composition", "", ev.layers.map((l) => l.tool).join(" + ")); }
+        else if (ev.type === "graphnode") addGraphNode(ev.node);
         else if (ev.type === "activity") activity(ev);
         else if (ev.type === "status") setRunState(ev.text);
       }
