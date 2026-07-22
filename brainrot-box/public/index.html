@@ -186,6 +186,9 @@
   .rail b { display: block; font-size: 12px; text-transform: uppercase; margin-bottom: 4px; }
   .work { flex: 1; overflow: auto; padding: 12px; }
   .hdrnote { font-weight: 400; text-transform: none; opacity: .8; margin-left: 6px; }
+  .pipe { border: 3px solid var(--line); background: var(--wash); padding: 7px 10px; margin: 0 0 12px;
+    font: 12px ui-monospace, Menlo, monospace; color: var(--muted); overflow-x: auto; white-space: nowrap; }
+  .pipe b { color: var(--teal); font-size: 14px; }
   .building {
     margin: 0 0 12px; padding: 8px 10px; border: 3px dashed var(--line); background: #10131a; color: #7dffb2;
     font: 11px/1.45 ui-monospace, Menlo, monospace; max-height: 150px; overflow: auto;
@@ -230,7 +233,7 @@
     <nav class="tabs">
       <button class="active" data-pane="paneLive">live</button>
       <button data-pane="paneGraph">graph</button>
-      <button data-pane="paneWork">workflow</button>
+      <button data-pane="paneWork">studio</button>
     </nav>
     <div class="pane active" id="paneLive">
       <section class="section" style="flex:1">
@@ -252,6 +255,7 @@
       <section class="section" style="flex:1.2">
         <h2>Toolsmith <span class="hdrnote">writes the tools, live</span></h2>
         <div class="work">
+          <div class="pipe" id="pipe">room speech → <b id="pSeg">0</b> segments → <b id="pBang">0</b> bangers · <b id="pNode">0</b> graph nodes → brief → <b id="pTool">0</b> tools → <b id="pLay">0</b> layers</div>
           <div id="briefslot"></div>
           <pre id="building" class="building" hidden></pre>
           <div id="palette"><div class="empty">Tools appear here as the toolsmith writes them.</div></div>
@@ -284,6 +288,7 @@ let popWin = null;
 let host = window;
 
 function setDot(id, on) { $(id).classList.toggle("on", !!on); }
+function bump(id) { $(id).textContent = Number($(id).textContent) + 1; }
 function clearEmpty(id) { const el = $(id); const e = el.querySelector(".empty"); if (e) e.remove(); }
 function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
@@ -534,12 +539,13 @@ async function poll() {
       setDot("runDot", j.running);
       setRunState(j.running ? "running" : "stopped");
       for (const ev of j.events || []) {
-        if (ev.type === "segment") addSegment(ev.segment);
-        else if (ev.type === "goodpoint") { addPoint(ev.point); if (ev.brief) showBrief(ev.brief); }
+        if (ev.type === "segment") { addSegment(ev.segment); bump("pSeg"); }
+        else if (ev.type === "goodpoint") { addPoint(ev.point); if (ev.brief) showBrief(ev.brief); bump("pBang"); }
+        else if (ev.type === "brief") showBrief(ev.brief);
         else if (ev.type === "build-delta") buildDelta(ev.text);
-        else if (ev.type === "tool") { addTool(ev.tool); paletteCard(ev.tool, ev.updated ? "" : ""); }
-        else if (ev.type === "composition") { setComposition(ev.layers); showStack(layers); }
-        else if (ev.type === "graphnode") addGraphNode(ev.node);
+        else if (ev.type === "tool") { addTool(ev.tool); paletteCard(ev.tool, ev.updated ? "" : ""); $("pTool").textContent = registry.size; }
+        else if (ev.type === "composition") { setComposition(ev.layers); showStack(layers); $("pLay").textContent = layers.length; }
+        else if (ev.type === "graphnode") { addGraphNode(ev.node); bump("pNode"); }
         else if (ev.type === "activity") activity(ev);
         else if (ev.type === "status") setRunState(ev.text);
       }
@@ -577,10 +583,20 @@ function baseBrainrot(t) {
   }
   ctx.globalAlpha = 1;
 }
+// branded grounding under EVERY composition: deep teal → deep pink, never bare black
+function brandWash() {
+  const g = ctx.createLinearGradient(0, 0, W, H);
+  g.addColorStop(0, "#03191c");
+  g.addColorStop(.55, "#0a0a12");
+  g.addColorStop(1, "#1c0713");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+}
 function frame() {
   const t = (performance.now() - t0) / 1000;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, W, H);
+  brandWash();
   if (!layers.length) baseBrainrot(t);
   for (const layer of layers) {
     const tool = registry.get(layer.tool);

@@ -135,6 +135,10 @@ topic label verbatim when it fits, else a new short label. When the SUBJECT clea
 cover a new subject; distinct subjects get distinct topics even within one batch.
 Return STRICT JSON only: {"nodes":[{"seg":<segment number>,"kind":"point","label":"...","topic":"..."}]}`;
 
+// Ported verbatim from interleave — the artistic brief between bangers. Without it (PR #84
+// dropped it) the compositor only ever saw the formulaic banger brief, and output flattened.
+const DISTILL_SYSTEM = `From a live-room transcript (may have fragments/mis-hears), design a VISUAL BRIEF. First pick the few highlights that actually matter (the key phrases, the turn of the discussion) and read the tone (emotional register + energy). Then translate that into a concrete plan for abstract visuals. Output STRICT JSON: {"mood":"one evocative line (<=14 words) to steer visuals by","emphasis":"the single most important short phrase to show on screen (<=6 words)","tone":"emotional register + energy (<=8 words, e.g. 'hushed, reflective' or 'rising, electric')","direction":"a thoughtful effect plan grounded in the highlights + tone: what should move, how, what to emphasize (<=24 words)"}. Ignore filler and noise.`;
+
 const JUDGE_SYSTEM = `You judge a live meeting transcript for genuinely useful "good points".
 Return STRICT JSON only:
 {"good_point":bool,"quote":"<=140 chars near-verbatim","why":"<=12 words","score":0-10}
@@ -356,8 +360,34 @@ export class GoodpointRuntime {
     this.lastLiveAt = seg.t;
     this.push({ type: "segment", segment: seg });
     await this.judgeRecent();
+    await this.distill();
     await this.decoderTurn();
     return seg;
+  }
+
+  lastDistill = 0;
+  async distill(signal?: AbortSignal): Promise<void> {
+    if (Date.now() - this.lastDistill < 12_000) return;
+    const recent = this.recentText(45_000);
+    if (recent.length < 20) return;
+    this.lastDistill = Date.now();
+    const raw = await this.streamComplete(
+      this.cfg.compositorModel,
+      DISTILL_SYSTEM,
+      `Transcript:\n${recent}\n\nJSON:`,
+      220,
+      () => {},
+      signal,
+    );
+    const j = extractJson(raw) as any;
+    if (!j || typeof j.mood !== "string") return;
+    this.brief = {
+      mood: j.mood.trim(),
+      emphasis: String(j.emphasis ?? "").trim(),
+      tone: String(j.tone ?? "").trim(),
+      direction: String(j.direction ?? "").trim(),
+    };
+    this.push({ type: "brief", brief: this.brief });
   }
 
   async decoderTurn(signal?: AbortSignal): Promise<void> {
@@ -613,6 +643,7 @@ export class GoodpointRuntime {
         try {
           const added = await this.pollOtter(ac.signal);
           if (added.length) await this.judgeRecent();
+          if (added.length) await this.distill(ac.signal);
           await this.decoderTurn(ac.signal);
         } catch (e) {
           if (!ac.signal.aborted) this.push({ type: "status", text: e instanceof Error ? e.message : String(e) });
