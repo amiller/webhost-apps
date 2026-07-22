@@ -550,8 +550,7 @@ function setRunState(text) {
 
 async function start() {
   await fetch("start", { method: "POST" });
-  setRunState("running");
-  setDot("runDot", true);
+  setPower(true);
   poll();
 }
 
@@ -560,8 +559,7 @@ async function poll() {
     try {
       const j = await (await fetch("events?since=" + since)).json();
       since = j.seq;
-      setDot("runDot", j.running);
-      setRunState(j.running ? "running" : "stopped");
+      setPower(j.running);
       for (const ev of j.events || []) {
         if (ev.type === "segment") { addSegment(ev.segment); bump("pSeg"); }
         else if (ev.type === "goodpoint") { addPoint(ev.point); if (ev.brief) showBrief(ev.brief); bump("pBang"); }
@@ -632,9 +630,16 @@ function frame() {
   host.requestAnimationFrame(frame);
 }
 
+// Popout: with document PiP the canvas floats in its own little window and the PAGE STAYS INTACT;
+// closing the PiP docks the canvas back into its slot. Only without PiP support do we fall back to
+// fullscreen-in-page (body.pop), toggled by the same button.
 async function popout() {
-  document.body.classList.toggle("pop");
-  if (!("documentPictureInPicture" in window)) { resize(); return; }
+  if (!("documentPictureInPicture" in window)) {
+    document.body.classList.toggle("pop");
+    $("pop").textContent = document.body.classList.contains("pop") ? "dock" : "popout";
+    resize();
+    return;
+  }
   if (popWin) { popWin.close(); return; }
   popWin = await documentPictureInPicture.requestWindow({ width: 900, height: 560 });
   const style = popWin.document.createElement("style");
@@ -644,18 +649,32 @@ async function popout() {
   canvas.replaceWith(slot);
   popWin.document.body.appendChild(canvas);
   host = popWin;
+  $("pop").textContent = "dock";
   resize();
   popWin.addEventListener("pagehide", () => {
     slot.replaceWith(canvas);
     popWin = null;
     host = window;
+    $("pop").textContent = "popout";
     resize();
     window.requestAnimationFrame(frame);
   });
 }
 
 $("pop").onclick = popout;
-$("stop").onclick = async () => { await fetch("stop", { method: "POST" }); setRunState("stopped"); setDot("runDot", false); };
+// stop <-> start toggle, reflecting the server's actual running state
+let runningState = null;
+function setPower(on) {
+  if (on === runningState) return;
+  runningState = on;
+  $("stop").textContent = on ? "stop" : "▶ start";
+  setDot("runDot", on);
+  setRunState(on ? "running" : "stopped — press ▶ start to resume");
+}
+$("stop").onclick = async () => {
+  if (runningState) { await fetch("stop", { method: "POST" }); setPower(false); }
+  else { await fetch("start", { method: "POST" }); setPower(true); }
+};
 $("reset").onclick = async () => { await fetch("reset", { method: "POST" }); location.reload(); };
 window.addEventListener("resize", resize);
 resize();
