@@ -1,6 +1,6 @@
 import vm from "node:vm";
 import { gzipSync, gunzipSync } from "node:zlib";
-import { nearStream } from "./near_e2ee.ts";
+import { attestation, nearStream } from "./near_e2ee.ts";
 import { chutesStream } from "./chutes_e2ee.ts";
 import { hostedStream } from "./hosted_stream.ts";
 
@@ -2036,6 +2036,7 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
       running: app.running,
       weave_running: app.weaveRunning,
       otter_running: app.otterRunning,
+      attestation,
     });
   }
   if (req.method === "GET" && path === "/goodpoints") return json({ goodpoints: app.ledger });
@@ -2171,6 +2172,8 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
           ...(lane === "critic" ? { enabled: app.cfg.enableCritic } : {}),
         };
       }),
+      // #105: NEAR key attestation state — verified, or degraded-to-unverified on pin drift.
+      attestation,
       self_eval: {
         staleness: app.staleness,
         stale_window: app.STALE_WINDOW,

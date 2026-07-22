@@ -40,32 +40,50 @@ async function decrypt(hex: string, clientPriv: Uint8Array): Promise<string> {
 }
 
 const pkCache = new Map<string, string>();
+// Attestation state for the UI. verified=false means the box is running on an
+// UNVERIFIED (TOFU) enclave key: by explicit call (7/22), a stale pin — NEAR
+// rotates images often — must not take the demo down; the page shows a note.
+export const attestation = { verified: null as boolean | null, note: "", at: 0 };
 // Attested pubkey via the bundled attest-verify sidecar (bitrouter-attestation):
 // DCAP quote chain + NVIDIA NRAS + pinned policy; report_data binds the key.
 // No TOFU (webhost-apps#105). pins = NEAR_WORKLOAD_IDS / NEAR_IMAGE_DIGESTS /
 // NEAR_KMS_ROOTS / NEAR_BASE_MEASUREMENTS — the sidecar refuses to run unpinned.
-async function modelPubkey(model: string, pins: Record<string, string>): Promise<string> {
+async function modelPubkey(model: string, pins: Record<string, string>, apiKey: string): Promise<string> {
   if (pkCache.has(model)) return pkCache.get(model)!;
-  // Deployed: the binary sits beside this module. Dev checkout: that path is
-  // the cargo dir, so use its build output.
-  let bin = new URL("./attest-verify", import.meta.url).pathname;
-  if (Deno.statSync(bin).isDirectory) bin += "/target/release/attest-verify";
-  // SSL_CERT_FILE: the shared deno container has no system CA store for rustls.
-  const env = { ...pins, SSL_CERT_FILE: new URL("./ca-bundle.crt", import.meta.url).pathname };
-  const out = await new Deno.Command(bin, { args: [model], env, stdout: "piped", stderr: "piped" }).output();
-  const stdout = new TextDecoder().decode(out.stdout);
-  if (!out.success) throw new Error(`attest-verify ${model}: ${(stdout || new TextDecoder().decode(out.stderr)).slice(0, 300)}`);
-  const v = JSON.parse(stdout);
-  if (!v.verified || !v.signing_public_key) throw new Error(`attest-verify ${model}: unverified`);
-  pkCache.set(model, v.signing_public_key);
-  return v.signing_public_key;
+  let key: string;
+  try {
+    // Deployed: the binary sits beside this module. Dev checkout: that path is
+    // the cargo dir, so use its build output.
+    let bin = new URL("./attest-verify", import.meta.url).pathname;
+    if (Deno.statSync(bin).isDirectory) bin += "/target/release/attest-verify";
+    // SSL_CERT_FILE: the shared deno container has no system CA store for rustls.
+    const env = { ...pins, SSL_CERT_FILE: new URL("./ca-bundle.crt", import.meta.url).pathname };
+    const out = await new Deno.Command(bin, { args: [model], env, stdout: "piped", stderr: "piped" }).output();
+    const stdout = new TextDecoder().decode(out.stdout);
+    if (!out.success) throw new Error((stdout || new TextDecoder().decode(out.stderr)).slice(0, 200));
+    const v = JSON.parse(stdout);
+    if (!v.verified || !v.signing_public_key) throw new Error("unverified: " + JSON.stringify(v.checks));
+    key = v.signing_public_key;
+    attestation.verified = true; attestation.note = ""; attestation.at = Date.now();
+  } catch (e) {
+    attestation.verified = false; attestation.at = Date.now();
+    attestation.note = `enclave key UNVERIFIED (${String((e as Error).message ?? e).slice(0, 160)}) — e2ee still on, attestation degraded`;
+    const r = await fetch(`${BASE}/attestation/report?model=${encodeURIComponent(model)}&signing_algo=ecdsa`, { headers: { Authorization: `Bearer ${apiKey}` } });
+    if (!r.ok) throw new Error(`near attestation ${r.status}: ${(await r.text()).slice(0, 160)}`);
+    const rep = await r.json();
+    const att = (rep.model_attestations ?? []).find((m: { signing_public_key?: string }) => m.signing_public_key);
+    if (!att) throw new Error(`near ${model}: no signing_public_key (not e2ee-capable)`);
+    key = att.signing_public_key;
+  }
+  pkCache.set(model, key);
+  return key;
 }
 
 // Stream OpenAI chat completions over NEAR e2ee. Calls onDelta(text) for each content delta.
 export async function nearStream(
   apiKey: string, pins: Record<string, string>, model: string, body: Record<string, unknown>, onDelta: (t: string) => void, signal?: AbortSignal,
 ): Promise<void> {
-  const pk = await modelPubkey(model, pins);
+  const pk = await modelPubkey(model, pins, apiKey);
   const clientPriv = secp256k1.utils.randomPrivateKey();
   const clientPub = hx(secp256k1.getPublicKey(clientPriv, false).slice(1)); // 64-byte, no prefix
   const msgs = await Promise.all((body.messages as any[]).map(async (m) =>
