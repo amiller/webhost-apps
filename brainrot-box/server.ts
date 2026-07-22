@@ -173,6 +173,27 @@ export function parseJudge(raw: string): JudgeResult | null {
   };
 }
 
+export interface Scored {
+  text: string;
+  confidence: number;
+  drop: boolean;
+}
+
+// Ported verbatim from interleave's scoreTranscript.
+export function scoreTranscript(data: any): Scored {
+  const text = String(data.text ?? "").replace(/\s+/g, " ").trim();
+  const segs: any[] = data.segments ?? [];
+  if (!text) return { text: "", confidence: 0, drop: true };
+  if (!segs.length) return { text, confidence: 0.4, drop: false };
+  const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+  const noSpeech = avg(segs.map((s) => s.no_speech_prob ?? 0));
+  const logprob = avg(segs.map((s) => s.avg_logprob ?? -1));
+  const comp = Math.max(...segs.map((s) => s.compression_ratio ?? 1));
+  const confidence = Math.max(0, Math.min(1, (logprob + 1.5) / 1.5)) * (1 - noSpeech);
+  const drop = confidence < 0.5 || noSpeech > 0.55 || comp > 2.4 || text.replace(/[^a-z]/gi, "").length < 3;
+  return { text, confidence, drop };
+}
+
 export function isBanger(j: JudgeResult | null): j is JudgeResult {
   return !!j && j.good_point && j.score >= 7 && j.quote.length > 0;
 }
@@ -337,18 +358,29 @@ export class GoodpointRuntime {
     return added;
   }
 
-  async transcribe(audio: Uint8Array): Promise<string> {
-    const form = new FormData();
-    form.append("file", new Blob([audio.buffer as ArrayBuffer], { type: "audio/wav" }), "chunk.wav");
-    form.append("model", this.cfg.sttModel);
-    const r = await fetch(`${this.cfg.sttBase}/audio/transcriptions`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${this.cfg.nearKey}` },
-      body: form,
-    });
-    if (!r.ok) throw new Error(`stt ${r.status}: ${(await r.text()).slice(0, 180)}`);
-    const j = await r.json();
-    return String(j.text ?? "").replace(/\s+/g, " ").trim();
+  // Scored transcription, ported verbatim from interleave: verbose_json + language pin gives
+  // whisper's per-segment stats; silence/hallucination clips are DROPPED, not ingested.
+  async transcribe(audio: Uint8Array): Promise<Scored> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const form = new FormData();
+      form.append("model", this.cfg.sttModel);
+      form.append("response_format", "verbose_json");
+      form.append("language", "en");
+      form.append("file", new Blob([audio.buffer as ArrayBuffer], { type: "audio/wav" }), "clip.wav");
+      const r = await fetch(`${this.cfg.sttBase}/audio/transcriptions`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.cfg.nearKey}` },
+        body: form,
+      });
+      if (r.ok) return scoreTranscript(await r.json());
+      const body = await r.text().catch(() => "");
+      if (r.status >= 500 && attempt < 2) {
+        await delay(500);
+        continue;
+      }
+      throw new Error(`stt ${r.status}: ${body.slice(0, 180)}`);
+    }
+    return { text: "", confidence: 0, drop: true };
   }
 
   // mic speech enters the SAME pipeline as otter segments: transcript, judge, graph, brief.
@@ -608,18 +640,19 @@ export class GoodpointRuntime {
     this.weaveIdleReason = "";
     const ac = new AbortController();
     this.weaveAC = ac;
-    const loop = async () => {
+    // two independent cadences, as in interleave: a slow tool build must not freeze compositions
+    const loop = async (turn: (s: AbortSignal) => Promise<void>, pause: number) => {
       while (!ac.signal.aborted) {
         try {
-          await this.toolsmithTurn(ac.signal);
-          await this.compositorTurn(ac.signal);
+          await turn(ac.signal);
         } catch (e) {
           if (!ac.signal.aborted) this.push({ type: "status", text: e instanceof Error ? e.message : String(e) });
         }
-        await delay(1800);
+        await delay(pause);
       }
     };
-    loop().finally(() => {});
+    loop((s) => this.toolsmithTurn(s), 1200).finally(() => {});
+    loop((s) => this.compositorTurn(s), 1400).finally(() => {});
   }
 
   private stopWeave(reason: string): void {
@@ -748,10 +781,12 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
     const audio = new Uint8Array(await req.arrayBuffer());
     if (!audio.length) return json({ error: "empty audio" }, 400);
     try {
-      const text = await app.transcribe(audio);
-      if (!text) return json({ text: "", ingested: false });
-      const seg = await app.ingestSpeech(text);
-      return json({ text, ingested: true, order: seg.order });
+      const scored = await app.transcribe(audio);
+      if (!scored.text || scored.drop) {
+        return json({ text: scored.text, confidence: scored.confidence, dropped: true, ingested: false });
+      }
+      const seg = await app.ingestSpeech(scored.text);
+      return json({ text: scored.text, confidence: scored.confidence, dropped: false, ingested: true, order: seg.order });
     } catch (e) {
       return json({ error: e instanceof Error ? e.message : String(e) }, 502);
     }
