@@ -1,0 +1,9 @@
+/tmp/claude-1000/-home-amiller-projects-shaperotator/705144f0-1d1d-49ae-b534-339e6a17c204/scratchpad/wa-brainrot/brainrot-box/attest-verify/target/release/deps/sponge_cursor-cce3a1edce1e0e17.d: /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sponge-cursor-0.1.0/src/lib.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sponge-cursor-0.1.0/src/u64_le_utils.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sponge-cursor-0.1.0/src/../README.md
+
+/tmp/claude-1000/-home-amiller-projects-shaperotator/705144f0-1d1d-49ae-b534-339e6a17c204/scratchpad/wa-brainrot/brainrot-box/attest-verify/target/release/deps/libsponge_cursor-cce3a1edce1e0e17.rlib: /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sponge-cursor-0.1.0/src/lib.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sponge-cursor-0.1.0/src/u64_le_utils.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sponge-cursor-0.1.0/src/../README.md
+
+/tmp/claude-1000/-home-amiller-projects-shaperotator/705144f0-1d1d-49ae-b534-339e6a17c204/scratchpad/wa-brainrot/brainrot-box/attest-verify/target/release/deps/libsponge_cursor-cce3a1edce1e0e17.rmeta: /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sponge-cursor-0.1.0/src/lib.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sponge-cursor-0.1.0/src/u64_le_utils.rs /home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sponge-cursor-0.1.0/src/../README.md
+
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sponge-cursor-0.1.0/src/lib.rs:
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sponge-cursor-0.1.0/src/u64_le_utils.rs:
+/home/amiller/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sponge-cursor-0.1.0/src/../README.md:

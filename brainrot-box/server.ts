@@ -13,6 +13,17 @@ interface Cfg {
   compositorModel: string;
   weaveIdleMs: number;
   otterIdleMs: number;
+  sttBase: string;
+  sttModel: string;
+}
+
+export interface GraphNode {
+  id: number;
+  kind: "topic" | "question" | "point" | "decision" | "divergence" | "action_item" | "aside";
+  label: string;
+  topic: string;
+  text: string;
+  t: number;
 }
 
 interface Segment {
@@ -85,7 +96,17 @@ Respond with STRICT JSON only, no markdown fences:
 
 Keep the draw body COMPACT — under ~40 lines, no nested named helpers, no comments.
 Use only the canvas 2D API (including Path2D) and Math. NO per-pixel loops, no getImageData/putImageData,
-no DOM, window, document, network, or imports.`;
+no DOM, window, document, network, or imports.
+
+CRAFT — luminous accents over a DARK field; the night must stay night:
+- Spread across the WHOLE frame (elements spanning w and h, or a SUBTLE translucent gradient wash) —
+  never one lone centered shape, but luminous elements should cover roughly a third of the canvas,
+  not flood it. Black space is part of the composition.
+- Glow: ctx.shadowBlur (10-40) + shadowColor matching the stroke. globalCompositeOperation='lighter'
+  is allowed but ONLY with globalAlpha <= 0.5 and lightness <= 60% — additive stacking must not
+  accumulate to white.
+- NEVER call clearRect or paint an opaque full-frame fill — your layer sits in a STACK and must read
+  over whatever is below (translucent washes are fine).`;
 
 const COMPOSITOR_SYSTEM = `You are a realtime VJ compositor. You have a palette of visual layer tools built
 by a coding agent, and a BRIEF distilled from the live room (mood, tone, a creative direction). Each turn you
@@ -100,7 +121,17 @@ it stays alive, but the brief leads.
 Respond with STRICT JSON only, no markdown:
 {"layers":[{"tool":"name","params":{"speed":1.2,"hue":210}}]}
 
-Only use tool names from the palette. 2-5 layers.`;
+Only use tool names from the palette. 2-5 layers, each tool AT MOST ONCE per composition — vary the
+palette, don't stack one tool on itself. Atmosphere at the BACK, structure in the middle, accents in
+front. Keep intensity/alpha params modest (<=1): layers add up, and blown-out white is failure.`;
+
+const DECODER_SYSTEM = `You decode a meeting transcript into a typed conversation graph. You get the
+topics already open and a batch of new numbered segments. Emit one node per SUBSTANTIVE segment; skip
+pure filler/backchannel ('yeah', 'right'). Kinds: topic (frames a subject), question, point (a
+substantive claim/idea), decision (something agreed/chosen), divergence (a tangent/disagreement),
+action_item (a to-do), aside. Give each node a short label (<=8 words) and a topic, REUSING an open
+topic label verbatim when it fits, else a new short label.
+Return STRICT JSON only: {"nodes":[{"seg":<segment number>,"kind":"point","label":"...","topic":"..."}]}`;
 
 const JUDGE_SYSTEM = `You judge a live meeting transcript for genuinely useful "good points".
 Return STRICT JSON only:
@@ -191,6 +222,8 @@ function requireCfg(env: Env): Cfg {
     compositorModel: get("COMPOSITOR_MODEL") || "unsloth/Mistral-Nemo-Instruct-2407-TEE",
     weaveIdleMs: Number(get("WEAVE_IDLE_MS")) || 3 * 60_000,
     otterIdleMs: Number(get("OTTER_IDLE_MS")) || 10 * 60_000,
+    sttBase: (get("TRANSCRIBE_BASE_URL") || get("NEAR_BASE") || "https://cloud-api.near.ai/v1").replace(/\/+$/, ""),
+    sttModel: get("TRANSCRIBE_MODEL") || "openai/whisper-large-v3",
   };
   const missing = [
     ["OAUTH3_CORE", cfg.oauth3Core],
@@ -244,6 +277,14 @@ export class GoodpointRuntime {
   private weaveAC: AbortController | null = null;
   private otterAC: AbortController | null = null;
   private supervisorAC: AbortController | null = null;
+  // mic lane + conversation graph
+  micSeq = 0;
+  graphNodes: GraphNode[] = [];
+  graphTopics: string[] = [];
+  decodeQueue: Segment[] = [];
+  decodedCount = 0;
+  lastDecodeAt = 0;
+  private nodeSeq = 0;
   private judgeOverride?: (text: string) => Promise<JudgeResult | null>;
   private streams?: StreamProvider;
 
@@ -286,7 +327,77 @@ export class GoodpointRuntime {
     // a live meeting or freshly-arrived speech keeps the otter lane awake (#90)
     if (live || added.length) this.lastLiveAt = Date.now();
     for (const seg of added) this.push({ type: "segment", segment: seg });
+    this.decodeQueue.push(...added);
     return added;
+  }
+
+  async transcribe(audio: Uint8Array): Promise<string> {
+    const form = new FormData();
+    form.append("file", new Blob([audio.buffer as ArrayBuffer], { type: "audio/wav" }), "chunk.wav");
+    form.append("model", this.cfg.sttModel);
+    const r = await fetch(`${this.cfg.sttBase}/audio/transcriptions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.cfg.nearKey}` },
+      body: form,
+    });
+    if (!r.ok) throw new Error(`stt ${r.status}: ${(await r.text()).slice(0, 180)}`);
+    const j = await r.json();
+    return String(j.text ?? "").replace(/\s+/g, " ").trim();
+  }
+
+  // mic speech enters the SAME pipeline as otter segments: transcript, judge, graph, brief.
+  async ingestSpeech(text: string): Promise<Segment> {
+    const seg: Segment = { order: 1_000_000_000 + ++this.micSeq, text, speaker: "mic", t: Date.now() };
+    this.seen.add(seg.order);
+    this.transcript.push(seg);
+    this.decodeQueue.push(seg);
+    this.lastLiveAt = seg.t;
+    this.push({ type: "segment", segment: seg });
+    await this.judgeRecent();
+    await this.decoderTurn();
+    return seg;
+  }
+
+  async decoderTurn(signal?: AbortSignal): Promise<void> {
+    const pending = this.decodeQueue.slice(this.decodedCount);
+    if (!pending.length) return;
+    if (pending.length < 3 && Date.now() - this.lastDecodeAt < 30_000) return;
+    const batch = pending.slice(0, 12);
+    this.lastDecodeAt = Date.now();
+    const open = this.graphTopics.slice(-8).join(", ") || "(none yet)";
+    const lines = batch.map((s) => `${s.order}: ${s.text}`).join("\n");
+    const raw = await this.streamComplete(
+      this.cfg.toolsmithModel,
+      DECODER_SYSTEM,
+      `Open topics: ${open}\nSegments:\n${lines}\n\nJSON:`,
+      600,
+      () => {},
+      signal,
+    );
+    const j = extractJson(raw) as any;
+    if (!j || !Array.isArray(j.nodes)) {
+      this.push({ type: "activity", who: "decoder", state: "parse miss" });
+      return;
+    }
+    const byOrder = new Map(batch.map((s) => [s.order, s]));
+    for (const n of j.nodes) {
+      const seg = byOrder.get(Number(n?.seg));
+      const kinds = ["topic", "question", "point", "decision", "divergence", "action_item", "aside"];
+      if (!seg || !kinds.includes(n?.kind)) continue;
+      const topic = String(n.topic ?? "").trim() || "misc";
+      if (!this.graphTopics.includes(topic)) this.graphTopics.push(topic);
+      const node: GraphNode = {
+        id: ++this.nodeSeq,
+        kind: n.kind,
+        label: String(n.label ?? "").trim().slice(0, 80) || seg.text.slice(0, 60),
+        topic,
+        text: seg.text.slice(0, 200),
+        t: seg.t,
+      };
+      this.graphNodes.push(node);
+      this.push({ type: "graphnode", node });
+    }
+    this.decodedCount += batch.length;
   }
 
   recentText(windowMs: number): string {
@@ -330,6 +441,7 @@ export class GoodpointRuntime {
   }
 
   smokeTest(tool: ToolDef): string | null {
+    if (/\bclearRect\b/.test(tool.draw)) return "clearRect erases the layers below — draw over them instead";
     const grad = { addColorStop() {} };
     const ctx = new Proxy({} as any, {
       get(o, k) {
@@ -399,7 +511,10 @@ export class GoodpointRuntime {
       this.push({ type: "activity", who: "compositor", state: "parse miss" });
       return;
     }
-    comp.layers = comp.layers.filter((l: any) => l && this.registry.has(l.tool)).slice(0, 5);
+    const seenTools = new Set<string>();
+    comp.layers = comp.layers
+      .filter((l: any) => l && this.registry.has(l.tool) && !seenTools.has(l.tool) && seenTools.add(l.tool))
+      .slice(0, 5);
     if (!comp.layers.length) return;
     this.composition = comp;
     this.push({ type: "composition", layers: comp.layers });
@@ -483,6 +598,7 @@ export class GoodpointRuntime {
         try {
           const added = await this.pollOtter(ac.signal);
           if (added.length) await this.judgeRecent();
+          await this.decoderTurn(ac.signal);
         } catch (e) {
           if (!ac.signal.aborted) this.push({ type: "status", text: e instanceof Error ? e.message : String(e) });
         }
@@ -572,6 +688,25 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
     });
   }
   if (req.method === "GET" && path === "/goodpoints") return json({ goodpoints: app.ledger });
+  if (req.method === "POST" && path === "/listen") {
+    const audio = new Uint8Array(await req.arrayBuffer());
+    if (!audio.length) return json({ error: "empty audio" }, 400);
+    try {
+      const text = await app.transcribe(audio);
+      if (!text) return json({ text: "", ingested: false });
+      const seg = await app.ingestSpeech(text);
+      return json({ text, ingested: true, order: seg.order });
+    } catch (e) {
+      return json({ error: e instanceof Error ? e.message : String(e) }, 502);
+    }
+  }
+  if (req.method === "GET" && path === "/graph") {
+    return json({
+      topics: app.graphTopics,
+      nodes: app.graphNodes,
+      decisions: app.graphNodes.filter((n) => n.kind === "decision" || n.kind === "action_item"),
+    });
+  }
   if (req.method === "GET" && path === "/diag") {
     return json({
       otter: {
@@ -582,6 +717,8 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
         segment_count: app.transcript.length,
       },
       ledger_count: app.ledger.length,
+      graph: { nodes: app.graphNodes.length, topics: app.graphTopics.length, undecoded: app.decodeQueue.length - app.decodedCount },
+      mic_segments: app.micSeq,
       e2ee: {
         toolsmith_model: app.cfg.toolsmithModel,
         compositor_model: app.cfg.compositorModel,
@@ -610,6 +747,11 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
     app.brief = { mood: "", emphasis: "", tone: "", direction: "" };
     app.events = [];
     app.seq = 0;
+    app.graphNodes = [];
+    app.graphTopics = [];
+    app.decodeQueue = [];
+    app.decodedCount = 0;
+    app.micSeq = 0;
     return json({ ok: true });
   }
   return new Response("not found", { status: 404 });

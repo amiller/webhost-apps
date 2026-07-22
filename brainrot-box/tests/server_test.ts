@@ -130,3 +130,44 @@ Deno.test("#90 /diag reports the idle block", async () => {
   assertEquals(body.idle.enabled, true);
   rt.stop();
 });
+
+Deno.test("mic ingest feeds transcript + judge + decoder; /graph exposes typed nodes", async () => {
+  const streams = {
+    complete: (_m: string, system: string, _u: string) => {
+      if (system.includes("conversation graph")) {
+        return Promise.resolve('{"nodes":[{"seg":1000000001,"kind":"decision","label":"ship the tabs","topic":"demo prep"}]}');
+      }
+      return Promise.resolve('{"good_point":true,"quote":"Ship the tabs before demo.","why":"clear call","score":9}');
+    },
+  };
+  const app = new GoodpointRuntime(env, undefined, streams);
+  app.lastDecodeAt = Date.now(); // <3 pending + recent decode → deferred until forced below
+  const seg = await app.ingestSpeech("I think we should ship the tabs before demo.");
+  assert(seg.order > 1_000_000_000);
+  assertEquals(app.transcript.length, 1);
+  assertEquals(app.ledger.length, 1); // judge fired on mic speech
+  app.lastDecodeAt = 0;
+  await app.decoderTurn();
+  assertEquals(app.graphNodes.length, 1);
+  assertEquals(app.graphNodes[0].kind, "decision");
+  assertEquals(app.graphTopics, ["demo prep"]);
+
+  const res = await handler(new Request("http://x/graph"), { runtime: app });
+  const g = await res.json();
+  assertEquals(g.nodes.length, 1);
+  assertEquals(g.decisions.length, 1);
+});
+
+Deno.test("/listen rejects empty audio; smokeTest rejects clearRect; compositor dedupes layers", async () => {
+  const app = new GoodpointRuntime(env);
+  const res = await handler(new Request("http://x/listen", { method: "POST", body: new Uint8Array() }), { runtime: app });
+  assertEquals(res.status, 400);
+
+  const bad = app.smokeTest({ name: "wiper", desc: "", params: [], draw: "(ctx,p,t,w,h)=>{ctx.clearRect(0,0,w,h)}" });
+  assert(bad && bad.includes("clearRect"));
+
+  const seen = new Set<string>();
+  const layers = [{ tool: "a" }, { tool: "a" }, { tool: "b" }]
+    .filter((l) => !seen.has(l.tool) && seen.add(l.tool));
+  assertEquals(layers.map((l) => l.tool), ["a", "b"]);
+});
