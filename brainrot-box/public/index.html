@@ -185,12 +185,20 @@
   .rail { border: 3px solid var(--line); background: #fff7fb; box-shadow: 5px 5px 0 var(--pink); padding: 8px 10px; margin: 0 0 14px; }
   .rail b { display: block; font-size: 12px; text-transform: uppercase; margin-bottom: 4px; }
   .work { flex: 1; overflow: auto; padding: 12px; }
+  .hdrnote { font-weight: 400; text-transform: none; opacity: .8; margin-left: 6px; }
+  .building {
+    margin: 0 0 12px; padding: 8px 10px; border: 3px dashed var(--line); background: #10131a; color: #7dffb2;
+    font: 11px/1.45 ui-monospace, Menlo, monospace; max-height: 150px; overflow: auto;
+    white-space: pre-wrap; word-break: break-all;
+  }
   .card { border: 3px solid var(--line); background: #fff; margin: 0 0 12px; }
   .card header { display: flex; gap: 8px; align-items: baseline; padding: 7px 10px; background: var(--wash); border-bottom: 2px solid var(--line); font-weight: 900; }
-  .card header .who { font-size: 10px; text-transform: uppercase; border: 2px solid var(--line); padding: 1px 6px; background: var(--pink); }
-  .card header .who.comp { background: #7dffb2; }
+  .card header .params { font-weight: 400; font-size: 12px; color: var(--muted); margin-left: auto; }
   .card pre { margin: 0; padding: 8px 10px; font: 11px/1.4 ui-monospace, Menlo, monospace; max-height: 130px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
-  .card .meta { padding: 4px 10px 8px; font-size: 12px; color: var(--muted); }
+  .card .rejected { padding: 6px 10px; font-size: 12px; font-weight: 800; color: #b3261e; background: #fff2f0; border-top: 2px solid var(--line); }
+  .layer { border: 3px solid var(--line); background: #fff; margin: 0 0 10px; padding: 8px 10px; }
+  .layer b { display: block; margin-bottom: 4px; }
+  .pchip { display: inline-block; border: 2px solid var(--line); background: var(--wash); font: 11px ui-monospace, Menlo, monospace; padding: 1px 6px; margin: 2px 4px 0 0; }
   .briefcard { border: 3px solid var(--line); background: var(--wash); padding: 8px 10px; margin: 0 0 12px; font-size: 13px; }
   .briefcard b { text-transform: uppercase; font-size: 11px; }
   body.pop .top, body.pop .left, body.pop .strip { display: none; }
@@ -241,9 +249,17 @@
       </section>
     </div>
     <div class="pane" id="paneWork">
-      <section class="section" style="flex:1">
-        <h2>Toolsmith × compositor</h2>
-        <div class="work" id="work"><div class="empty">Tool builds and compositions stream in here.</div></div>
+      <section class="section" style="flex:1.2">
+        <h2>Toolsmith <span class="hdrnote">writes the tools, live</span></h2>
+        <div class="work">
+          <div id="briefslot"></div>
+          <pre id="building" class="building" hidden></pre>
+          <div id="palette"><div class="empty">Tools appear here as the toolsmith writes them.</div></div>
+        </div>
+      </section>
+      <section class="section" style="flex:.8">
+        <h2>Compositor <span class="hdrnote">stacks them, right now</span></h2>
+        <div class="work" id="stack"><div class="empty">No composition yet.</div></div>
       </section>
     </div>
   </aside>
@@ -319,7 +335,7 @@ function setComposition(newLayers) {
 function activity(ev) {
   if (ev.who === "toolsmith") $("toolState").textContent = `toolsmith ${ev.state}`;
   if (ev.who === "compositor") $("compState").textContent = `compositor ${ev.state}`;
-  if (ev.who === "toolsmith" && String(ev.state).startsWith("rejected")) addWorkCard("smith", ev.state, "", "sandbox refused the tool");
+  if (ev.who === "toolsmith" && String(ev.state).startsWith("rejected")) rejectNote(ev.state + " (sandbox refused it)");
 }
 
 // --- tabs ---
@@ -367,15 +383,47 @@ function addGraphNode(node) {
   $("graph").scrollTop = $("graph").scrollHeight;
 }
 
-// --- workflow pane ---
-function addWorkCard(who, title, code, meta) {
-  clearEmpty("work");
-  const card = document.createElement("article");
-  card.className = "card";
-  card.innerHTML = `<header><span class="who ${who === "comp" ? "comp" : ""}">${who === "comp" ? "compositor" : "toolsmith"}</span><span>${esc(title)}</span></header>` +
-    (code ? `<pre>${esc(code)}</pre>` : "") + (meta ? `<div class="meta">${esc(meta)}</div>` : "");
-  $("work").prepend(card);
-  while ($("work").children.length > 40) $("work").lastElementChild.remove();
+// --- workflow pane (interleave-style): streaming build + tool palette + live layer stack ---
+function buildDelta(text) {
+  const b = $("building");
+  b.hidden = false;
+  b.textContent = (b.textContent + text).slice(-3000);
+  b.scrollTop = b.scrollHeight;
+}
+const toolCards = new Map();
+function paletteCard(tool, note) {
+  clearEmpty("palette");
+  $("building").hidden = true;
+  $("building").textContent = "";
+  let card = toolCards.get(tool.name);
+  if (!card) {
+    card = document.createElement("article");
+    card.className = "card";
+    toolCards.set(tool.name, card);
+    $("palette").prepend(card);
+  } else {
+    $("palette").prepend(card);
+  }
+  card.innerHTML = `<header><span>${esc(tool.name)}</span><span class="params">${esc((tool.params || []).map((p) => p.name).join(" · "))}</span></header>` +
+    `<pre>${esc(tool.draw)}</pre>` + (note ? `<div class="rejected">${esc(note)}</div>` : "");
+}
+function rejectNote(state) {
+  const b = $("building");
+  b.hidden = false;
+  b.textContent = (b.textContent + `\n⤬ ${state}\n`).slice(-3000);
+  b.scrollTop = b.scrollHeight;
+}
+function showStack(newLayers) {
+  const s = $("stack");
+  s.innerHTML = "";
+  if (!newLayers.length) { s.innerHTML = '<div class="empty">No composition yet.</div>'; return; }
+  for (const l of newLayers) {
+    const row = document.createElement("div");
+    row.className = "layer";
+    const chips = Object.entries(l.params || {}).map(([k, v]) => `<span class="pchip">${esc(k)}:${esc(typeof v === "number" ? v.toFixed(1) : v)}</span>`).join("");
+    row.innerHTML = `<b>${esc(l.tool)}</b>${chips}`;
+    s.appendChild(row);
+  }
 }
 function showBrief(brief) {
   let bc = $("briefcard");
@@ -383,7 +431,7 @@ function showBrief(brief) {
     bc = document.createElement("div");
     bc.className = "briefcard";
     bc.id = "briefcard";
-    $("work").prepend(bc);
+    $("briefslot").appendChild(bc);
   }
   bc.innerHTML = `<b>brief</b> · ${esc(brief.mood || "—")}<br><b>tone</b> · ${esc(brief.tone || "—")}<br><b>direction</b> · ${esc(brief.direction || "—")}`;
 }
@@ -488,8 +536,9 @@ async function poll() {
       for (const ev of j.events || []) {
         if (ev.type === "segment") addSegment(ev.segment);
         else if (ev.type === "goodpoint") { addPoint(ev.point); if (ev.brief) showBrief(ev.brief); }
-        else if (ev.type === "tool") { addTool(ev.tool); addWorkCard("smith", `${ev.tool.name}${ev.updated ? " (updated)" : ""}`, ev.tool.draw, (ev.tool.params || []).map((p) => p.name).join(" · ")); }
-        else if (ev.type === "composition") { setComposition(ev.layers); addWorkCard("comp", "composition", "", ev.layers.map((l) => l.tool).join(" + ")); }
+        else if (ev.type === "build-delta") buildDelta(ev.text);
+        else if (ev.type === "tool") { addTool(ev.tool); paletteCard(ev.tool, ev.updated ? "" : ""); }
+        else if (ev.type === "composition") { setComposition(ev.layers); showStack(layers); }
         else if (ev.type === "graphnode") addGraphNode(ev.node);
         else if (ev.type === "activity") activity(ev);
         else if (ev.type === "status") setRunState(ev.text);

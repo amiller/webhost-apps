@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>the good point detector</title>
+<title>the brainrot box</title>
 <style>
   :root{
-    --ground:#0a0d12; --panel:#10151d; --panel2:#161d28; --line:#232c3a;
-    --ink:#e8eef5; --muted:#8a97a8; --faint:#5c6878;
-    --aqua:#3dd7c4; --aqua-deep:#0f5f59; --ember:#ff6a5a; --violet:#9a86ff; --amber:#f5c451;
+    --ground:#fffdf7; --panel:#ffffff; --panel2:#e8faf8; --line:#171717;
+    --ink:#191919; --muted:#5e6464; --faint:#8a8f8f;
+    --aqua:#00838a; --aqua-deep:#00565c; --ember:#ff48b0; --violet:#7a5cff; --amber:#c88a00;
     --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
     --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     --maxw:940px;
@@ -20,14 +20,12 @@
     margin:0; background:var(--ground); color:var(--ink);
     font-family:var(--sans); font-size:17px; line-height:1.6;
     -webkit-font-smoothing:antialiased;
-    background-image:radial-gradient(1200px 600px at 78% -8%, rgba(154,134,255,.10), transparent 60%),
-                     radial-gradient(1000px 520px at 8% 4%, rgba(61,215,196,.08), transparent 55%);
-    background-attachment:fixed;
+    
   }
   .wrap{max-width:var(--maxw); margin:0 auto; padding:0 22px}
   a{color:var(--aqua); text-decoration:none}
   a:hover{text-decoration:underline}
-  ::selection{background:rgba(61,215,196,.28)}
+  ::selection{background:rgba(255,72,176,.3)}
 
   .eyebrow{font-family:var(--mono); font-size:12px; letter-spacing:.22em; text-transform:uppercase;
     color:var(--aqua); display:flex; align-items:center; gap:.7em; flex-wrap:wrap}
@@ -39,12 +37,12 @@
   header.hero{padding:64px 0 8px}
   h1{font-family:var(--mono); font-weight:600; letter-spacing:-.01em; text-wrap:balance;
     font-size:clamp(2.4rem,6.5vw,4.1rem); line-height:1.02; margin:.35em 0 .28em;
-    background:linear-gradient(180deg,#f3f8ff, #9fe9df 88%); -webkit-background-clip:text; background-clip:text; color:transparent}
-  .lede{font-size:clamp(1.05rem,2.2vw,1.32rem); color:#cdd7e3; max-width:64ch; text-wrap:pretty; margin:.2em 0 0}
+    color:var(--aqua)}
+  .lede{font-size:clamp(1.05rem,2.2vw,1.32rem); color:var(--ink); max-width:64ch; text-wrap:pretty; margin:.2em 0 0}
   .lede b{color:var(--ink); font-weight:600}
   .cta-row{display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-top:28px}
   .cta{display:inline-flex; align-items:center; gap:.5em; font-family:var(--mono); font-weight:600; font-size:1.04rem;
-    color:#04120f; background:linear-gradient(180deg,#5fe6d4,#2bbfad); border-radius:11px; padding:14px 24px;
+    color:var(--line); background:var(--ember); border:3px solid var(--line); border-radius:0; box-shadow:4px 4px 0 var(--line); padding:14px 24px;
     text-decoration:none; box-shadow:0 12px 32px -12px rgba(61,215,196,.55); transition:transform .12s ease, box-shadow .12s ease}
   .cta:hover{transform:translateY(-1px); box-shadow:0 16px 40px -12px rgba(61,215,196,.7); text-decoration:none}
   .cta:focus-visible{outline:2px solid var(--aqua); outline-offset:3px}
@@ -68,7 +66,7 @@
 
   .paths{display:grid; gap:16px; grid-template-columns:1fr 1fr; margin-top:6px}
   @media (max-width:680px){.paths{grid-template-columns:1fr}}
-  .path{border:1px solid var(--line); border-radius:13px; padding:20px; background:linear-gradient(180deg,var(--panel),#0d121a)}
+  .path{border:1px solid var(--line); border-radius:13px; padding:20px; background:var(--panel); box-shadow:5px 5px 0 var(--line)}
   .path.n{--c:var(--ember)} .path.c{--c:var(--violet)}
   .path .role{font-family:var(--mono); font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--c)}
   .path .who{font-size:1.16rem; font-weight:650; margin:.35em 0 .1em}
@@ -84,7 +82,7 @@
   blockquote.said{margin:20px 0 0; padding-left:18px; border-left:2px solid var(--aqua-deep); color:#c8d2df; font-style:italic; font-size:1.04rem}
   blockquote.said cite{display:block; font-style:normal; font-family:var(--mono); font-size:11.5px; color:var(--faint); margin-top:8px; letter-spacing:.04em}
 
-  .spark{width:100%; height:auto; margin:18px 0 8px; border:1px solid var(--line); border-radius:12px; background:#0c1016}
+  .spark{width:100%; height:auto; margin:18px 0 8px; border:1px solid var(--line); border-radius:12px; background:#050505}
   .spark .lbl{font-family:var(--mono); font-size:11px; fill:var(--muted)}
 
   .arc{display:grid; gap:0; margin-top:10px}
@@ -105,15 +103,15 @@
 <body>
 <div class="wrap">
   <header class="hero">
-    <div class="eyebrow"><span class="dot"></span> the brainrot box, sequel &nbsp;·&nbsp; good point detection</div>
-    <h1>the good point detector</h1>
+    <div class="eyebrow"><span class="dot"></span> live vj instrument &nbsp;·&nbsp; good point detection</div>
+    <h1>the brainrot box</h1>
     <p class="lede">The brainrot box learned to take notes. It follows your meeting through a
-      <b>scoped OAuth3 token</b> instead of a raw microphone, a judge reads the transcript over
+      <b>scoped OAuth3 token</b> — or the on-stage 🎤 mic, a judge reads the transcript over
       <b>encrypted inference</b>, and when somebody lands a banger the canvas <b>flashes the quote</b>
       and writes it in a ledger. The meeting gets a score now.</p>
     <div class="cta-row">
       <a class="cta" href="app">▶&nbsp; open the box</a>
-      <span class="cta-note">live · your meeting → judged → painted · e2ee &nbsp;·&nbsp; the ancestor: <a href="/interleave/app">/interleave/app</a></span>
+      <span class="cta-note">live · your meeting → judged → painted · e2ee &nbsp;·&nbsp; the original: <a href="/interleave/app">/interleave/app</a></span>
     </div>
     <div class="cta-row" style="margin-top:14px">
       <span class="buildchip" style="color:var(--aqua); border-color:color-mix(in oklab,var(--aqua) 40%, var(--line))">✓ live — spec'd, swarm-built (<a href="https://github.com/amiller/webhost-apps/pull/84" style="color:var(--aqua)">PR #84</a>), and deployed the same day</span>
@@ -136,12 +134,12 @@
 
   <section>
     <h2><span class="n">01</span> the merge</h2>
-    <p class="khead">Two working things, one app: the box <em>paints</em> the room, the judge <em>scores</em> it.</p>
+    <p class="khead">Two working things, one box: it <em>paints</em> the room, and now it <em>scores</em> it.</p>
     <div class="paths">
       <div class="path n">
-        <div class="role">the brainrot box · paints</div>
+        <div class="role">the canvas · paints</div>
         <div class="who">interleave</div>
-        <div class="prov">live at <a href="/interleave/">/interleave/</a> &nbsp;·&nbsp; NEAR + Chutes enclaves</div>
+        <div class="prov">the original box — live at <a href="/interleave/">/interleave/</a> &nbsp;·&nbsp; NEAR + Chutes enclaves</div>
         <ul>
           <li><b>toolsmith</b> writes little animation tools</li>
           <li><b>compositor</b> VJs them live, sub-2s a frame</li>
@@ -193,7 +191,7 @@
   </section>
 
   <footer>
-    <div class="row">running at <span class="kbd"><a href="app">pod.dstack.soc1024.com/brainrot-box/app</a></span> · spec <span class="kbd">webhost-apps#80</span> · ancestor <span class="kbd"><a href="/interleave/">/interleave/</a></span></div>
+    <div class="row">running at <span class="kbd"><a href="app">pod.dstack.soc1024.com/brainrot-box/app</a></span> · spec <span class="kbd">webhost-apps#80</span> · the original <span class="kbd"><a href="/interleave/">/interleave/</a></span></div>
     <p class="caveat" style="margin-top:14px">Honest edges: a token change requires one owner step-up approval before the
       first live read. Inherited from the box: speech-to-text is TLS to the enclave, not app-layer e2ee, and
       enclave keys are trusted on first use without full quote-chain verification. New here: the judge's taste is one
