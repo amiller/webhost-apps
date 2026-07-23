@@ -5,6 +5,7 @@ import handler, {
   mergeOtterSegments,
   normalizeSegments,
   parseJudge,
+  STARTER_TOOLS,
 } from "../server.ts";
 
 const env = {
@@ -181,4 +182,39 @@ Deno.test("scoreTranscript drops silence hallucinations and non-speech garbage",
   const good = scoreTranscript({ text: "we should ship the tabs today", segments: [{ no_speech_prob: 0.05, avg_logprob: -0.2, compression_ratio: 1.2 }] });
   assert(!good.drop);
   assert(good.confidence > 0.7);
+});
+
+Deno.test("starter toolbox seeds the registry at boot and every tool passes the smoke test", () => {
+  const rt = new GoodpointRuntime(env);
+  assertEquals(rt.registry.size, STARTER_TOOLS.length);
+  for (const tool of STARTER_TOOLS) assertEquals(rt.smokeTest(tool), null, tool.name);
+  // seed tools are announced as events so the UI palette shows them
+  assertEquals(rt.events.filter((e) => (e.ev as any).type === "tool").length, STARTER_TOOLS.length);
+});
+
+Deno.test("registry eviction: LRU extras drop at the cap; starters and on-screen tools survive", () => {
+  const rt = new GoodpointRuntime({ ...env, MAX_TOOLS: "8" });
+  const mk = (name: string) => ({ name, desc: "x", params: [], draw: "(ctx,p,t,w,h)=>{}" });
+  for (let i = 0; i < 6; i++) rt.registry.set("gen" + i, mk("gen" + i));
+  rt.composition = { layers: [{ tool: "gen0", params: {} }] };
+  rt.evictTools();
+  assertEquals(rt.registry.size, 8);
+  assert(rt.registry.has("gen0"), "on-screen tool survives");
+  for (const t of STARTER_TOOLS) assert(rt.registry.has(t.name), "starter survives: " + t.name);
+  assert(!rt.registry.has("gen1"), "oldest unprotected generated tool evicted first");
+  assert(rt.registry.has("gen5"), "newest generated tool survives");
+  assertEquals(rt.events.filter((e) => (e.ev as any).type === "tool-evicted").length, 4);
+});
+
+Deno.test("/tools returns the palette snapshot; /reset clears and reseeds the registry", async () => {
+  const rt = new GoodpointRuntime(env);
+  rt.registry.set("gen", { name: "gen", desc: "x", params: [], draw: "(ctx)=>{}" });
+  let res = await handler(new Request("http://x/tools"), { runtime: rt });
+  assertEquals((await res.json()).tools.length, STARTER_TOOLS.length + 1);
+
+  res = await handler(new Request("http://x/reset", { method: "POST" }), { runtime: rt });
+  assertEquals(res.status, 200);
+  assertEquals(rt.registry.size, STARTER_TOOLS.length);
+  assert(!rt.registry.has("gen"));
+  assertEquals((rt.composition as any).layers, []);
 });

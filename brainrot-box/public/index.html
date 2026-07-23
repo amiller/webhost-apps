@@ -334,6 +334,14 @@ function addTool(tool) {
   setDot("smithDot", true);
 }
 
+function dropTool(name) {
+  registry.delete(name);
+  const card = toolCards.get(name);
+  if (card) { card.remove(); toolCards.delete(name); }
+  $("pTool").textContent = registry.size;
+  $("toolState").textContent = `toolsmith ${registry.size} tools`;
+}
+
 function setComposition(newLayers) {
   layers = (newLayers || []).filter((l) => registry.has(l.tool)).slice(0, 5).map((l) => {
     const tool = registry.get(l.tool);
@@ -552,6 +560,11 @@ function setRunState(text) {
 async function start() {
   await fetch("start", { method: "POST" });
   setPower(true);
+  try {
+    const j = await (await fetch("tools")).json();
+    for (const t of j.tools || []) { addTool(t); paletteCard(t, ""); }
+    $("pTool").textContent = registry.size;
+  } catch (_) {}
   poll();
 }
 
@@ -567,6 +580,7 @@ async function poll() {
         else if (ev.type === "brief") showBrief(ev.brief);
         else if (ev.type === "build-delta") buildDelta(ev.text);
         else if (ev.type === "tool") { addTool(ev.tool); paletteCard(ev.tool, ev.updated ? "" : ""); $("pTool").textContent = registry.size; }
+        else if (ev.type === "tool-evicted") dropTool(ev.name);
         else if (ev.type === "composition") { setComposition(ev.layers); showStack(layers); $("pLay").textContent = layers.length; }
         else if (ev.type === "graphnode") { addGraphNode(ev.node); bump("pNode"); }
         else if (ev.type === "activity") activity(ev);
