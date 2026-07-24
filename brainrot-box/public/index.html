@@ -323,6 +323,11 @@ let since = 0;
 let currentText = "";
 let popWin = null;
 let host = window;
+// #125: snapshot capture — the canvas is client-side only; we POST jpegs on goodpoints + a 60s
+// interval while the weave runs. weaveRunning tracks the lane state from /events; lastIntervalSnap
+// gates the 60s cadence (initialized to load time so the first interval isn't immediate).
+let weaveRunning = false;
+let lastIntervalSnap = Date.now();
 
 function setDot(id, on) { $(id).classList.toggle("on", !!on); }
 function bump(id) { $(id).textContent = Number($(id).textContent) + 1; }
@@ -617,6 +622,19 @@ function setRunState(text) {
   $("runState").textContent = t.length > 54 ? t.slice(0, 51) + "..." : t;
 }
 
+// #125: capture the live canvas as a jpeg and POST it to /snapshot. On any failure surface it
+// as a status line (a server-side store failure is ALSO pushed as a `status` event to every
+// viewer) — never silently swallowed, per the issue's no-fallbacks rule.
+async function captureSnapshot(reason) {
+  try {
+    const blob = await new Promise((res, rej) => canvas.toBlob((b) => b ? res(b) : rej(new Error("canvas returned no image")), "image/jpeg", 0.8));
+    const r = await fetch("snapshot", { method: "POST", headers: { "content-type": "image/jpeg" }, body: blob });
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(r.status + (j.error ? " " + j.error : "")); }
+  } catch (e) {
+    setRunState("snapshot " + reason + " failed: " + ((e && e.message) || e));
+  }
+}
+
 async function start() {
   await fetch("start", { method: "POST" });
   setPower(true);
@@ -635,9 +653,11 @@ async function poll() {
       const j = await (await fetch("events?since=" + since)).json();
       since = j.seq;
       setPower(j.running);
+      weaveRunning = !!j.weave_running;
+      if (weaveRunning && Date.now() - lastIntervalSnap >= 60000) { lastIntervalSnap = Date.now(); captureSnapshot("interval"); }
       for (const ev of j.events || []) {
         if (ev.type === "segment") { addSegment(ev.segment); bump("pSeg"); }
-        else if (ev.type === "goodpoint") { addPoint(ev.point); if (ev.brief) showBrief(ev.brief); bump("pBang"); }
+        else if (ev.type === "goodpoint") { addPoint(ev.point); if (ev.brief) showBrief(ev.brief); bump("pBang"); captureSnapshot("goodpoint"); }
         else if (ev.type === "conv-type") setConvType(ev.convType);
         else if (ev.type === "state") setState(ev.state);
         else if (ev.type === "brief") showBrief(ev.brief);

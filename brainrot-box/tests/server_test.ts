@@ -4,12 +4,15 @@ import handler, {
   TraceStore,
   isBanger,
   mergeOtterSegments,
+  newSessionId,
   normalizeSegments,
   parseConvType,
   parseJudge,
   parseRecap,
   parseShift,
   parseFlow,
+  SNAP_CAP_FILES,
+  SNAP_MAX_BYTES,
   STARTER_TOOLS,
 } from "../server.ts";
 
@@ -531,4 +534,110 @@ Deno.test("#92 optional critic (via override) feeds the brief, only when configu
   assertEquals(rt.nudgeCount, 0); // never stuck
   assert(seen.length > 0); // critic saw recent signatures
   assert(rt.brief.direction.includes("[critic: shift to warmer motion]"));
+});
+
+// #125: canvas snapshot gallery — POST /snapshot stores a jpeg under snapshots/<session>/, rejects
+// non-image / >2MB bodies with 400, /snapshots lists them, /snapshots/<session>/<file> serves the
+// image, and a per-session 200-file cap evicts oldest with a status event. Uses SNAPSHOT_DIR=temp
+// so the round-trip is REAL on disk (no in-memory fake), per the issue's no-fallbacks rule.
+function fakeJpeg(n: number): BodyInit {
+  const b = new Uint8Array(n);
+  b[0] = 0xff; b[1] = 0xd8; // JPEG magic (SOI)
+  b[n - 2] = 0xff; b[n - 1] = 0xd9; // EOI
+  for (let i = 2; i < n - 2; i++) b[i] = (i * 31) & 0xff; // pseudo-payload
+  return b as BodyInit;
+}
+
+Deno.test("#125 session id is filesystem-safe and matches #124's trace id format", () => {
+  const id = newSessionId(new Date("2026-07-24T13:00:34.207Z"));
+  // 2026-07-24T13-00-34-207Z-<8 hex> — no ':' or '.' (those break Windows-safe paths + sort badly)
+  assertEquals(/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9-]+Z-[0-9a-f]{8}$/.test(id), true, id);
+  assert(!id.includes(":") && !id.includes("."), id);
+});
+
+Deno.test("#125 snapshots: POST /snapshot round-trips through /snapshots and /snapshots/<s>/<f>; rejects non-image / >2MB with 400", async () => {
+  const dir = await Deno.makeTempDir();
+  const rt = new GoodpointRuntime({ ...env, SNAPSHOT_DIR: `${dir}/snaps` });
+  const session = rt.sessionId;
+  const jpeg = { "content-type": "image/jpeg" };
+
+  // store one real jpeg
+  let res = await handler(new Request("https://x/snapshot", { method: "POST", headers: jpeg, body: fakeJpeg(2048) }), { runtime: rt });
+  assertEquals(res.status, 201);
+  const ref = await res.json();
+  assertEquals(ref.session, session);
+  assertEquals(ref.bytes, 2048);
+  assert(ref.file.endsWith(".jpg"));
+  assert(Number.isFinite(ref.t));
+
+  // /snapshots lists it as {session,file,t,bytes}
+  res = await handler(new Request("https://x/snapshots"), { runtime: rt });
+  assertEquals(res.status, 200);
+  const list = await res.json();
+  assert(Array.isArray(list));
+  assertEquals(list.length, 1);
+  assertEquals(list[0].session, session);
+  assertEquals(list[0].file, ref.file);
+  assertEquals(list[0].bytes, 2048);
+  // t is the file mtime, which lags Date.now() at store time by a few ms — just assert it's present + sane
+  assert(Number.isFinite(list[0].t) && Math.abs(list[0].t - ref.t) < 5000, `t near store time: ${list[0].t} vs ${ref.t}`);
+
+  // /snapshots/<session>/<file> serves the jpeg back, bytes intact
+  res = await handler(new Request(`https://x/snapshots/${session}/${ref.file}`), { runtime: rt });
+  assertEquals(res.status, 200);
+  assertEquals(res.headers.get("content-type"), "image/jpeg");
+  const out = new Uint8Array(await res.arrayBuffer());
+  assertEquals(out.length, 2048);
+  assertEquals([out[0], out[1], out[out.length - 1]], [0xff, 0xd8, 0xd9]);
+
+  // non-image content-type -> 400
+  res = await handler(new Request("https://x/snapshot", { method: "POST", headers: { "content-type": "text/plain" }, body: fakeJpeg(64) }), { runtime: rt });
+  assertEquals(res.status, 400);
+  // claims jpeg but bad magic bytes -> 400
+  res = await handler(new Request("https://x/snapshot", { method: "POST", headers: jpeg, body: new TextEncoder().encode("not-a-jpeg-at-all") as BodyInit }), { runtime: rt });
+  assertEquals(res.status, 400);
+  // oversize (>2MB) -> 400
+  res = await handler(new Request("https://x/snapshot", { method: "POST", headers: jpeg, body: fakeJpeg(SNAP_MAX_BYTES + 1) }), { runtime: rt });
+  assertEquals(res.status, 400);
+  // nothing new landed from the rejected writes
+  assertEquals((await (await handler(new Request("https://x/snapshots"), { runtime: rt })).json()).length, 1);
+});
+
+Deno.test("#125 snapshots: per-session cap evicts oldest (→ 200) and announces it as a status event", async () => {
+  const dir = await Deno.makeTempDir();
+  const rt = new GoodpointRuntime({ ...env, SNAPSHOT_DIR: `${dir}/snaps` });
+  const jpeg = { "content-type": "image/jpeg" };
+  for (let i = 0; i < SNAP_CAP_FILES + 2; i++) {
+    const res = await handler(new Request("https://x/snapshot", { method: "POST", headers: jpeg, body: fakeJpeg(64) }), { runtime: rt });
+    assertEquals(res.status, 201);
+    await new Promise((r) => setTimeout(r, 3)); // distinct mtimes → deterministic eviction order
+  }
+  const list = await (await handler(new Request("https://x/snapshots"), { runtime: rt })).json();
+  assertEquals(list.length, SNAP_CAP_FILES, "session dir capped at 200");
+  assert(rt.events.some((e) => (e.ev as any).type === "status" && /evicted/i.test(String((e.ev as any).text))), "a status event announced the cap eviction");
+});
+
+Deno.test("#125 snapshots: /reset rotates the session id; /diag reports the snapshot block", async () => {
+  const dir = await Deno.makeTempDir();
+  const rt = new GoodpointRuntime({ ...env, SNAPSHOT_DIR: `${dir}/snaps` });
+  const before = rt.sessionId;
+  await handler(new Request("https://x/reset", { method: "POST" }), { runtime: rt });
+  assert(rt.sessionId !== before, "/reset rotated the session id");
+  assert(rt.sessionId.startsWith("20"));
+
+  const res = await handler(new Request("https://x/diag"), { runtime: rt });
+  const body = await res.json();
+  assertEquals(body.snapshot.session_id, rt.sessionId);
+  assertEquals(body.snapshot.dir, `${dir}/snaps`);
+  assertEquals(body.snapshot.write_ok, true);
+  assertEquals(body.snapshot.written, 0);
+});
+
+Deno.test("#125 snapshots: path traversal in /snapshots/<s>/<f> is rejected (404, not served)", async () => {
+  const dir = await Deno.makeTempDir();
+  await Deno.writeFile(`${dir}/evil.txt`, new TextEncoder().encode("secret"));
+  const rt = new GoodpointRuntime({ ...env, SNAPSHOT_DIR: dir });
+  const res = await handler(new Request("https://x/snapshots/..%2F..%2Fevil.txt/foo.jpg"), { runtime: rt });
+  // the route regex splits on the last `/`, and safeSeg rejects `..`; never reads outside the dir
+  assert([404, 400].includes(res.status));
 });
