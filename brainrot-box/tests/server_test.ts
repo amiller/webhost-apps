@@ -1,6 +1,7 @@
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import handler, {
   GoodpointRuntime,
+  TraceStore,
   isBanger,
   mergeOtterSegments,
   normalizeSegments,
@@ -217,4 +218,82 @@ Deno.test("/tools returns the palette snapshot; /reset clears and reseeds the re
   assertEquals(rt.registry.size, STARTER_TOOLS.length);
   assert(!rt.registry.has("gen"));
   assertEquals((rt.composition as any).layers, []);
+});
+
+// #124: session trace persistence — events append to a per-session JSONL; /traces lists them,
+// /traces/<id> streams them back, /diag reports write status, /reset rotates. fs errors surface as
+// a status event (no in-memory fallback) and set write_ok=false.
+Deno.test("#124 traces: push appends to the session JSONL; /traces lists + /traces/<id> round-trips", async () => {
+  const dir = await Deno.makeTempDir();
+  const store = new TraceStore(dir);
+  const rt = new GoodpointRuntime(env, undefined, undefined, store);
+  // seedTools already pushed STARTER_TOOLS tool events at construction
+  rt.push({ type: "segment", segment: { order: 1, text: "ship the verifiable subset", t: 0 } });
+
+  // GET /traces → one session, holding the seeded tools + our segment
+  let res = await handler(new Request("https://app.example/traces"), { runtime: rt });
+  assertEquals(res.status, 200);
+  const list = await res.json();
+  assertEquals(list.length, 1);
+  assertEquals(list[0].id, store.id);
+  assertEquals(typeof list[0].started, "string");
+  assert(list[0].started.endsWith("Z"), "started is an ISO timestamp");
+  assert(list[0].bytes > 0, "trace file has bytes");
+  assertEquals(list[0].events, STARTER_TOOLS.length + 1);
+
+  // GET /traces/<id> streams the JSONL back (content-type application/x-ndjson); events round-trip
+  res = await handler(new Request(`https://app.example/traces/${store.id}`), { runtime: rt });
+  assertEquals(res.status, 200);
+  assertEquals(res.headers.get("content-type"), "application/x-ndjson");
+  const body = await res.text();
+  const lines = body.trim().split("\n").map((l) => JSON.parse(l));
+  assertEquals(lines.length, STARTER_TOOLS.length + 1);
+  const seg = lines.find((l: any) => l.ev?.type === "segment");
+  assert(seg, "pushed segment round-trips from the trace");
+  assertEquals(seg.ev.segment.text, "ship the verifiable subset");
+
+  // /diag reports the trace block
+  res = await handler(new Request("https://app.example/diag"), { runtime: rt });
+  const diag = await res.json();
+  assertEquals(diag.trace.session_id, store.id);
+  assertEquals(diag.trace.events_written, STARTER_TOOLS.length + 1);
+  assertEquals(diag.trace.write_ok, true);
+
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("#124 traces: /reset rotates to a fresh session file", async () => {
+  const dir = await Deno.makeTempDir();
+  const rt = new GoodpointRuntime(env, undefined, undefined, new TraceStore(dir));
+  const firstSession = rt.traces!.id;
+  assert(firstSession.length > 0, "boot session opened");
+
+  const res = await handler(new Request("https://app.example/reset", { method: "POST" }), { runtime: rt });
+  assertEquals(res.status, 200);
+  assert(rt.traces!.id !== firstSession, "/reset opened a new session id");
+
+  const listRes = await handler(new Request("https://app.example/traces"), { runtime: rt });
+  const list = await listRes.json();
+  assertEquals(list.length, 2, "two trace files after a reset");
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("#124 traces: an unwritable cwd surfaces a status event + write_ok=false (no fallback)", async () => {
+  // a trace dir whose parent is a file → mkdir fails → rotate records writeOk=false
+  const blocker = await Deno.makeTempFile();
+  const rt = new GoodpointRuntime(env, undefined, undefined, new TraceStore(`${blocker}/sub`));
+  assertEquals(rt.traces!.writeOk, false, "rotate failed on an unwritable dir");
+  rt.push({ type: "segment", segment: { order: 1, text: "x", t: 0 } });
+  // the fs error must surface as a status event (never silently swallowed)
+  const status = rt.events.find((e) =>
+    (e.ev as any).type === "status" &&
+    typeof (e.ev as any).text === "string" &&
+    (e.ev as any).text.includes("trace write failed"),
+  );
+  assert(status, "a trace write failure was surfaced as a status event");
+  assertEquals(rt.traces!.writeOk, false, "no in-memory fallback: writeOk stays false");
+  const res = await handler(new Request("https://app.example/diag"), { runtime: rt });
+  const diag = await res.json();
+  assertEquals(diag.trace.write_ok, false);
+  await Deno.remove(blocker);
 });
