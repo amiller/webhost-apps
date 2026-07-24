@@ -2,6 +2,8 @@ import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.t
 import handler, {
   GoodpointRuntime,
   HEARING_LANES,
+  StreamProvider,
+  type ConversationType,
   TraceStore,
   isBanger,
   leaksVerbatim,
@@ -798,4 +800,106 @@ Deno.test("#94 trigram leak detector: 3 consecutive transcript words trip it, pa
   assert(leaksVerbatim("we will ship the verifiable subset now", transcript), "3-gram overlap detected");
   assert(!leaksVerbatim("deliver the provable part first, defer the rest", transcript), "paraphrase passes");
   assert(!leaksVerbatim("", transcript), "empty field is trivially clean");
+});
+
+// #126: a stalled stream can't wedge a lane. A provider that never resolves on its own (the
+// "hung TCP stream" shape) is aborted by the per-call deadline composed into its signal; the
+// lane surfaces a lane-named status and continues to the next turn instead of freezing forever.
+const hungProvider: StreamProvider = {
+  complete: (_m, _s, _u, _mx, _d, signal) =>
+    new Promise<string>((_resolve, reject) => {
+      // only the composed deadline signal (lane signal + per-call timeout) ever moves this.
+      signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    }),
+};
+
+Deno.test("#126 timeout: a hung provider aborts at the deadline, the weave loop continues, and a lane-named status is pushed", async () => {
+  const tEnv = {
+    ...env,
+    TOOLSMITH_TIMEOUT_MS: "120",
+    COMPOSITOR_TIMEOUT_MS: "120",
+    WEAVE_IDLE_MS: "600000",
+    OTTER_IDLE_MS: "600000",
+  };
+  const rt = new GoodpointRuntime(tEnv, undefined, hungProvider);
+  rt.start();
+  assert(rt.weaveRunning, "weave running before the hung turn");
+  // toolsmith/compositor each hit the hung provider; within ~1s the 120ms deadline fires, the
+  // turn aborts, the weave loop catches it, pushes a lane-named status, and continues.
+  await new Promise((r) => setTimeout(r, 800));
+  assert(rt.weaveRunning, "weave loop continued past the aborted turn (no wedge)");
+  rt.stop();
+  const ev = rt.events
+    .map((e) => e.ev as any)
+    .find((e) => e.type === "status" && typeof e.text === "string" && e.text.includes("timeout"));
+  assert(ev, "a stream timeout surfaced as a status event");
+  assert(/^(toolsmith|compositor) timeout after/.test(ev.text), `status names the lane: ${ev.text}`);
+});
+
+Deno.test("#126 timeout: judge aborts at its own deadline and surfaces a lane-named status (no /listen wedge)", async () => {
+  const tEnv = { ...env, JUDGE_TIMEOUT_MS: "100" };
+  const rt = new GoodpointRuntime(tEnv, undefined, hungProvider);
+  // seed >=20 chars of transcript so judgeRecent actually calls the (hung) provider
+  rt.transcript.push({ order: 1, text: "we should ship the verifiable subset before the booth opens", t: Date.now() });
+  const t0 = Date.now();
+  const gp = await rt.judgeRecent(true);
+  const elapsed = Date.now() - t0;
+  assertEquals(gp, null, "a hung judge returns null (no banger) instead of hanging");
+  assert(elapsed < 2000, `judge aborted at the deadline (~100ms), not hung: ${elapsed}ms`);
+  const ev = rt.events
+    .map((e) => e.ev as any)
+    .find((e) => e.type === "status" && typeof e.text === "string" && e.text.includes("timeout"));
+  assert(ev, "judge timeout surfaced as a status event");
+  assert(/^judge timeout after/.test(ev.text), `status names the lane: ${ev.text}`);
+});
+
+Deno.test("#126 /diag carries per-lane last_turn_at so a wedged lane is visible remotely", async () => {
+  const rt = new GoodpointRuntime(env, undefined, stubStreams);
+  rt.lastToolsmithTurnAt = 1_700_000_000_000;
+  rt.lastCompositorTurnAt = 1_700_000_001_000;
+  rt.lastFetchAt = 1_700_000_002_000; // otter lane
+  rt.lastDecodeAt = 1_700_000_003_000; // decoder lane
+  const res = await handler(new Request("https://app.example/diag"), { runtime: rt });
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assertEquals(body.lanes.toolsmith.last_turn_at, 1_700_000_000_000);
+  assertEquals(body.lanes.compositor.last_turn_at, 1_700_000_001_000);
+  assertEquals(body.lanes.otter.last_turn_at, 1_700_000_002_000);
+  assertEquals(body.lanes.decoder.last_turn_at, 1_700_000_003_000);
+  assertEquals(body.lanes.toolsmith.timeout_ms, 60000, "toolsmith default deadline is 60s");
+  assertEquals(body.lanes.compositor.timeout_ms, 30000, "compositor default deadline is 30s");
+});
+
+Deno.test("#126 timeout: a real turn stamps its lane's last_turn_at", async () => {
+  const rt = new GoodpointRuntime(env, undefined, stubStreams);
+  const ctrl = new AbortController();
+  await rt.toolsmithTurn(ctrl.signal);
+  assert(rt.lastToolsmithTurnAt > 0, "toolsmith turn stamped last_turn_at");
+  await rt.compositorTurn(ctrl.signal);
+  assert(rt.lastCompositorTurnAt > 0, "compositor turn stamped last_turn_at");
+});
+
+// #126 (rebase extension): the state/convtype call sites added by #85/#88 run in the otter loop;
+// they carry the same per-call deadline, so a hung read surfaces a lane-named status and leaves
+// the prior read in place instead of wedging the loop or skipping sibling lanes.
+Deno.test("#126 timeout: state and convtype reads abort at their deadline with lane-named statuses", async () => {
+  const tEnv = { ...env, STATE_TIMEOUT_MS: "100" };
+  const rt = new GoodpointRuntime(tEnv, undefined, hungProvider);
+  rt.transcript.push({ order: 1, text: "we should ship the verifiable subset before the booth opens", t: Date.now() });
+  rt.lastStateAt = 0;
+  rt.lastConvTypeAt = 0;
+  const prior: ConversationType = { type: "debate", rationale: "prior verdict stands" };
+  rt.convType = prior;
+  const t0 = Date.now();
+  const st = await rt.stateRecent(true);
+  const cv = await rt.convTypeRecent(true);
+  const elapsed = Date.now() - t0;
+  assert(st, "a hung state read still resolves (with prior values), it does not hang");
+  assertEquals(st!.recap, "", "no fabricated recap — the prior (empty) read stands");
+  assertEquals(cv, null, "a hung convtype read returns null (prior verdict stands)");
+  assert(elapsed < 2500, `both reads aborted at their ~100ms deadlines: ${elapsed}ms`);
+  assertEquals(rt.convType, prior, "the prior conv-type verdict stands (no flicker, no fallback)");
+  const texts = rt.events.map((e) => e.ev as any).filter((e) => e.type === "status").map((e) => e.text);
+  assert(texts.some((t: string) => /^state timeout after/.test(t)), `state status names the lane: ${texts}`);
+  assert(texts.some((t: string) => /^convtype timeout after/.test(t)), `convtype status names the lane: ${texts}`);
 });

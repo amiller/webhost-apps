@@ -101,12 +101,34 @@ verbatim n-gram) before it reaches toolsmith/compositor.
   under the cwd and listed by `/snapshots` (per-session 200-file cap evicts the oldest with a status
   event). Snapshots survive a process restart within the same deployed tree like traces do; a
   **redeploy** wipes them too (the tarball does not carry runtime `snapshots/`).
-- Froze a couple of times during the 7/24 all-day run — `streamComplete` has no per-call
-  timeout, so a hung stream can wedge a lane.
+- Each `streamComplete` call composes the lane signal with a per-call deadline (#126:
+  toolsmith 60s; compositor/distill/decoder/judge/state/convtype 30s, env-tunable via
+  `*_TIMEOUT_MS` incl. `STATE_TIMEOUT_MS`; the #92 critic shares the compositor deadline), so a
+  stalled `nearStream`/`chutesStream` aborts and surfaces a lane-named `status` event
+  ("toolsmith timeout after 60s") instead of wedging the lane. `/diag` carries a `lanes`
+  block with per-lane `last_turn_at` so a wedged lane is visible remotely. STT keeps its own retry.
+  (Fixes the 7/24 Demo Day booth freezes — previously noted here as "froze a couple of times during
+  the 7/24 all-day run; a hung stream can wedge a lane". After the rebase onto staging, the
+  state/convtype/critic call sites added by #85/#88/#92 carry the same deadlines — the
+  "every call site" claim stays true of the merged tree, not just the branch as cut.)
 - STT is TLS to the enclave (not app-layer e2ee); enclave keys are TOFU.
 - Toolsmith-built tools can render faint on large canvases (prompt suggests absolute-pixel
   blur; the starters scale by canvas size, generated tools may not).
 - The judge's taste is one model's opinion; the ledger keeps the receipts.
+
+## Spec impact — #126 (2026-07-24)
+
+This README previously stated, under Honest edges, that *"`streamComplete` has no per-call timeout, so a hung stream can wedge a lane."* That line described the defect behind the 7/24
+Demo Day booth freezes: each lane's `AbortController` only fires on stop, so one stalled TCP
+stream (`nearStream`/`chutesStream`) froze the lane's while-loop forever and the UI kept polling,
+looking frozen. #126 composes every `streamComplete` call site with a per-call deadline
+(`AbortSignal.any([signal, deadline])`, implemented as a manual `AbortController` +
+`setTimeout`; T generous per call site — toolsmith 60s, compositor/distill/decoder/judge 30s;
+env-tunable via `*_TIMEOUT_MS`). A timeout throws a stable error the lane surfaces as a `status`
+event naming the lane ("toolsmith timeout after 60s"), then continues to the next turn — no
+fallback, no retry. `/diag` gains `lanes.{toolsmith,compositor,otter,decoder}.last_turn_at`
+(+ `timeout_ms`) so a lane claiming `running` with a stale `last_turn_at` is the visible
+signature of a hang. The old line is corrected above.
 
 ## Spec impact — #124 (2026-07-24)
 
