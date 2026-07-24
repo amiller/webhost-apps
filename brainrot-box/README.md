@@ -27,15 +27,33 @@ is the version that ran the Demo Day booth all day (registry held at its 24-tool
 - `/` landing · `/app` the box UI (live / graph / studio tabs)
 - `/listen` POST wav → whisper (confidence-gated) → the full pipeline
 - `/goodpoints` ledger · `/graph` conversation graph · `/tools` palette snapshot
-- `/diag` lane + registry + otter status · `/reset` fresh session (reseeds starters)
+- `/traces` list session traces · `/traces/<id>` stream a session's events back as NDJSON
+- `/diag` lane + registry + otter status + trace write state · `/reset` fresh session (reseeds starters, rotates the trace)
 
 ## Honest edges
 
-- All state is in-memory: a redeploy or restart is a fresh box (starters only). No trace or
-  snapshot persistence yet.
+- Session **event traces persist to disk** (#124): every pushed event appends one JSON line to
+  `traces/<session-start-iso>.jsonl` under the cwd, rotated on boot and `/reset`, listed by
+  `/traces` and streamed by `/traces/<id>`. fs errors surface as a `status` event + `/diag`
+  `trace.write_ok=false` (no in-memory fallback). Other state (transcript/ledger/composition) is
+  still in-memory. Traces survive a process restart within the same deployed tree and accumulate
+  across `/reset`; a **redeploy** wipes them (the daemon re-extracts the tarball, which does not
+  carry `traces/`) — verified on staging 2026-07-24.
 - Froze a couple of times during the 7/24 all-day run — `streamComplete` has no per-call
   timeout, so a hung stream can wedge a lane.
 - STT is TLS to the enclave (not app-layer e2ee); enclave keys are TOFU.
 - Toolsmith-built tools can render faint on large canvases (prompt suggests absolute-pixel
   blur; the starters scale by canvas size, generated tools may not).
 - The judge's taste is one model's opinion; the ledger keeps the receipts.
+
+## Spec impact — #124 (2026-07-24)
+
+This README previously stated, under Honest edges, *"All state is in-memory … No trace or
+snapshot persistence yet."* That line permitted (and described) total event ephemerality — only
+the last 500 pushed events lived in memory, and a restart lost the session (the gap #124 was
+filed to close). #124 makes the typed **event stream** durable: every pushed event appends to a
+per-session JSONL under the cwd (`/traces`, `/traces/<id>`, `/diag … trace.write_ok`), rotated on
+boot and `/reset`, with fs errors surfaced (never swallowed, never faked in memory). The old line
+is corrected above. Full **snapshot** persistence (transcript / ledger / composition) remains
+out of scope and still resets on redeploy; only the event stream is now durable within a deployed
+instance. Staging discovery confirmed the dev-mode cwd is writable (`write_ok=true`).

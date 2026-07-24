@@ -1,0 +1,43 @@
+{
+    "otter": {
+        "cursor": 0,
+        "last_fetch_ok": false,
+        "last_fetch_err": "otter 401: {\"error\":\"unauthorized\"}",
+        "last_fetch_at": 1784898191495,
+        "segment_count": 0
+    },
+    "ledger_count": 0,
+    "tools": {
+        "count": 6,
+        "max": 24
+    },
+    "graph": {
+        "nodes": 0,
+        "topics": 0,
+        "undecoded": 0
+    },
+    "mic_segments": 0,
+    "e2ee": {
+        "toolsmith_model": "deepseek-ai/DeepSeek-V4-Flash",
+        "compositor_model": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+        "ready": true
+    },
+    "idle": {
+        "enabled": true,
+        "weave_running": true,
+        "otter_running": true,
+        "weave_idle_ms": 180000,
+        "otter_idle_ms": 600000,
+        "last_consumer_at": 1784898136193,
+        "last_live_at": 1784898136193,
+        "last_weave_idle_at": 0,
+        "last_otter_idle_at": 0,
+        "weave_idle_reason": "",
+        "otter_idle_reason": ""
+    },
+    "trace": {
+        "session_id": "2026-07-24T13-00-34-207Z-8c4b8d8a",
+        "events_written": 105,
+        "write_ok": true
+    }
+}
