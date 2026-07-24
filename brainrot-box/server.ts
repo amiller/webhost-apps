@@ -347,6 +347,139 @@ async function readPublic(name: string): Promise<Response> {
   }
 }
 
+// --- session trace persistence (#124) ---------------------------------------------
+// Every pushed event is appended as one JSON line to a per-session file under the app's working
+// directory (`traces/<session-start-iso>.jsonl`). A session starts at process boot (= first
+// runtime construction — the runtime is lazy) and at each POST /reset. fs errors are recorded on
+// the store (`writeOk=false`, surfaced via /diag) and emitted as ONE `status` event — never
+// silently swallowed, never faked with an in-memory buffer. Persistence is off only when
+// explicitly disabled (`traceStore=null`); production defaults to `traces/` (or `env.TRACE_DIR`).
+export interface TraceEntry {
+  id: string; // fs-safe session-start ISO (the filename stem)
+  started: string; // real session-start ISO
+  bytes: number;
+  events: number;
+}
+
+function emsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+export class TraceStore {
+  readonly dir: string;
+  id = "";
+  started = "";
+  bytes = 0;
+  events = 0;
+  writeOk = false;
+  lastErr = "";
+  private fh: Deno.FsFile | null = null;
+
+  constructor(dir: string) {
+    this.dir = dir;
+  }
+
+  // Close any open handle and open a fresh session file (boot + /reset). On fs failure the store
+  // records writeOk=false; it never throws — callers learn the outcome via append()/diag.
+  rotate(): void {
+    try {
+      this.fh?.close();
+    } catch { /* best effort */ }
+    this.fh = null;
+    this.started = new Date().toISOString();
+    // id = fs-safe ISO + short random suffix so two sessions starting in the same millisecond
+    // (e.g. boot + an immediate /reset) never collide on the filename.
+    this.id = this.started.replace(/[:.]/g, "-") + "-" + crypto.randomUUID().slice(0, 8);
+    this.bytes = 0;
+    this.events = 0;
+    try {
+      Deno.mkdirSync(this.dir, { recursive: true });
+      this.fh = Deno.openSync(`${this.dir}/${this.id}.jsonl`, { create: true, append: true });
+      this.writeOk = true;
+      this.lastErr = "";
+    } catch (e) {
+      this.fh = null;
+      this.writeOk = false;
+      this.lastErr = emsg(e);
+    }
+  }
+
+  // Append one JSON line. Returns null on success, an error message on failure (never throws).
+  append(line: string): string | null {
+    if (!this.fh) return this.lastErr || "trace not open";
+    try {
+      const buf = new TextEncoder().encode(line + "\n");
+      this.fh.writeSync(buf);
+      this.bytes += buf.byteLength;
+      this.events += 1;
+      this.writeOk = true;
+      this.lastErr = "";
+      return null;
+    } catch (e) {
+      this.writeOk = false;
+      this.lastErr = emsg(e);
+      return this.lastErr;
+    }
+  }
+
+  // Snapshot of every `*.jsonl` trace on disk, newest first. `bytes`/`events` are read from the
+  // file so they stay correct after a restart (the in-memory counters only cover this session).
+  list(): TraceEntry[] {
+    const out: TraceEntry[] = [];
+    try {
+      for (const e of Deno.readDirSync(this.dir)) {
+        if (!e.isFile || !e.name.endsWith(".jsonl")) continue;
+        const id = e.name.slice(0, -".jsonl".length);
+        out.push({
+          id,
+          started: startedFromId(id),
+          bytes: sizeOf(`${this.dir}/${e.name}`),
+          events: countLines(`${this.dir}/${e.name}`),
+        });
+      }
+    } catch { /* dir missing → empty list */ }
+    return out.sort((a, b) => (a.started < b.started ? 1 : -1));
+  }
+
+  // Open a trace for streaming back. Returns null if not found / unsafe id (no path traversal).
+  openRead(id: string): Deno.FsFile | null {
+    if (!/^[A-Za-z0-9_-]+$/.test(id)) return null;
+    try {
+      return Deno.openSync(`${this.dir}/${id}.jsonl`, { read: true });
+    } catch {
+      return null;
+    }
+  }
+}
+
+// Reconstruct the real ISO from an fs-safe id, ignoring any uniqueness suffix.
+// `2026-07-24T19-30-45-123Z-1a2b3c4d` → `2026-07-24T19:30:45.123Z`.
+function startedFromId(id: string): string {
+  const m = id.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z(?:-[0-9a-f]+)?$/);
+  if (!m) return id;
+  return `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}.${m[7]}Z`;
+}
+
+function sizeOf(path: string): number {
+  try {
+    return Deno.statSync(path).size ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+function countLines(path: string): number {
+  try {
+    const txt = Deno.readTextFileSync(path);
+    if (!txt) return 0;
+    let n = 0;
+    for (let i = 0; i < txt.length; i++) if (txt.charCodeAt(i) === 10) n++;
+    return n;
+  } catch {
+    return 0;
+  }
+}
+
 export class GoodpointRuntime {
   cfg: Cfg;
   transcript: Segment[] = [];
@@ -362,6 +495,8 @@ export class GoodpointRuntime {
   brief = { mood: "", emphasis: "", tone: "", direction: "" };
   events: { seq: number; ev: unknown }[] = [];
   seq = 0;
+  // #124: per-session JSONL trace of every pushed event. null only when explicitly disabled.
+  traces: TraceStore | null;
   // master on/off (set by /start or /app load). `running` stays as a back-compat read of this.
   enabled = false;
   // two independent lanes: the weave (toolsmith+compositor) can idle while otter+judge keep
@@ -394,10 +529,14 @@ export class GoodpointRuntime {
     env: Env,
     judgeOverride?: (text: string) => Promise<JudgeResult | null>,
     streams?: StreamProvider,
+    traceStore?: TraceStore | null,
   ) {
     this.cfg = requireCfg(env);
     this.judgeOverride = judgeOverride;
     this.streams = streams;
+    // #124: persistence is on by default (writes traces/ under the cwd); pass null to disable.
+    this.traces = traceStore === undefined ? new TraceStore(env.TRACE_DIR || "traces") : traceStore;
+    this.traces?.rotate(); // open the boot-session file (rotates again on /reset)
     this.seedTools();
   }
 
@@ -426,8 +565,18 @@ export class GoodpointRuntime {
   }
 
   push(ev: unknown): void {
-    this.events.push({ seq: ++this.seq, ev });
+    const wrapped = { seq: ++this.seq, ev };
+    this.events.push(wrapped);
     if (this.events.length > 500) this.events.splice(0, this.events.length - 500);
+    // #124: persist every event as one JSONL line. No fallback — an fs error surfaces as a single
+    // guarded `status` event (never swallowed, never faked in memory). The guard prevents recursion.
+    const store = this.traces;
+    if (store && !(ev as { __traceErr?: boolean })?.__traceErr) {
+      const err = store.append(JSON.stringify(wrapped));
+      if (err) {
+        this.events.push({ seq: ++this.seq, ev: { type: "status", text: `trace write failed: ${err}`, __traceErr: true } });
+      }
+    }
   }
 
   async pollOtter(signal?: AbortSignal): Promise<Segment[]> {
@@ -904,6 +1053,17 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
       decisions: app.graphNodes.filter((n) => n.kind === "decision" || n.kind === "action_item"),
     });
   }
+  // #124: list every session trace on disk → [{id, started, bytes, events}].
+  if (req.method === "GET" && path === "/traces") {
+    return json(app.traces?.list() ?? []);
+  }
+  // #124: stream a session trace back as NDJSON (content-type application/x-ndjson).
+  if (req.method === "GET" && path.startsWith("/traces/")) {
+    const id = path.slice("/traces/".length);
+    const fh = app.traces?.openRead(id) ?? null;
+    if (!fh) return new Response("trace not found", { status: 404 });
+    return new Response(fh.readable, { headers: { "content-type": "application/x-ndjson", "cache-control": "no-store" } });
+  }
   if (req.method === "GET" && path === "/diag") {
     return json({
       otter: {
@@ -935,6 +1095,9 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
         weave_idle_reason: app.weaveIdleReason,
         otter_idle_reason: app.otterIdleReason,
       },
+      trace: app.traces
+        ? { session_id: app.traces.id, events_written: app.traces.events, write_ok: app.traces.writeOk }
+        : { session_id: "", events_written: 0, write_ok: false },
     });
   }
   if (req.method === "POST" && path === "/reset") {
@@ -952,6 +1115,7 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
     app.micSeq = 0;
     app.registry.clear();
     app.composition = { layers: [] };
+    app.traces?.rotate(); // #124: start a fresh session trace file
     app.seedTools();
     return json({ ok: true });
   }
