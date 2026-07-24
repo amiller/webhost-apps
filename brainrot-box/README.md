@@ -1,34 +1,41 @@
 # brainrot-box
 
-The brainrot box (interleave) merged with a good point detector, as one OAuth3 app.
+Live meeting VJ: speech comes in (Otter live-follow or the mic), a judge flags "good points,"
+a slow model builds canvas animation tools, a fast model composes them into visuals that
+follow the room. Both inference lanes run over e2ee confidential inference
+(NEAR ECIES / Chutes ML-KEM-768).
 
-- **paints**: interleave's toolsmith/compositor canvas — a slow model writes animation
-  tools, a fast one VJs them live. Both over e2ee confidential inference
-  (NEAR ECIES / Chutes ML-KEM-768). The running ancestor: `pod.dstack.soc1024.com/interleave/app`.
-- **judges**: speech comes in through the OAuth3 otter live-follow scope
-  (`GET /api/otter/live`, scoped revocable read token — no raw mic, no copied cookies).
-  A judge scores the last ~60s of transcript: `{quote, why, score 0-10}`. Score ≥ 7 is a
-  banger: the canvas flashes the quote, and `/goodpoints` keeps the ledger.
+**Live:** `pod.dstack.soc1024.com/brainrot-box/` · lineage: interleave → goodpoint-box (#80) → brainrot-box.
 
-Origin: the 2026-07-15 Demo Day Planning call ("How many bangers there is, right?" — Tina).
-The ledger is the value marker for the feedback-loop framing: bangers per meeting is a number.
+## Baseline
 
-## Status
+Tag [`brainrot-demo-day-2026-07-24`](https://github.com/amiller/webhost-apps/releases/tag/brainrot-demo-day-2026-07-24)
+is the version that ran the Demo Day booth all day (registry held at its 24-tool cap; eviction verified live).
 
-Build spec: [webhost-apps#80](https://github.com/amiller/webhost-apps/issues/80) (in the swarm
-lane). This directory currently holds the landing page ([#81](https://github.com/amiller/webhost-apps/issues/81)),
-deployed ahead of the app at `pod.dstack.soc1024.com/brainrot-box/`.
+## How it works
 
-## Routes (per #80)
+- **judge**: scores the last ~60s of transcript; score ≥ 7 = a banger — the canvas flashes the
+  quote and `/goodpoints` keeps the ledger.
+- **toolsmith** (slow lane): writes one small canvas layer tool per turn into a bounded registry —
+  `MAX_TOOLS` (default 24) LRU; 6 hand-built starter tools seed at boot and are eviction-proof.
+- **compositor** (fast lane): stacks 2–5 tools per turn against the distilled visual brief.
+- **decoder**: types utterances into a conversation graph (topics, decisions, questions).
+- Both weave lanes idle when nobody polls `/events`; the otter lane idles after 10 quiet minutes.
 
-- `/` — this landing
-- `/app` — the box UI
-- `/goodpoints` — ledger JSON
-- `/diag` — e2ee probe + otter poll status
+## Routes
+
+- `/` landing · `/app` the box UI (live / graph / studio tabs)
+- `/listen` POST wav → whisper (confidence-gated) → the full pipeline
+- `/goodpoints` ledger · `/graph` conversation graph · `/tools` palette snapshot
+- `/diag` lane + registry + otter status · `/reset` fresh session (reseeds starters)
 
 ## Honest edges
 
-- The combined app is not live yet; #80 is in flight.
-- Inherited from interleave: STT is TLS to the enclave (not app-layer e2ee); enclave keys
-  are TOFU, no full quote-chain verification yet.
+- All state is in-memory: a redeploy or restart is a fresh box (starters only). No trace or
+  snapshot persistence yet.
+- Froze a couple of times during the 7/24 all-day run — `streamComplete` has no per-call
+  timeout, so a hung stream can wedge a lane.
+- STT is TLS to the enclave (not app-layer e2ee); enclave keys are TOFU.
+- Toolsmith-built tools can render faint on large canvases (prompt suggests absolute-pixel
+  blur; the starters scale by canvas size, generated tools may not).
 - The judge's taste is one model's opinion; the ledger keeps the receipts.
