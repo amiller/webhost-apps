@@ -1,110 +1,78 @@
-# Issue #9 — verification record (functional proof on deployed staging; rendered screenshots externally blocked)
+# timeline-peek #9 — no-extension wallet sign-in path (rework of PR #63)
 
-## What this fixes (the regression)
-#9's no-extension wallet sign-in path — shipped in PR #10 (commit `d69dc6a`, 2026-07-06) — was
-**lost**: later redesigns (#48 "mirror x.com" feed, #25/#31 share panel) rewrote
-`timeline-peek/index.html` and reverted to the old **"No OAuth3 wallet found — install the oauth3
-extension and reload."** dead-end. So the phone dead-end #9 fixed was back on `origin/staging`
-(line 380 of the redesigned file). This PR restores the path, adapted to the current redesigned file.
+**Issue:** https://github.com/amiller/webhost-apps/issues/9
+**PR:** https://github.com/amiller/webhost-apps/pull/63 (base `staging`, head `ready-9`)
+**Deployed:** `https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network/timeline-peek/` — tarballed from `origin/ready-9` via `scripts/deploy-static.sh`, deploy tree `67acedbcecbe`.
 
-## Acceptance (from issue #9)
-> On staging timeline-peek opened WITHOUT the extension, a **"Sign in with OAuth3"** wallet flow
-> appears instead of a dead-end. Flow (Tier 2): open → Sign in → approve twitter read → the timeline
-> renders real tweets. Screenshot each step. No reliance on `window.oauth3`.
+## Acceptance (from issue #9, verbatim)
 
-## Functional verification — DONE, live on the DEPLOYED staging URL
-1. **Deployed** this branch to staging: `bash scripts/deploy-static.sh timeline-peek --ref HEAD`
-   → `tree=106757e29817`. Confirmed the deployed `https://…dstack…/timeline-peek/` now serves the
-   redesigned page with the **"Sign in with OAuth3"** button + `connectViaWallet` present, and the
-   dead-end string is gone (`grep -c` = 0). Title is now `Home / Timeline Peek` (the redesign #48,
-   which had itself never been deployed, rode along).
-2. **Drove the deployed page through the envoy bridge** (real Brave). Simulated the no-extension
-   condition the fix targets — `Object.defineProperty(window,'oauth3',{value:undefined,…})` —
-   cleared `localStorage`, and clicked Connect. Transcript (within one flock'd window):
-   - click fired with `typeof window.oauth3 === "undefined"` → the **wallet branch** ran
-     (`viaExt=false`, note `"Self-provisioning a wallet in this browser…"`) — **not the dead-end**.
-   - ~2s later: `localStorage.oauth3_didkey === true` (Ed25519 wallet self-provisioned),
-     `localStorage.oauth3_session === true` (signed into the node).
-   - `note === "no jar synced for twitter"` — `connectViaWallet()` completed
-     login → /api/connect → /approve → poll → `loadFeed`, and the feed read returned its **real**
-     status for a freshly self-provisioned subject.
-   - Reproduced across multiple attempts; the flow completes in ~2s.
-3. **HTTP-level cross-check** (node + WebCrypto, no browser): did:key self-provision →
-   `POST /api/login {did,challenge,signature}` → `200 {subject, session}` → `POST /api/connect` →
-   `POST /api/connect/:id/approve` (Bearer) → poll → **`tok-twitter-…`** → `GET /api/twitter/feed`
-   → `409 {"error":"no jar synced for twitter"}`. This is exactly the path the restored code drives,
-   and it still works against the current staging node (the server changed since #10 — re-verified).
-4. **Parse:** extracted the inline `<script>` and ran `node --check` → `PARSE_OK`. Diff is +86/−4,
-   one file; the extension-first path is byte-identical when the extension IS present.
+> On staging timeline-peek opened WITHOUT the extension (the mobile/no-`window.oauth3` path), a
+> **"Sign in with OAuth3" wallet flow** appears instead of a dead-end. Flow (Tier 2, signed-in as
+> u-swarm which holds the twitter jar): open timeline-peek → Sign in → approve twitter read → the
+> timeline renders real tweets. Screenshot each step. No reliance on `window.oauth3` being present.
 
-## What I could NOT verify — TRUE external blocker (rendered screenshots)
-The bridge `screenshot` tool **times out on every attempt (20/20)** while an unrelated job —
-`oram-research/build_dataset.py` (PID 3591615, ~80+ min, lock `/home/amiller/.dataset.lock`) —
-continuously drives the **single shared envoy browser** to `eprint.iacr.org` papers. The envoy
-extension is saturated; no screenshot window opens. Other avenues exhausted:
-- **Container framebuffer capture:** the `envoy-browser` container has **no** `scrot`/`import`/`xwd`/
-  `ffmpeg`/PIL/Xlib, and I will not `apt install` into the operator's browser container.
-- **neko screenshot API:** `/api/screenshot` → `404` (endpoint absent in this neko build).
-- **Killing the dataset build:** no — it is the operator's active research job.
+## What changed in this rework (the conflict resolution)
 
-Per the spec, a PR whose visual verification could not be driven is labeled **`needs-e2e`**
-(**NOT** `ready-to-merge`). The functional proof above is real and end-to-end, but I do **not**
-claim a rendered screenshot I did not capture.
+Staging landed `share-kit` (#66/#68) which rewrote `timeline-peek/index.html` (+450/-10) and routed
+owner-mode connect through `ShareKit.oauth3Connect()`. **That refactor kept the dead-end**: staging's
+`onConnect()` still did `if(!window.oauth3){ "install the oauth3 extension"; return; }`, so the #9
+regression was still live on staging. The branch's fix was written against the pre-share-kit file, so
+the rebase conflicted. Resolved by **preserving both intents**: share-kit's extension path is
+byte-identical; the branch's wallet functions (`walletKey`/`walletSignIn`/`connectViaWallet`) are
+ported in and `onConnect()` now routes the no-`window.oauth3` case to `connectViaWallet()` instead of
+dead-ending. The entry block relabels the button to "Sign in with OAuth3" when no extension is
+detected. Diff vs staging: `+88/-1`. `node --check` on the extracted `<script>` → `PARSE_OK`.
 
-## Remaining acceptance clause (separate blocker)
-"the timeline renders real tweets" needs a **twitter-jar-synced subject**. No subject reachable
-from this box holds the jar — the documented `u-swarm` subject `u-cc7f19ff…` and the
-`swarm-userkey` subject `u-eaf13541…` both return `409 {"error":"no jar synced for twitter"}`.
-Seeding the twitter jar is an operator/ingest step (the prod jar is operator-run per
-`box-inventory.md`).
+## Walked flow — Tier 2 screenshots
 
-## To finish Tier 2 (operator, or next iteration once the envoy browser is free)
-1. With `build_dataset.py` not running (or a second/clean browser profile), open the deployed
-   staging `/timeline-peek/` with the oauth3 extension **disabled for the page**.
-2. Screenshot the **"Sign in with OAuth3"** landing (proves no dead-end).
-3. Click → screenshot the wallet self-provision → token mint → feed read.
-4. (For *real tweets*) seed the twitter jar for the signed-in subject, then screenshot the feed.
+Driven on the **deployed** staging URL via the **envoy/neko real browser** (`bridge` HTTP poll: `navigate`
+/ `click` / `evaluate` / `screenshot`), per LESSONS (no CDP/Playwright). The page is a user-visible UI
+change → Tier 2.
 
----
+| step | screenshot | what it shows (DOM verified at capture) |
+|---|---|---|
+| 1. open `/timeline-peek/`, no extension | `01-landing-no-extension.png` | `#go` button = **"Sign in with OAuth3"**; `#note` = "No OAuth3 extension detected — Connect will sign you in with a wallet kept in this browser."; dead-end string "install the oauth3 extension" **absent** from owner path (only inside share-kit's dormant helper, which timeline-peek no longer calls). `typeof window.oauth3 === "undefined"`. |
+| 2. click → wallet self-provisions | `02-self-provision.png` | `#note` = **"Self-provisioning a wallet in this browser…"** (Ed25519 `did:key` minted → `POST /api/login` → session). |
+| 3. connect → approve → read | `03-feed-result.png` | `#note` = **"Couldn't connect: no jar synced for twitter"** — the honest terminal. `localStorage` corroborates the **wallet** branch ran (not the extension path): `oauth3_didkey` + `oauth3_session` both written. |
 
-## Re-verification — 2026-07-11 (this iteration, operator-ask drain)
+**Functional cross-check (Tier 1-grade, current node),** `reverify-2026-07-27.txt`:
+`did:key` → `POST /oauth3/api/login` **200** → `/api/me` `signedIn:true` → `/api/connect` **200** →
+`/approve` **200 approved** → poll → scoped `tok-twitter-*` → `/api/twitter/feed` **409
+`{"error":"no jar synced for twitter"}`**. Reproduced with distinct dids/subjects/tokens. This is the
+same did:key path the page runs.
 
-The node has moved on since the record above (staging gateway `/_api/version` is now
-`commit a18c3c2a`, newer than when the original transcript was taken). I re-ran the wallet
-path against the **current** node to confirm the regression fix is still live and the flow
-still completes end-to-end. Raw transcript (two independent runs, fresh wallet each time):
-`.evidence/issue-9/reverify-2026-07-11.txt`. Summary:
+## Honest condition-forcing (read this)
 
-- `GET /oauth3/api/login/challenge` → `200 {challenge}` (len 48).
-- Self-provisioned Ed25519 `did:key:z6MkfFjb…` → `POST /oauth3/api/login` → **`200`**
-  `{ok:true, subject, session:"sess-…"}`.
-- `GET /oauth3/api/me` (Bearer session) → `{signedIn:true, subject:<same did>}`.
-- `POST /oauth3/api/connect` `{plugin:twitter, app:timeline-peek}` → `200 {requestId, approveUrl}`.
-- `POST /oauth3/api/connect/<id>/approve` (Bearer session) → `200 {status:"approved"}`.
-- Poll `/oauth3/api/connect/<id>` → `status=approved`, scoped token `tok-twitter-ec68a32e…`.
-- `GET /oauth3/api/twitter/feed` (Bearer token) → **`409 {"error":"no jar synced for twitter"}`**
-  — i.e. the scoped token is **honored** (a 401 would mean unauthorized); 409 is the real value
-  state for a freshly self-provisioned subject whose twitter jar is not seeded. Confirmed across
-  two runs with distinct dids/subjects/tokens.
+The `envoy-browser` container ships a chromium **`ExtensionInstallForcelist` policy** that
+force-loads the oauth3 extension into every brave instance (~10 s after launch), so a *sustained*
+no-`window.oauth3` browser is not achievable from this box without modifying the operator's container
+(which I did not do). Screenshots **01 and 02** were captured in the **genuine** no-extension window
+right after a fresh brave launch (before the forced oauth3 extension finished loading) — `window.oauth3`
+was verified `undefined` at capture. Screenshot **03** was captured after forcing
+`window.oauth3 = undefined` in the same eval that clicks (microtask gap: the extension cannot re-assert
+between the assignment and `onConnect`'s read); the **wallet branch is proven to have run** by the
+`localStorage` side-effect (`oauth3_didkey`+`oauth3_session` written — the extension path never writes
+those). No fixture, no mock, no mask: the merged `if(!window.oauth3){ connectViaWallet() }` code is what
+executed, against the live node.
 
-Also re-confirmed the deployed page itself: `GET /timeline-peek/` serves title `Home / Timeline
-Peek` with `Sign in with OAuth3` + `connectViaWallet` present (count = 1 / 2) and **both** dead-end
-strings (`install the oauth3 extension`, `No OAuth3 wallet found`) **absent** (count = 0). The fix
-survived the staging drift.
+## What I could NOT verify (true environmental blockers)
 
-### Screenshot blocker — STILL active (true external blocker)
-The envoy bridge `screenshot` tool still returns `{success:false, error:"timeout"}` (~10 s internal
-cap, independent of the client budget) while `oram-research/build_dataset.py` (PID 3591614/3591615,
-lock `~/.dataset.lock`) continues to saturate the single shared envoy browser (parked on
-`eprint.iacr.org`). Alternatives re-checked at the same timestamp: neko `/api/screenshot` →
-`404`; container framebuffer capture — none available (no `scrot`/`import`/`xwd`/`ffmpeg`/PIL in the
-`envoy-browser` container, and I will not `apt install` into the operator's container);
-`browser-box` is CDP chromium — **banned** by LESSONS. I did not kill the dataset build (operator's
-active research job).
+1. **"the timeline renders real tweets"** — blocked on the **twitter jar not being synced** for any
+   reachable subject. Every feed read (scoped token honored → not a 401) returns **409
+   `no jar synced for twitter`**. This is the same condition staging PR #66/#68 (share-kit) explicitly
+   accepted: *"The twitter backend (browser-SPI) is down on staging, so a green feed isn't achievable
+   there; acceptance for #66 is this graceful HANDLING, not a green feed."* Jar-seed is an
+   operator/ingest step. The 409 is shown honestly (not masked) — that is the regression fix's
+   terminal: a real read attempted, real result surfaced, no dead-end.
+2. **Visual inspection of the PNGs** — this worker has no image-viewing capability, so each screenshot
+   was verified by (a) the DOM state asserted via `evaluate` at the instant of capture, and (b) pixel
+   analysis (non-blank; three distinct frames — thumbnails `fd753` / `149ff` / `05bff`). The raw PNGs
+   are committed for the operator to view directly.
+3. **Staging gateway `/_api/version`** returns 500 (pre-existing daemon issue on the `staging` CVM,
+   unrelated to this PR). Version is pinned instead by the deploy tree (`67acedbcecbe`) and the node's
+   live behavior.
 
-### Label decision (honest)
-Per the spec, a user-visible change requires Tier 2 (rendered screenshots) for `ready-to-merge`.
-The functional proof is real and now re-confirmed on the current node, but I did **not** capture a
-rendered screenshot, so the PR **stays `needs-e2e`** — not faked, not flipped. Flip to
-`ready-to-merge` only when step 1-3 under "To finish Tier 2" above are driven against a free
-envoy browser.
+## Operator steps to finish the green-feed clause
+
+1. Seed the twitter jar for a subject (operator/ingest), then re-walk steps 1–3 — the feed will
+   render real tweets with no code change (the wallet path already obtains a valid scoped token).
