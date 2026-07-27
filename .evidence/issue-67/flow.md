@@ -1,6 +1,8 @@
 # Flow evidence — issue #67 (reddit-karma → shared oauth3Connect)
 
-**Tier:** 2 (user-visible) — **functional proof captured; rendered screenshot externally blocked → PR labeled `needs-e2e`** (the spec-sanctioned label when the envoy bridge can't capture; same as PR #63). The acceptance content IS asserted below via the bridge.
+**Tier:** 2 (user-visible) — **walked flow captured 2026-07-27** (3 step screenshots + this file).
+The earlier `needs-e2e` blocker (envoy bridge `screenshot` timing out) is **resolved** — see
+"Tier-2 walked flow" below. Functional/HTTP proof from the prior pass is retained underneath.
 
 ## What changed (one PR, root-cause)
 `ShareKit.oauth3Connect` (share-kit v0.2.0 → **v0.3.0**) gained the **no-extension wallet
@@ -15,41 +17,89 @@ wallet/base58 boilerplate deleted from reddit-karma.
 > "reddit-karma adopts `oauth3Connect()` and no longer hand-rolls the handshake… connect works,
 > step-up recovers (no dead-end), errors render honestly."
 
-- ✅ No longer hand-rolls: grep of the app script → **0** `walletKey`/`connectViaWallet`/`b58e`/`b64uDec`
-  defs; **5** `ShareKit.oauth3Connect`/`oauth3Read` uses. Boilerplate block replaced by a pointer comment.
-- ✅ Connect works via the helper, **including the no-extension wallet path** (proven below) — the old
-  dead-end string is gone from the served page.
-- ✅ No dead-end / errors render honestly (proven below — the real node 403 rides into the evidence block).
+- ✅ **Adopts the helper, no hand-roll** — `01-landing.png`: page loads `ShareKit.VERSION = "0.3.0"`,
+  Connect button present; grep of the app script → **0** `walletKey`/`connectViaWallet`/`b58e`/`b64uDec`
+  defs, **5** `ShareKit.oauth3Connect`/`oauth3Read` uses (boilerplate replaced by a pointer comment).
+- ✅ **No dead-end (no-extension wallet path)** — `02-no-extension-branch.png`: with `window.oauth3`
+  neutralized (faithful phone/clean-profile sim), the diag line reads "extension **absent — Connect
+  will self-provision a wallet**"; the old "install the oauth3 extension" dead-end string is absent.
+- ✅ **Connect works (real token) + errors render honestly** — `03-connect-result.png`: after clicking
+  Connect the wallet path self-provisioned a did:key, ran the full handshake, and obtained a **real
+  scoped token `tok-reddit-7…`**; the read returned `409 "no jar synced for reddit"`, which the app
+  renders as a plain error card ("No saved posts to show", "no posts are shown, never fake content")
+  with the real `status 409` + `token` + `reason` in the evidence block. No mask, no fixture.
 
-## Functional verification — deployed to staging, driven via the envoy bridge
-Deploy: `bash scripts/deploy-static.sh reddit-karma --ref HEAD` → tree `9c1d0eefff97` live at
-`<staging>/reddit-karma/`. Served build markers confirmed: `BUILD = "b4"`, `share-kit … (v0.3.0)`,
-`_connectViaWallet`, `via: "wallet"`.
+## Tier-2 walked flow — captured 2026-07-27 (blocker cleared)
+**Deploy pin.** `bash scripts/deploy-static.sh reddit-karma --ref origin/ready-67` → tree
+`9c1d0eefff97` live at `https://78ffc78c…dstack-pha-prod7.phala.network/reddit-karma/`.
+The served `index.html` is **byte-identical** to `origin/ready-67:reddit-karma/index.html` (verified
+by `diff` of the live fetch vs the branch). Served markers: `BUILD = "b4"`, `share-kit … (v0.3.0)`.
+(`/_api/version` currently 500s — a pre-existing daemon quirk, unrelated to this static app; the
+deploy is anchored on the static-app tree hash above, which is the correct pin for a Tier-2 walk.)
+
+**Blocker resolution.** The earlier `needs-e2e` was double-blocked: (a) the operator's
+`oram-research/build_dataset.py` (PID 3315077) saturating the shared envoy browser — **no longer
+running** (gone, no holder on `~/.dataset.lock`); and (b) a deeper envoy-bridge `screenshot` failure
+returning `"Failed to capture tab: image readback failed"` (a Chromium compositor/GPU readback crash
+in the neko container, not saturation). A `docker restart envoy-browser` reset the compositor; the
+bridge `screenshot` tool then returned a valid base64 PNG in ~0.15s. `navigate`/`evaluate`/`screenshot`
+all used through the sanctioned envoy bridge (no CDP — LESSONS ban honored). `flock
+/tmp/envoy-bridge.lock` serialized every call; bridge logs confirm this was the sole driver during the
+walk (the operator's `oram-research/scholar-kit` playwright chromium is a *separate* browser).
+
+**Walk (driven via `bash /tmp/bridge.sh <tool>`, location.href asserted before every trust):**
+```
+navigate  https://78ffc78c…dstack-pha-prod7.phala.network/reddit-karma/
+assert    location.href == …/reddit-karma/  · readyState=complete · title="Reddit Saved"   → 01-landing.png
+            ShareKit.VERSION="0.3.0" · #go present · diag: build b4 · instance reachable · reddit plugin registered
+lock      Object.defineProperty(window,'oauth3',{value:undefined,writable:false,configurable:false})
+            (faithful no-extension / phone / clean-profile sim; the in-browser extension otherwise
+             re-injects window.oauth3 via its tight loop. The wallet code still makes REAL calls to the node.)
+diag      "extension absent — Connect will self-provision a wallet"  (stable at 0s/2s/5s)      → 02-no-extension-branch.png
+click     #go  (real pointer event via bridge /click)
+wallet    did:key self-provision → POST /api/login (session) → POST /api/connect → /approve → poll
+result    token tok-reddit-7… (REAL scoped token — the full wallet handshake reached a token for
+            reddit-karma itself, stronger than the prior demo-app substitute; reddit-karma is now
+            accepted by the live node)
+read      GET /api/reddit/items (Bearer tok-reddit-7…) → 409 {"error":"no jar synced for reddit"}
+render    renderError → "No saved posts to show" · stamp=error · evidence block:
+            source=error · status=409 · token=tok-reddit-7… · reason="no jar synced for reddit"   → 03-connect-result.png
+deadend   false — the string "install the oauth3 extension" appears nowhere on the rendered page
+```
+
+**Why the screenshot shows an error, and why that is the correct Tier-2 evidence.** reddit-karma is
+listed on the live node (the prior 403 listing gate is gone), so the wallet handshake now reaches a
+real token; the read 409s only because **no reddit data jar is synced for the rig subject** (an
+operator-side data step, not a code defect). Per the no-fallbacks rule the app renders that honestly
+(no fake posts) — which is exactly the acceptance criterion "errors render honestly". A green saved-
+posts card would additionally require the operator to sync a reddit jar (see operator steps below);
+that is out of scope for this code PR.
+
+**Data privacy.** No personal reddit data is rendered (the card explicitly shows zero posts). The
+token is shown truncated (`tok-reddit-7…`); the reason is a generic plugin message. Nothing in the
+three screenshots is the operator's personal data, so they are safe in this public repo (LESSONS:
+never commit real personal data).
+
+### (Retained) functional verification — envoy bridge, prior pass
+Deploy: `bash scripts/deploy-static.sh reddit-karma --ref HEAD` → tree `9c1d0eefff97`. Served build
+markers confirmed: `BUILD = "b4"`, `share-kit … (v0.3.0)`, `_connectViaWallet`, `via: "wallet"`.
 
 The envoy browser carries the oauth3 extension (which re-injects `window.oauth3`), so to exercise the
-**no-extension** branch I pinned `window.oauth3` to a non-`connect` stub via `Object.defineProperty`
-(getter + no-op setter), cleared wallet storage, and clicked Connect. Bridge `navigate`/`evaluate` only
-— `screenshot` times out (see blocker). `flock /tmp/envoy-bridge.lock` serialized every call.
-
-After click (wallet branch ran):
+**no-extension** branch `window.oauth3` was pinned to a non-`connect` stub and Connect clicked. After
+click (wallet branch ran):
 ```
-pathname      /reddit-karma/                         (page stable, no extension navigation)
-oauth3connect "undefined"                            (stub held → helper took the WALLET branch)
-oauth3_didkey {"alg":"Ed25519","crv":"Ed25519","d":"fE…   (self-provisioned Ed25519 key, stored)
 session       sess-ed70667…                          (REAL session from POST /api/login — login succeeded)
-note          "Connect or read failed — see evidence for the real error."
-evidence      source: error
-              endpoint: GET …/oauth3/api/reddit/items
+evidence      source: error · endpoint: GET …/oauth3/api/reddit/items
               reason:  App "reddit-karma" is not listed. Add it via the operator or use dev-mode.
 deadend       false   (no "install the oauth3 extension" text anywhere on the page)
 ```
-→ The wallet self-provision ran (did:key + real session), the connect hit the node's layer-1 listing
-gate (403), and the app rendered the **honest error** with the node's real message — **no dead-end, no mask**.
+(The prior pass hit the layer-1 listing 403; the 2026-07-27 walk above shows the node now lists
+reddit-karma, so the same wallet path reaches a real token + the downstream 409.)
 
 ### The ported wallet code reaches a token end-to-end (node HTTP transcript, listed `demo-app` appId)
-reddit-karma's own appId isn't in the node's `STATIC_LISTING` (operator config), so its connect 403s.
-To prove the wallet code path I ported gets all the way to a token + read, the identical flow against
-the listed `demo-app`:
+reddit-karma's own appId wasn't in the node's `STATIC_LISTING` at the time of the prior pass, so to
+prove the wallet code path gets all the way to a token + read, the identical flow against the listed
+`demo-app`:
 ```
 did          did:key:z6Mkfxx4…
 POST /api/login            200  session ✓
@@ -58,28 +108,25 @@ POST /api/connect/<id>/approve  200  ok
 poll /api/connect/<id>     → token tok-reddit-49f…
 GET  /api/reddit/items     409  {"error":"no jar synced for reddit"}   (honest — no reddit jar synced)
 ```
-So the ported handshake is correct end-to-end; only operator-side config (app listing + reddit jar)
-stands between this and a green feed.
 
 ## Parse
 - `node --check share-kit/share-kit.js` → PARSE_OK (503-line inlined copy in reddit-karma also PARSE_OK).
 - `node --check` on reddit-karma's app `<script>` → PARSE_OK (132 lines).
 
-## ⚠️ Could NOT capture — TRUE external blocker (rendered screenshot)
-The envoy bridge `screenshot` tool times out (3/3 + a retry): the operator's active research job
-`oram-research/build_dataset.py` (PID 3315077, `flock ~/.dataset.lock`, driving the single shared envoy
-browser at eprint.iacr.org) saturates the envoy extension. **Not killed** — it's the operator's job.
-No alternate capture on this box (envoy container has no scrot/import/xwd/ffmpeg; neko `/api/screenshot`
-404; browser-box is CDP, banned by LESSONS). Per spec → `needs-e2e`; I do not claim a screenshot I
-didn't capture.
+## ✅ Could NOT capture — RESOLVED (2026-07-27)
+The earlier `needs-e2e` blocker is cleared: `build_dataset.py` is no longer running, and the
+envoy-bridge `screenshot` "image readback failed" crash was fixed by restarting `envoy-browser`.
+Three step screenshots are committed (`01/02/03-*.png`) and embedded in the PR body. No blank images;
+each PNG is a valid non-blank capture (1912×943, 256 distinct byte values) and its caption is grounded
+in the DOM state asserted via bridge `evaluate` at capture time (the worker cannot visually inspect
+images, so the visible content is substantiated by the asserted DOM text + the verified PNG).
 
-## Operator steps to flip this to full Tier-2 green
-1. **List the app** on the staging node: add `reddit-karma` to `STATIC_LISTING` in
-   `oauth3-server/server/listing.ts` (allow `reddit`, scope `read`) — or test via `demo-app`.
-2. **Sync a reddit jar** for the rig subject (`POST /oauth3/api/cookies`, plugin `reddit`,
-   `reddit_session` cookie) so `/api/reddit/items` returns real saved posts.
-3. With `build_dataset.py` not running (or a second envoy profile), open `<staging>/reddit-karma/`
-   with the extension disabled/pinned-out, click Connect, screenshot the saved-posts card.
+## Operator steps to additionally see a green saved-posts card (out of scope for this code PR)
+1. **Sync a reddit jar** for the rig subject (`POST /oauth3/api/cookies`, plugin `reddit`,
+   `reddit_session` cookie) so `/api/reddit/items` returns real saved posts. (Listing is no longer
+   blocking — the wallet path already reaches a token for reddit-karma.)
+2. With a jar synced, open `<staging>/reddit-karma/`, click Connect, and the saved-posts card renders
+   `live` — keep that screenshot out of the public repo (real personal data).
 
 ## Note on the broader #67 arc
 This helper enhancement also removes the no-extension dead-end for **every** adopter (timeline-peek's
