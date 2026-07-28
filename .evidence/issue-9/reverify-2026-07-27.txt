@@ -1,0 +1,7 @@
+did        : did:key:z6MktvU5btxgTvmP8tMENR5MMkWBAUQSNe3zeHq13F4UVpWf
+login      : 200 {"ok":true,"subject":"did:key:z6MktvU5btxgTvmP8tMENR5MMkWBAUQSNe3zeHq13F4UVpWf","session":"sess-6f7d8ee1f5654d208f33725c
+me         : {"signedIn":true,"subject":"did:key:z6MktvU5btxgTvmP8tMENR5MMkWBAUQSNe3zeHq13F4UVpWf","providers":{"github":false,"googl
+connect    : 200 {"requestId":"req-6365321aaebb4fb4870981ae7d21c525","approveUrl":"https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.
+approve    : 200 {"ok":true,"status":"approved"}
+poll       : approved tok-tok-twitte…
+feed       : 409 {"error":"no jar synced for twitter"}
