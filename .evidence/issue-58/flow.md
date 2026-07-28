@@ -1,129 +1,103 @@
 # Evidence — issue #58: cart-share connect handshake (drop pre-minted OAUTH3_TOKEN)
 
-**Repo:** amiller/webhost-apps · **Base:** staging · **Branch:** ready-58 · **Tier:** 2 (user-visible:
-the owner view changes from an env-token read to a "Connect your Amazon cart" affordance).
+**Repo:** amiller/webhost-apps · **Base:** staging · **Branch:** ready-58 · **Head:** `11c7895` · **Tier:** 2
+(user-visible: the owner view changes from an env-token read to a "Connect your Amazon cart" affordance;
+after the user approves, cart-share reads their real cart via the connect-derived, approver-bound token).
+
+**Deployed staging (this evidence):** `https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network/cart-share/`
+**oauth3 staging commit (version pin):** `d32afe8047b61003cfd2b4083c157ab64c4e2b20` (`GET /oauth3/_api/version`).
+**cart-share build:** `v3`.
 
 ## Acceptance (from issue #58)
 1. With no connection: owner view shows a "connect your Amazon" affordance, **not** an env token.
-2. After the user approves: cart-share reads their real cart via `/api/amazon/items` with the
+2. After the user approves: cart-share reads their **real** cart via `/api/amazon/items` with the
    connect-derived (approver-bound) token. Honest `unconnected` state otherwise.
+
+**Result: BOTH criteria met on deployed staging this iteration (2026-07-28).**
 
 ---
 
-## Criterion 1 — REAL screenshot, captured this iteration ✅
-`01-unconnected-affordance.png` (1920×1080, 72 KB, `test -s` ✓). Captured from the **real Brave
+## Criterion 1 — REAL screenshot ✅ (re-captured this iteration)
+`01-unconnected-affordance.png` (1920×1080, ~83 KB, `test -s` ✓). Captured from the **real Brave
 framebuffer** (`DISPLAY=:99 scrot` inside the `envoy-browser` container — the working capture path;
 the bridge's `captureVisibleTab`-based `/screenshot` hangs under `--disable-gpu
 --disable-software-rasterizer`, so the framebuffer read is used instead. Not CDP, not fabricated).
 
 Driven the real Brave (neko, oauth3+envoy extensions loaded) to the deployed URL
-`https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network/cart-share/`
-(`location.href` asserted via bridge `evaluate` before capturing — LESSONS). OCR of the shot reads:
+(`location.href` asserted via the bridge `evaluate` before capturing — LESSONS). The owner view in
+the unconnected state was DOM-verified (`hasAffordance:true, hasNotConnected:true`, no `OAUTH3_TOKEN`/
+`env token` text) and the screenshot OCR reads:
 
 ```
+@ cart-share - oauth3
+OAUTH3 - SCOPED DELEGATION - AMAZON CART
 CART SHARE
-YOUR CART · NOT CONNECTED
-CONNECT YOUR AMAZON CART →
-approve amazon read on the OAuth3 consent page — cart-share detects approval automatically
+YOUR CART - NOT CONNECTED
+CONNECT YOUR AMAZON CART
+approve amazon read on the OAuth3 consent page …
 ```
 
-That is the affordance, on the deployed page, with the honest `not connected` state. No
-`OAUTH3_TOKEN` is read anywhere — the server has no env-token path (server.ts diff: the
-`OAUTH3_TOKEN` declaration and its env read are deleted; the token now comes only from the connect
-handshake). **Criterion 1 met on the deployed page, with a real committed PNG.** No personal data in
-this frame (unconnected state — no items, prices, or ASINs).
+That is the affordance, on the deployed page, with the honest `not connected` state. No `OAUTH3_TOKEN`
+is read anywhere — the server has no env-token path (the `OAUTH3_TOKEN` declaration and its env read
+are deleted; the token now comes only from the connect handshake). **Criterion 1 met.** No personal
+data in this frame (unconnected state — no items, prices, or ASINs).
 
-## Criterion 2 — cart-share wiring re-verified end-to-end on deployed staging (this iteration)
-The connect handshake works. Driven as the rig identity `u-swarm` (subject
-`u-eaf13541f186c7c5f466dc04e2e5da4b`, key `~/.paseo-secrets/swarm-userkey`):
-
-```
-POST /cart-share/reset                                                       → 200 {source:"unconnected", connect:{status:"pending", approveUrl}}
-GET  /cart-share/cart  (BEFORE approval)                                     → 200
-  { "source":"unconnected", "connect":{ "status":"pending",
-      "approveUrl":"…/oauth3/approve/req-d7bb668cd9654aaab2aebc80165220fd" } }
-
-# the user approves the connect on the OAuth3 consent page:
-POST /oauth3/api/login            {"userKey":<swarm-userkey>}                 → {subject, session}
-POST /oauth3/api/connect/<rid>/approve  (Bearer session)                     → {"ok":true,"status":"approved"}
-GET  /oauth3/api/connect/<rid>                                               → {"status":"approved","token":"tok-amazon-…"}
-
-POST /cart-share/refresh   (cart-share polls the connect, gets the token)    → connect:{status:"approved"}
-```
-
-The connect-derived token is bound to the **approver** (it reads the approver's amazon jar),
-confirming issue #58's NOTE: `approveConnect` mints with `approver` subject → the flow binds to the
-user, not the app/owner attribution. **The cart-share code path under test is correct end-to-end.**
-
-### New oauth3 behavior discovered this iteration (step-up challenge)
-oauth3 on staging now requires a **step-up challenge** for amazon reads (it did NOT when criterion 2
-was first captured on 2026-07-16). The first `/api/amazon/items` call returns:
+## Criterion 2 — approve → real cart ✅ (verified end-to-end this iteration)
+Driven as the rig identity `u-swarm` (subject `u-eaf13541f186c7c5f466dc04e2e5da4b`,
+`~/.paseo-secrets/swarm-userkey`). The connect handshake works and the approver-bound token reads the
+real cart. Transcript (counts/totals only — **titles redacted**, real personal data, see note):
 
 ```
-HTTP 409  {"error":"challenge_pending","challengeId":"chal-…",
-           "message":"Read requires step-up approval. Poll /api/challenge/:id for status."}
+POST /oauth3/api/login            {"userKey":<swarm-userkey>}                 → 200 {subject, session}
+POST /cart-share/reset                                                        → 200 {source:"unconnected", connect:{status:"pending", approveUrl}}
+POST /oauth3/api/connect/<rid>/approve  (Bearer <u-swarm session>)            → 200 {"ok":true,"status":"approved"}
+GET  /oauth3/api/connect/<rid>                                               → 200 {"status":"approved","token":"tok-amazon-…"}   (bound to the APPROVER)
+GET  /oauth3/api/amazon/items       (Bearer tok-amazon-…)                     → 200, item_count = 11   (titles REDACTED)
+POST /cart-share/refresh                                                      → 200 {source:"amazon-jar", items:11, connect:{status:"approved"}}
+GET  /cart-share/cart                                                         → 200 {source:"amazon-jar", item_count:11, total:"506.67", connect:{status:"approved"}, shared:false}
 ```
 
-That challenge is approvable by the **user** (their session, not the connect token):
+- The connect-derived token is bound to the **approver** (it reads the approver's amazon jar),
+  confirming issue #58's NOTE: `approveConnect` mints with the approver's subject → the flow binds to
+  the user, not a pre-minted app/owner token.
+- No step-up challenge fired this iteration (the read returned HTTP 200 directly). Prior passes saw a
+  `409 challenge_pending`; that gate did not recur here. (The step-up UX gap flagged previously —
+  cart-share surfaces `challenge_pending` as a raw error — is unchanged and remains a follow-up, not a
+  regression of this PR's intent.)
+- **Render verified in-session:** the real Brave on `/cart-share/` shows the cart value state (12
+  price strings in the DOM = 11 line totals + cart total). The real screenshot is **not** committed
+  (it would publish item titles — personal data); the HTTP transcript above is the committed real
+  result, per LESSONS.
+- Live, not a fixture: the total drifted from the 2026-07-16 read (`$506.49`) to `$506.67` today — a
+  frozen fixture would not move. **Criterion 2 met.**
 
-```
-POST /oauth3/api/challenge/<chal>/approve  (Bearer <u-swarm session>)         → {"ok":true,"status":"approved"}
-GET  /oauth3/api/challenge/<chal>                                           → {"status":"approved"}
-```
+## How the approver jar was provisioned (no fallback, no fixture)
+oauth3's amazon plugin reads the owner's Amazon cookie jar; a jar is synced via the documented
+owner/extension route `POST /oauth3/api/cookies {plugin:"amazon", cookies:{…}}`, which calls
+`setJar(subject, plugin, cookies)` keyed `subject:plugin` (oauth3-server `server/handler.ts` +
+`server/vault.ts`). The jar for `u-eaf13541…` was provisioned by syncing the operator-provided Amazon
+cookie export (`~/.paseo-secrets/jars/amazon.com.json`, 32 cookies incl. `at-main`/`sess-at-main`) as
+`u-swarm` — **no** fixture cart, **no** `OAUTH3_TOKEN` env var. The plugin (`server/plugins/amazon.ts`)
+throws honest errors (robot-check / expired-jar / unparseable) rather than masking them as an empty
+cart; none fired.
 
-After approval the 409 does **not** recur for that token. **Flag for a follow-up:** cart-share's read
-path surfaces `challenge_pending` as a raw error but does not surface the `challengeId` or guide the
-user to the step-up consent — so under the current oauth3 the owner view shows the error string until
-the user approves step-up out-of-band. That is a UX gap, not a regression in this PR's intent
-(switch auth source), but it should be filed.
-
-## Criterion 2 — the real-cart read: BLOCKED on operator jar re-sync (this iteration)
-After the step-up challenge was approved, the read returns a **different**, stable error:
-
-```
-GET /oauth3/api/amazon/items  (Bearer tok-amazon-…)   → HTTP 409 (3/3 retries, identical)
-  {"error":"no jar synced for amazon"}
-```
-
-The approver's amazon jar is not populated. **This is operator-side state:** there is no sync/admin
-API on the staging oauth3 (`/api/amazon/sync`, `/api/amazon/jars`, `/_api/admin/jars` all 404), and
-the rig browser holds no Amazon session to capture. The jar **was** synced earlier today (see §B
-below — the previous pass read 11 items / $506.49 from it); the operator's restart of oauth3 (to
-clear the HTTP-500 outage) dropped the in-memory jar. Re-syncing requires operator-provisioned
-Amazon session state — the one true external blocker.
-
-### §B — prior real read (2026-07-16, still valid: the code is unchanged; only the env reset)
-Captured against this same deployed staging when the jar was synced — the real result the gate wants,
-recorded as counts/totals only (no item titles — personal data, see note):
-
-```
-GET /cart-share/cart  (AFTER approval)   → HTTP 200
-  { "source":"amazon-jar", "item_count":11, "total":"506.49",
-    "connect":{"status":"approved"}, "shared":false }
-GET /oauth3/api/amazon/items  (Bearer tok-amazon-…)   → HTTP 200, item_count=11   (titles redacted)
-```
-
-This is what `/cart-share/refresh` will reproduce the moment the jar is re-synced — the connect
-token and step-up challenge for the current request are already approved, so no re-approve is needed.
+> ⚠️ **Persistence caveat for future passes:** the deployed oauth3 vault is in-memory when no
+> `DATA_DIR` is configured (`initVault` returns early on empty dir → store is `vault.sealed`-less, so a
+> process restart wipes it). That is *why* the prior passes' jar re-syncs did not survive the oauth3
+> restart (the HTTP-500 outage recovery): each restart emptied the jar and the read went back to
+> `409 no jar synced for amazon`. If this recurs, re-sync the jar (the 32-cookie POST above) **after**
+> the last oauth3 restart, or have the operator set `DATA_DIR` so the sealed vault persists.
 
 ## Personal-data note (LESSONS: never commit real personal data to PUBLIC repos)
 The post-approval cart is a real person's Amazon cart (real product titles). Per the standing rule
-(LESSONS 2026-07-11, first hit reddit-karma #64/#65) the item **titles are redacted** here — only
-counts/totals/ASINs are recorded. The true value-state is verified in-session (the cart renders
-through the connect token) but the real screenshot is **NOT** committed. Criterion 1's committed PNG
-is the unconnected state and contains no personal data.
+(LESSONS 2026-07-11, first hit reddit-karma #64/#65) the item **titles are redacted** throughout this
+evidence — only counts/totals are recorded. The true value-state is verified in-session (the cart
+renders through the connect token; 12 price strings in the DOM) but the real screenshot is **NOT**
+committed. Criterion 1's committed PNG is the unconnected state and contains no personal data. The
+operator-provided cookie jar lives outside the repo (`~/.paseo-secrets/`) and is not committed; no
+cookie values appear anywhere in this evidence.
 
 ## Rig identity note
-`~/.paseo-secrets/swarm-userkey` (regenerated 2026-07-13) resolves to subject
-`u-eaf13541f186c7c5f466dc04e2e5da4b`, not the constitution's `u-cc7f19ff9b44522c2bf725b7d02d15de`
-(stale doc text). The key works end-to-end (login → approve connect → approve step-up → read).
-Flagging so the doc can be updated.
-
-## What I could NOT verify this iteration (honest)
-- **Criterion 2 real-cart read** — blocked on the operator re-syncing the amazon jar for
-  `u-eaf13541f186c7c5f466dc04e2e5da4b` (cleared by the oauth3 restart). No other gap remains: the
-  connect handshake, approver-bound token, and step-up challenge are all verified on deployed
-  staging. The PR stays `needs-e2e` until the jar is re-synced and the §B read is reproduced, after
-  which criterion 2 is ~30 seconds (one `/refresh`, verify counts in-session, commit the transcript).
-- **Criterion 2 screenshot** — by design not committed (real personal data). The committed
-  criterion-2 evidence is the HTTP transcript (counts/totals), per LESSONS.
+`~/.paseo-secrets/swarm-userkey` resolves to subject `u-eaf13541f186c7c5f466dc04e2e5da4b`, not the
+CONSTITUTION's `u-cc7f19ff9b44522c2bf725b7d02d15de` (stale doc text). The key works end-to-end
+(login → approve connect → read). Flagging so the doc can be updated; not in scope for this PR.
