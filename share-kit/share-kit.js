@@ -293,10 +293,14 @@
       var body = null;
       try { body = await r.json(); } catch (_) { body = null; }
       if (r.ok) return body || {};
-      // step-up (RFC 0005): a 409 with {error:'challenge_pending', challengeId} is retryable.
-      if (r.status === 409 && body && body.error === "challenge_pending" && body.challengeId) {
-        var se = new Error("challenge_pending");
-        se.oauth3StepUp = true; se.challengeId = body.challengeId; throw se;
+      // Step-up (RFC 0005): nodes have used both "challenge_pending" and "challenge"
+      // while the approval is outstanding. Accept either wire spelling, but only when an
+      // id is present so ordinary terminal errors remain terminal and visible.
+      var stepUp = body && (body.error === "challenge_pending" || body.error === "challenge");
+      var challengeId = body && (body.challengeId || body.challenge_id);
+      if (r.status === 409 && stepUp && challengeId) {
+        var se = new Error(String(body.error));
+        se.oauth3StepUp = true; se.challengeId = challengeId; throw se;
       }
       // everything else is terminal — surface the node's real error, never mask it.
       var te = new Error((body && (body.error || body.message)) || (path + " " + r.status));
