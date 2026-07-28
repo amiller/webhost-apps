@@ -19,10 +19,16 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/share-kit/share-kit.js"
-APP="${1:?usage: $0 <app-dir> (e.g. timeline-peek)}"
+APP="${1:?usage: $0 <app-dir> (e.g. timeline-peek / calendar-share)}"
 APP_DIR="$ROOT/$APP"
-HTML="$APP_DIR/index.html"
-[ -f "$HTML" ] || { echo "no index.html in $APP_DIR" >&2; exit 1; }
+# Apps in this repo ship their entry html at one of two layouts: <app>/index.html
+# (timeline-peek, reddit-karma, …) or <app>/public/index.html (calendar-share,
+# otterpilot). Resolve whichever exists so every adopter can run inline.sh <app>.
+HTML=""
+for cand in "$APP_DIR/index.html" "$APP_DIR/public/index.html"; do
+  [ -f "$cand" ] && { HTML="$cand"; break; }
+done
+[ -n "$HTML" ] || { echo "no index.html in $APP_DIR (looked at ./index.html and ./public/index.html)" >&2; exit 1; }
 [ -f "$SRC" ] || { echo "canonical $SRC not found" >&2; exit 1; }
 VERSION="$(grep -m1 -oE 'VERSION = "[^"]+"' "$SRC" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo unknown)"
 

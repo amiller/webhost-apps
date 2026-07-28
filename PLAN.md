@@ -1,39 +1,40 @@
-# PLAN — issue #67 (operator-ask): migrate reddit-karma to shared oauth3Connect
+# PLAN — #67 (calendar-share): adopt ShareKit.oauth3Connect
 
-Base: `staging`. One app = one PR (per #67 "one PR per app"). Operator-ask, drained first.
+Issue #67 is a meta-issue, **one PR per app** (reddit-karma shipped via #74). This PR is
+**calendar-share** — the next app that genuinely hand-rolls the browser connect handshake.
+(feedling-web's connect is server-side via its own SDK poll loop, not `window.oauth3`, so
+the browser helper doesn't fit it without a rearchitecture; otterpilot already inlines an
+older share-kit + a working step-up; screenshare-debug is an outbound UCAN consent app, not
+a connect+read relying party. calendar-share is the pure target.)
 
-## Why this shape (not a naive swap)
-`ShareKit.oauth3Connect` (shipped #66/PR#68) ONLY supports the extension path
-(`window.oauth3.connect`); with no extension it throws a terminal "No OAuth3 wallet found"
-dead-end — the **exact #9 regression** PR #63 is fixing in timeline-peek. reddit-karma today
-hand-rolls BOTH the extension connect AND the no-extension wallet self-provision
-(did:key → /api/login → /api/connect → /approve → poll). A blind adoption would delete the
-wallet path and regress mobile/no-extension. So the root-cause migration is:
+## Acceptance (from #67, for calendar-share)
+- [x] adopts `ShareKit.oauth3Connect()`; no longer hand-rolls the handshake.
+- [x] connect works (extension path OR wallet self-provision, via the shared helper).
+- [x] step-up / no dead-end: `oauth3Read`'s step-up marker is surfaced as an actionable
+      retry message, NOT a raw `challenge_pending` string (the bug the helper fixes). The
+      helper's automatic probe-loop recovery is available once the google-calendar read goes
+      live; today the read returns "not yet captured" (not 409), so the step-up branch is
+      documented + code-present, not live-exercised.
+- [x] errors render honestly (helper's terminal Errors + the read's real error shown verbatim).
+- [ ] Tier-2 walked flow on staging.
 
-1. **Extend the helper**: `oauth3Connect` runs the wallet self-provision when `window.oauth3`
-   is absent (instead of dead-ending), then proceeds to the existing probe/step-up recovery.
-   Port reddit-karma's PROVEN wallet flow verbatim. No signature change.
-2. **Migrate reddit-karma** onto `ShareKit.oauth3Connect` + `ShareKit.oauth3Read`; delete the
-   ~60 lines of duplicated wallet boilerplate. Keep the app-specific read/render/evidence.
+## Build
+- [x] share-kit v0.4.0: `oauth3Connect` + `_connectViaWallet` forward `caps` (mint path).
+- [x] `inline.sh`: resolve entry html at `<app>/index.html` OR `<app>/public/index.html`.
+- [x] inline share-kit (v0.4.0) into `calendar-share/public/index.html`.
+- [x] `onConnect` → `ShareKit.oauth3Connect` (pure-handshake: the read path isn't live, and
+      gating connect on it would regress the mint envelope that is this app's value today).
+- [x] `loadEvents` → `ShareKit.oauth3Read` (+ step-up vs terminal handling).
+- [x] `mintShare` → `ShareKit.oauth3Connect({caps:[cap]})`.
+- [x] remove ~60 lines of hand-rolled wallet self-provision (walletKey/walletSignIn/
+      connectViaWallet + the b58/did:key crypto).
+- [x] `revokeShare` reuses ShareKit's persisted `oauth3_session`.
+- [x] `node --check` on the combined script — OK.
 
-This also lays clean groundwork for the #9 fix (helper no longer dead-ends) — but timeline-peek
-is NOT touched here (open PR #63 owns it).
-
-## Acceptance (from issue #67, for reddit-karma)
-- [x] reddit-karma adopts `oauth3Connect()` and no longer hand-rolls the connect handshake
-      (extension OR wallet) — boilerplate deleted, helper used.
-- [x] Connect still works (extension path unchanged in behavior; wallet path preserved via helper).
-- [x] Step-up recovers / no dead-end; errors render honestly (helper's terminal-error contract).
-- [x] Parse-clean (`node --check` on extracted `<script>` of both files).
-- [x] Deployed to staging; functional verification via envoy bridge (navigate + evaluate asserting
-      the wallet path runs and renders the honest read result, no dead-end) + HTTP transcript.
-- [x] Tier-2 walked flow captured (2026-07-27): blocker cleared (build_dataset.py gone; envoy
-      `screenshot` readback crash fixed by envoy-browser restart). 3 step PNGs + flow.md committed;
-      wallet path obtained real token `tok-reddit-7…`, read returned honest 409 "no jar synced for
-      reddit", rendered as a plain error card. Relabeled `needs-e2e` → `ready-to-merge`.
-
-## Files
-- `share-kit/share-kit.js` — add wallet self-provision to `oauth3Connect`; bump VERSION 0.2.0→0.3.0.
-- `reddit-karma/index.html` — inline updated share-kit; rewrite `onConnect` over the helper;
-  delete `walletKey`/`walletSignIn`/`connectViaWallet` + base64/base58 helpers now in the kit.
-- `.evidence/issue-67/` — flow.md (Tier-2 walked flow + functional evidence + HTTP transcript) + 01/02/03 PNGs.
+## Verify (Tier 2)
+- [ ] deploy calendar-share (ready-67) to webhost-staging.
+- [ ] envoy bridge: open `/calendar-share/`, screenshot landing (owner mode + Connect).
+- [ ] drive Connect (wallet path — drivable HTTP, no extension popup), screenshot the honest
+      read result + the still-reachable mint envelope.
+- [ ] assert acceptance content via `evaluate` (connect transitions; error renders honestly).
+- [ ] commit `.evidence/issue-67/calendar-share/` + `flow.md`; embed in PR.

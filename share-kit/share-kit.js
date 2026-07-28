@@ -35,7 +35,7 @@
  */
 (function () {
   "use strict";
-  var VERSION = "0.3.0";
+  var VERSION = "0.4.0";
 
   var CSS = [
 /* base — consumes host tokens; scoped so it never touches host styles */
@@ -256,12 +256,15 @@
    * and timeline-peek DEAD-ENDED on a step-up, rendering the raw `challenge_pending` string
    * in pink with no recovery. This is the one shared path. Two pieces:
    *
-   *   oauth3Connect({plugin, app, node, onStatus, probe}) -> Promise<token>
+   *   oauth3Connect({plugin, app, node, caps, onStatus, probe}) -> Promise<token>
    *     - runs window.oauth3.connect() (the wallet/extension carries consent + approval and
    *       hands back a bare token string). If NO wallet/extension is present (phone, clean
    *       profile), falls back to wallet self-provision (did:key → /api/login → /api/connect →
    *       approve → poll) instead of dead-ending — fixes the #9 "install the extension"
    *       regression for every adopter at once. Either way the app only ever sees the token.
+   *     - optional `caps` (string[]) is forwarded on both paths so a relying party can MINT a
+   *       capability-scoped token (e.g. calendar-share's write:event:<id>) through the same
+   *       shared handshake instead of hand-rolling a second connect — #67.
    *     - if `probe(token)` is given, runs it AFTER connect. A probe that rejects with the
    *       step-up marker (409 challenge_pending + challengeId, see oauth3Read) is RETRYABLE:
    *       onStatus("waiting-approval") fires, the challenge is polled (capped ~20×4s), and the
@@ -398,11 +401,11 @@
     localStorage.setItem(SK, b.session);
     return b.session;
   }
-  async function _connectViaWallet(node, plugin, app) {
+  async function _connectViaWallet(node, plugin, app, caps) {
     var session = await _walletSignIn(node);
     var cr = await fetch(node + "/api/connect", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plugin: plugin, app: app })
+      body: JSON.stringify(caps && caps.length ? { plugin: plugin, app: app, caps: caps } : { plugin: plugin, app: app })
     });
     var c = await cr.json().catch(function () { return {}; });
     if (!cr.ok) throw new Error(c.error || ("connect " + cr.status));
@@ -435,7 +438,7 @@
         onStatus("connecting", { plugin: opts.plugin, via: "extension" });
         var got;
         try {
-          got = await window.oauth3.connect({ plugin: opts.plugin, app: opts.app, subject: opts.subject, node: node });
+          got = await window.oauth3.connect({ plugin: opts.plugin, app: opts.app, subject: opts.subject, caps: opts.caps, node: node });
         } catch (e) {
           var ce = new Error(String((e && e.message) || e)); ce.terminal = true; throw ce;
         }
@@ -450,7 +453,7 @@
         // #9 regression). Errors — incl. the node's layer-1 listing 403 — surface honestly.
         onStatus("connecting", { plugin: opts.plugin, via: "wallet" });
         try {
-          token = await _connectViaWallet(node, opts.plugin, opts.app);
+          token = await _connectViaWallet(node, opts.plugin, opts.app, opts.caps);
         } catch (e) {
           var we = new Error(String((e && e.message) || e)); we.terminal = true; throw we;
         }
