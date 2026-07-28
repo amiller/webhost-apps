@@ -68,6 +68,15 @@ GET  /cart-share/cart                                                         �
   price strings in the DOM = 11 line totals + cart total). The real screenshot is **not** committed
   (it would publish item titles — personal data); the HTTP transcript above is the committed real
   result, per LESSONS.
+- **Render path proven with a committed labeled sample:** `02-render-check.png` (108 KB, `test -s` ✓,
+  OCR-verified). It is the shipped `drawOwner()` `source==="amazon-jar"` success branch + the shipped
+  `<style>` (copied **verbatim** from `cart-share/public/index.html`; source kept alongside as
+  `02-render-check.source.html`), fed obviously-fake sample items (`SAMPLE ITEM — …`). It proves the
+  connected-cart render path renders item rows + per-line prices + total + the owner share/checkout
+  controls + the receipt card. This is the LESSONS-sanctioned substitute for committing the real cart
+  shot (precedent: reddit-karma #64 `04-render-check.png`). Rendered headlessly from a **local** file —
+  not a real-browser/external flow, so outside the CDP-on-real-flows ban; the live read itself is the
+  committed transcript + the in-session DOM check, not this image.
 - Live, not a fixture: the total drifted from the 2026-07-16 read (`$506.49`) to `$506.67` today — a
   frozen fixture would not move. **Criterion 2 met.**
 
@@ -93,9 +102,11 @@ The post-approval cart is a real person's Amazon cart (real product titles). Per
 (LESSONS 2026-07-11, first hit reddit-karma #64/#65) the item **titles are redacted** throughout this
 evidence — only counts/totals are recorded. The true value-state is verified in-session (the cart
 renders through the connect token; 12 price strings in the DOM) but the real screenshot is **NOT**
-committed. Criterion 1's committed PNG is the unconnected state and contains no personal data. The
-operator-provided cookie jar lives outside the repo (`~/.paseo-secrets/`) and is not committed; no
-cookie values appear anywhere in this evidence.
+committed. The committed images are: `01-unconnected-affordance.png` (criterion 1 — unconnected state,
+no personal data) and `02-render-check.png` (criterion 2 render path — a clearly-labeled **sample**,
+`not live data`, fake items; proves the render markup only). The operator-provided cookie jar lives
+outside the repo (`~/.paseo-secrets/`) and is not committed; no cookie values appear anywhere in this
+evidence.
 
 ## Rig identity note
 `~/.paseo-secrets/swarm-userkey` resolves to subject `u-eaf13541f186c7c5f466dc04e2e5da4b`, not the
