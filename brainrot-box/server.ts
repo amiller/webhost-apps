@@ -55,6 +55,34 @@ export interface JudgeResult {
   score: number;
 }
 
+// #83 conversation-state readouts: a rolling recap, topic-shift markers, and audience/purpose/register
+// estimates, produced by the SAME judge-loop machinery (strict-JSON verdicts over a transcript window).
+export interface RecapResult {
+  recap: string;
+}
+
+export interface ShiftResult {
+  shifted: boolean;
+  topic: string;
+}
+
+export type ConversationalRegister = "casual" | "working" | "formal";
+
+export interface FlowEstimate {
+  audience: string;
+  purpose: string;
+  register: ConversationalRegister | string;
+}
+
+export interface ConversationState {
+  recap: string;
+  shifts: { t: number; topic: string }[];
+  estimate: FlowEstimate;
+  last_topic: string;
+}
+
+export type StateKind = "recap" | "shift" | "flow";
+
 /** Optional model-stream injection (tests): when set, `streamComplete` calls this instead of
  *  the real NEAR/Chutes e2ee paths, so loops can be exercised with no network egress. */
 export interface StreamProvider {
@@ -144,6 +172,19 @@ const JUDGE_SYSTEM = `You judge a live meeting transcript for genuinely useful "
 Return STRICT JSON only:
 {"good_point":bool,"quote":"<=140 chars near-verbatim","why":"<=12 words","score":0-10}
 Flag only concise, reusable insights, decisions, or unusually clear framing. Ignore filler, logistics, and vague agreement.`;
+
+// #83: the three conversation-state verdicts, same strict-JSON discipline as the good-point judge.
+const RECAP_SYSTEM = `Summarize what the live meeting is currently about in one present-tense sentence (<=24 words).
+Return STRICT JSON only:
+{"recap":"<=24 words"}`;
+
+const SHIFT_SYSTEM = `You watch a live meeting transcript for topic changes. Given the prior focus and the newest stretch, decide whether the topic has shifted, and name the current topic.
+Return STRICT JSON only:
+{"shifted":bool,"topic":"<=8 words naming the current topic"}`;
+
+const FLOW_SYSTEM = `Estimate the conversational register of this live meeting stretch.
+Return STRICT JSON only:
+{"audience":"<=6 words","purpose":"<=6 words","register":"one of: casual | working | formal"}`;
 
 // Hand-built starter toolbox: the compositor has a full palette from second zero instead of
 // waiting on the toolsmith's first builds. One per TOOLSMITH_SYSTEM category, same craft rules.
@@ -270,6 +311,41 @@ export function scoreTranscript(data: any): Scored {
 
 export function isBanger(j: JudgeResult | null): j is JudgeResult {
   return !!j && j.good_point && j.score >= 7 && j.quote.length > 0;
+}
+
+// #83: sanitize + clamp the conversation-state verdicts. Empty/junk -> null (rendered as the quiet
+// empty line, never a fabricated value). An unknown register is kept verbatim, not silently coerced.
+const clampWords = (s: unknown, n: number, maxChars: number): string =>
+  String(s ?? "").replace(/\s+/g, " ").trim().split(/\s+/).slice(0, n).join(" ").slice(0, maxChars).trim();
+
+export function parseRecap(raw: string): RecapResult | null {
+  const j = extractJson(raw) as Partial<RecapResult> | null;
+  if (!j || typeof j !== "object") return null;
+  const recap = clampWords(j.recap, 24, 200);
+  return recap ? { recap } : null;
+}
+
+export function parseShift(raw: string): ShiftResult | null {
+  const j = extractJson(raw) as Partial<ShiftResult> | null;
+  if (!j || typeof j !== "object") return null;
+  const topic = clampWords(j.topic, 8, 120);
+  if (!topic) return null;
+  return { shifted: j.shifted === true, topic };
+}
+
+const REGISTERS: ConversationalRegister[] = ["casual", "working", "formal"];
+
+export function parseFlow(raw: string): FlowEstimate | null {
+  const j = extractJson(raw) as Partial<FlowEstimate> | null;
+  if (!j || typeof j !== "object") return null;
+  const audience = clampWords(j.audience, 6, 80);
+  const purpose = clampWords(j.purpose, 6, 80);
+  const r = String(j.register ?? "").toLowerCase().trim();
+  const register: ConversationalRegister | string = REGISTERS.includes(r as ConversationalRegister)
+    ? (r as ConversationalRegister)
+    : (r || "working");
+  if (!audience && !purpose) return null;
+  return { audience, purpose, register };
 }
 
 export function normalizeSegments(data: unknown, now = Date.now()): Segment[] {
@@ -490,6 +566,12 @@ export class GoodpointRuntime {
   lastFetchErr = "";
   lastFetchAt = 0;
   lastJudgeAt = 0;
+  // #83 conversation-state readouts (recap / topic shifts / audience-purpose-register).
+  lastStateAt = 0;
+  recap = "";
+  shifts: { t: number; topic: string }[] = [];
+  lastTopic = "";
+  estimate: FlowEstimate = { audience: "", purpose: "", register: "" };
   registry = new Map<string, ToolDef>();
   composition: unknown = { layers: [] };
   brief = { mood: "", emphasis: "", tone: "", direction: "" };
@@ -523,6 +605,8 @@ export class GoodpointRuntime {
   lastDecodeAt = 0;
   private nodeSeq = 0;
   private judgeOverride?: (text: string) => Promise<JudgeResult | null>;
+  // #83: optional in-process state-verdict provider (tests / harness), mirrors judgeOverride.
+  private stateOverride?: (kind: StateKind, text: string) => Promise<string | null>;
   private streams?: StreamProvider;
 
   constructor(
@@ -530,9 +614,11 @@ export class GoodpointRuntime {
     judgeOverride?: (text: string) => Promise<JudgeResult | null>,
     streams?: StreamProvider,
     traceStore?: TraceStore | null,
+    stateOverride?: (kind: StateKind, text: string) => Promise<string | null>,
   ) {
     this.cfg = requireCfg(env);
     this.judgeOverride = judgeOverride;
+    this.stateOverride = stateOverride;
     this.streams = streams;
     // #124: persistence is on by default (writes traces/ under the cwd); pass null to disable.
     this.traces = traceStore === undefined ? new TraceStore(env.TRACE_DIR || "traces") : traceStore;
@@ -637,6 +723,7 @@ export class GoodpointRuntime {
     this.lastLiveAt = seg.t;
     this.push({ type: "segment", segment: seg });
     await this.judgeRecent();
+    await this.stateRecent();
     await this.distill();
     await this.decoderTurn();
     return seg;
@@ -747,6 +834,40 @@ export class GoodpointRuntime {
     };
     this.push({ type: "goodpoint", point, brief: this.brief });
     return point;
+  }
+
+  // #83: one extra periodic judge-loop call after judgeRecent — recap, topic-shift detection, and a
+  // running audience/purpose/register estimate. 30s throttle; a repeated topic is not re-pushed.
+  async stateRecent(force = false): Promise<ConversationState | null> {
+    if (!force && Date.now() - this.lastStateAt < 30_000) return null;
+    const text = this.recentText(90_000);
+    if (text.length < 20) return null;
+    this.lastStateAt = Date.now();
+    const prior = this.lastTopic ? `Prior topic: ${this.lastTopic}\n` : "";
+    const call = async (kind: StateKind, system: string): Promise<string> => {
+      if (this.stateOverride) return (await this.stateOverride(kind, text)) ?? "";
+      return await this.streamComplete(this.cfg.toolsmithModel, system, `Transcript:\n${text}\n${prior}JSON:`, 160);
+    };
+    const recap = parseRecap(await call("recap", RECAP_SYSTEM));
+    if (recap) this.recap = recap.recap;
+    const shift = parseShift(await call("shift", SHIFT_SYSTEM));
+    if (shift) {
+      if (shift.shifted && shift.topic && shift.topic.toLowerCase() !== this.lastTopic.toLowerCase()) {
+        this.shifts.push({ t: Date.now(), topic: shift.topic });
+        if (this.shifts.length > 30) this.shifts.splice(0, this.shifts.length - 30);
+      }
+      if (shift.topic) this.lastTopic = shift.topic;
+    }
+    const flow = parseFlow(await call("flow", FLOW_SYSTEM));
+    if (flow) this.estimate = flow;
+    const state: ConversationState = {
+      recap: this.recap,
+      shifts: this.shifts,
+      estimate: this.estimate,
+      last_topic: this.lastTopic,
+    };
+    this.push({ type: "state", state });
+    return state;
   }
 
   smokeTest(tool: ToolDef): string | null {
@@ -928,6 +1049,7 @@ export class GoodpointRuntime {
         try {
           const added = await this.pollOtter(ac.signal);
           if (added.length) await this.judgeRecent();
+          if (added.length) await this.stateRecent();
           if (added.length) await this.distill(ac.signal);
           await this.decoderTurn(ac.signal);
         } catch (e) {
@@ -1029,6 +1151,9 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
     });
   }
   if (req.method === "GET" && path === "/goodpoints") return json({ goodpoints: app.ledger });
+  if (req.method === "GET" && path === "/state") {
+    return json({ recap: app.recap, shifts: app.shifts, estimate: app.estimate, last_topic: app.lastTopic });
+  }
   // full palette snapshot: a fresh viewer must not depend on tool events still being in the
   // (500-capped) events buffer.
   if (req.method === "GET" && path === "/tools") return json({ tools: [...app.registry.values()] });
@@ -1074,6 +1199,7 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
         segment_count: app.transcript.length,
       },
       ledger_count: app.ledger.length,
+      state: { recap_len: app.recap.length, shifts: app.shifts.length, last_topic: app.lastTopic },
       tools: { count: app.registry.size, max: app.cfg.maxTools },
       graph: { nodes: app.graphNodes.length, topics: app.graphTopics.length, undecoded: app.decodeQueue.length - app.decodedCount },
       mic_segments: app.micSeq,
@@ -1106,6 +1232,11 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
     app.seen.clear();
     app.cursor = 0;
     app.brief = { mood: "", emphasis: "", tone: "", direction: "" };
+    app.recap = "";
+    app.shifts = [];
+    app.lastTopic = "";
+    app.lastStateAt = 0;
+    app.estimate = { audience: "", purpose: "", register: "" };
     app.events = [];
     app.seq = 0;
     app.graphNodes = [];

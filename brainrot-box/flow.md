@@ -40,9 +40,25 @@ Observability:
 - `GET /events` now also returns `weave_running` + `otter_running` alongside `running`.
 - Each lane stop pushes an `{type:"idle", lane, reason}` event into the SSE stream.
 
-Testability: `GoodpointRuntime` takes an optional `StreamProvider` (mirrors the existing
-`judgeOverride` injection) so the loops can be exercised in `tests/server_test.ts` with **no network
-egress**; `tickIdle(now)` is the synchronous idle decision, drivable with synthetic time.
+## Conversation-state readouts (#83)
+
+A rolling **recap** ("what were we talking about"), **topic-shift** markers, and an
+**audience/purpose/register** estimate, produced by the SAME judge-loop machinery as the good-point
+stage (strict-JSON verdicts over a transcript window) — one extra periodic call
+(`GoodpointRuntime.stateRecent()`), NOT a new subsystem. 30s throttle; a repeated topic is not
+re-pushed.
+
+- Wired into both ingest points: the otter poll loop (`startOtter`) and `ingestSpeech` (mic), each
+  after `judgeRecent()`.
+- `GET /state` → `{recap, shifts, estimate, last_topic}`; `/diag` reports a `state` block;
+  `/reset` clears the state fields.
+- UI: a secondary **Conversation state** band under transcript + good points (per the #80 direction);
+  empty state = one quiet line, no placeholder rows. Unknown `register` is kept verbatim, not coerced.
+- Testability: `GoodpointRuntime` takes an optional `stateOverride` (5th ctor arg, mirrors
+  `judgeOverride`) so `stateRecent()` is exercised in `tests/server_test.ts` with no e2ee key.
+
+Evidence: `../.evidence/issue-83/flow.md` (render path proven server-side; Tier-2 PNG pending the
+browser rig — see that file's "NOT yet met" section).
 
 Current status (unchanged from #80): blocked for complete Tier 2 verification — the OAuth3 Otter
 read returns `challenge_pending` and a live weave needs operator-held `NEAR_API_KEY`/`CHUTES_API_KEY`.
