@@ -1,0 +1,28 @@
+# render-check result — issue #83 on brainrot-box (2026-07-28)
+# harness: .evidence/issue-83/render-check.ts  (real handler + real public/index.html
+#          + seeded sample transcript + MOCKED LLM; /start stubbed. Permitted by #83.)
+# run:     PORT=8947 deno run --allow-net --allow-read --allow-env .evidence/issue-83/render-check.ts
+
+## GET /state  (real handler output; captured verbatim in render-state.json)
+{"recap":"the team is deciding the deploy window for the oauth3 rollout",
+ "shifts":[{"t":1785273333617,"topic":"oauth3 rollout window"}],
+ "estimate":{"audience":"core eng","purpose":"decide the rollout","register":"working"},
+ "last_topic":"oauth3 rollout window"}
+
+## GET /diag  (state block)
+state: { "recap_len": 61, "shifts": 1, "last_topic": "oauth3 rollout window" }
+
+## GET /app  (served index.html — wiring checklist)
+  OK   state-band section markup        <section class="section state-band">
+  OK   #state div                         id="state"
+  OK   Conversation state h2              >Conversation state<
+  OK   setState() defined                 function setState(s)
+  OK   recap chip rendering               "we're talking about"
+  OK   ev.type state wired                ev.type === "state"
+  OK   fetch("state") on start            fetch("state")
+  ALL_PRESENT
+
+## NOT captured this pass (true blocker)
+  Tier-2 PNG of the browser-rendered #state band. The envoy/neko bridge control plane
+  (navigate/evaluate/screenshot) is not drivable from this session; CDP is banned (LESSONS).
+  A synthetic raster is rejected (fixture anti-pattern). See flow.md "NOT yet met".
