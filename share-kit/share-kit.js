@@ -35,7 +35,7 @@
  */
 (function () {
   "use strict";
-  var VERSION = "0.2.0";
+  var VERSION = "0.3.0";
 
   var CSS = [
 /* base — consumes host tokens; scoped so it never touches host styles */
@@ -258,8 +258,10 @@
    *
    *   oauth3Connect({plugin, app, node, onStatus, probe}) -> Promise<token>
    *     - runs window.oauth3.connect() (the wallet/extension carries consent + approval and
-   *       hands back a bare token string). If no wallet is present, throws a readable terminal
-   *       error (NOT a silent stall).
+   *       hands back a bare token string). If NO wallet/extension is present (phone, clean
+   *       profile), falls back to wallet self-provision (did:key → /api/login → /api/connect →
+   *       approve → poll) instead of dead-ending — fixes the #9 "install the extension"
+   *       regression for every adopter at once. Either way the app only ever sees the token.
    *     - if `probe(token)` is given, runs it AFTER connect. A probe that rejects with the
    *       step-up marker (409 challenge_pending + challengeId, see oauth3Read) is RETRYABLE:
    *       onStatus("waiting-approval") fires, the challenge is polled (capped ~20×4s), and the
@@ -333,6 +335,91 @@
     });
   }
 
+  /*
+   * Wallet self-provision (no extension) — the fallback oauth3Connect uses when
+   * window.oauth3 is absent (phone, clean profile), so it no longer dead-ends on "install the
+   * extension" (the #9 regression). Verbatim proven flow the relying-party demos each hand-
+   * rolled (reddit-karma / timeline-peek / calendar-share): self-provision an Ed25519 did:key
+   * in this browser, sign into the node, run /api/connect, self-approve with the wallet
+   * session, poll for the scoped token. The private key never leaves the browser; the node
+   * only sees the DID + a signature. Centralising it here is the #67 "stop hand-rolling the
+   * handshake" cleanup. Every failure (login/connect/approve/poll, incl. the node's layer-1
+   * listing 403 "App X is not listed") becomes a terminal Error the app renders honestly —
+   * listing is an operator config step, not something this kit can grant.
+   */
+  var B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  var DK = "oauth3_didkey", SK = "oauth3_session";
+  function _b64(u) { return btoa(String.fromCharCode.apply(null, u)); }
+  function _b64uDec(s) {
+    s = s.replace(/-/g, "+").replace(/_/g, "/");
+    return Uint8Array.from(atob(s + "=".repeat((4 - s.length % 4) % 4)), function (c) { return c.charCodeAt(0); });
+  }
+  function _b58e(b) {
+    var d = [0], i, j, c;
+    for (i = 0; i < b.length; i++) {
+      c = b[i];
+      for (j = 0; j < d.length; j++) { c += d[j] << 8; d[j] = c % 58; c = (c / 58) | 0; }
+      while (c) { d.push(c % 58); c = (c / 58) | 0; }
+    }
+    var s = "";
+    for (i = 0; i < b.length; i++) { if (b[i] === 0) s += "1"; else break; }
+    for (j = d.length - 1; j >= 0; j--) s += B58[d[j]];
+    return s;
+  }
+  async function _walletKey() {
+    var jwk = JSON.parse(localStorage.getItem(DK) || "null");
+    if (!jwk) {
+      var kp = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+      jwk = await crypto.subtle.exportKey("jwk", kp.privateKey);
+      localStorage.setItem(DK, JSON.stringify(jwk));
+    }
+    var priv = await crypto.subtle.importKey("jwk", jwk, { name: "Ed25519" }, false, ["sign"]);
+    var raw = Array.prototype.slice.call(_b64uDec(jwk.x));
+    var did = "did:key:z" + _b58e(Uint8Array.from([0xed, 0x01].concat(raw)));
+    return { priv: priv, did: did };
+  }
+  async function _walletSignIn(node) {
+    var stored = localStorage.getItem(SK);
+    if (stored) {
+      try {
+        var me = await (await fetch(node + "/api/me", { headers: { Authorization: "Bearer " + stored } })).json();
+        if (me && me.signedIn) return stored;
+      } catch (_) {}
+    }
+    var kr = await _walletKey();
+    var ch = (await (await fetch(node + "/api/login/challenge")).json()).challenge;
+    var sig = _b64(new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, kr.priv, new TextEncoder().encode(ch))));
+    var r = await fetch(node + "/api/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ did: kr.did, challenge: ch, signature: sig })
+    });
+    var b = await r.json().catch(function () { return {}; });
+    if (!r.ok) throw new Error(b.error || ("login " + r.status));
+    localStorage.setItem(SK, b.session);
+    return b.session;
+  }
+  async function _connectViaWallet(node, plugin, app) {
+    var session = await _walletSignIn(node);
+    var cr = await fetch(node + "/api/connect", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plugin: plugin, app: app })
+    });
+    var c = await cr.json().catch(function () { return {}; });
+    if (!cr.ok) throw new Error(c.error || ("connect " + cr.status));
+    var ar = await fetch(node + "/api/connect/" + c.requestId + "/approve", {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + session }, body: "{}"
+    });
+    if (!ar.ok) { var e = await ar.json().catch(function () { return {}; }); throw new Error(e.error || ("approve " + ar.status)); }
+    var deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      var s = await (await fetch(node + "/api/connect/" + c.requestId)).json().catch(function () { return {}; });
+      if (s.status === "approved" && s.token) return s.token;
+      if (s.status === "denied") throw new Error("connect denied by user");
+      await new Promise(function (r) { setTimeout(r, 1000); });
+    }
+    throw new Error("connect timed out");
+  }
+
   function oauth3Connect(opts) {
     opts = opts || {};
     var node = String(opts.node || "").replace(/\/$/, "");
@@ -340,23 +427,36 @@
     var probe = typeof opts.probe === "function" ? opts.probe : null;
     var MAX_PROBE_ROUNDS = 3;
     return (async function () {
-      if (typeof window === "undefined" || !window.oauth3 || typeof window.oauth3.connect !== "function") {
-        var we = new Error("No OAuth3 wallet found — install the oauth3 extension and reload.");
-        we.terminal = true; throw we;
-      }
-      onStatus("connecting", { plugin: opts.plugin });
-      var got;
-      try {
-        got = await window.oauth3.connect({ plugin: opts.plugin, app: opts.app, subject: opts.subject, node: node });
-      } catch (e) {
-        var ce = new Error(String((e && e.message) || e)); ce.terminal = true; throw ce;
-      }
-      // The wallet resolves with a bare token string (provider-inject.js). Be defensive about
-      // an object {token}/{error} shape too in case a future wallet returns one.
-      var token = (got && typeof got === "object") ? (got.error ? null : got.token) : got;
-      if (!token || typeof token !== "string") {
-        var ne = new Error((got && got.error) || "connect returned no token (approval denied or cancelled)");
-        ne.terminal = true; throw ne;
+      var token;
+      if (typeof window !== "undefined" && window.oauth3 && typeof window.oauth3.connect === "function") {
+        // extension path — the wallet/extension carries consent + approval and hands back a
+        // bare token string (provider-inject.js). Be defensive about an object {token}/{error}
+        // shape too in case a future wallet returns one.
+        onStatus("connecting", { plugin: opts.plugin, via: "extension" });
+        var got;
+        try {
+          got = await window.oauth3.connect({ plugin: opts.plugin, app: opts.app, subject: opts.subject, node: node });
+        } catch (e) {
+          var ce = new Error(String((e && e.message) || e)); ce.terminal = true; throw ce;
+        }
+        token = (got && typeof got === "object") ? (got.error ? null : got.token) : got;
+        if (!token || typeof token !== "string") {
+          var ne = new Error((got && got.error) || "connect returned no token (approval denied or cancelled)");
+          ne.terminal = true; throw ne;
+        }
+      } else {
+        // no extension (phone, clean profile) → wallet self-provision (did:key → login →
+        // connect → approve → poll). Replaces the old "install the extension" dead-end (the
+        // #9 regression). Errors — incl. the node's layer-1 listing 403 — surface honestly.
+        onStatus("connecting", { plugin: opts.plugin, via: "wallet" });
+        try {
+          token = await _connectViaWallet(node, opts.plugin, opts.app);
+        } catch (e) {
+          var we = new Error(String((e && e.message) || e)); we.terminal = true; throw we;
+        }
+        if (!token || typeof token !== "string") {
+          var wne = new Error("connect returned no token (approval denied or cancelled)"); wne.terminal = true; throw wne;
+        }
       }
       onStatus("approved", { plugin: opts.plugin });
       if (!probe) return token; // pure-handshake mode
