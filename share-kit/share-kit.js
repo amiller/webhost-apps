@@ -284,11 +284,19 @@
     return (async function () {
       node = String(node || "").replace(/\/$/, "");
       var r;
+      var controller = typeof AbortController === "function" ? new AbortController() : null;
+      var timer = controller ? setTimeout(function () { controller.abort(); }, 15000) : null;
       try {
-        r = await fetch(node + path, { headers: { Authorization: "Bearer " + token } });
+        r = await fetch(node + path, {
+          headers: { Authorization: "Bearer " + token },
+          ...(controller ? { signal: controller.signal } : {})
+        });
       } catch (e) {
-        var ne = new Error("couldn't reach the oauth3 node (" + ((e && e.message) || e) + ")");
+        var reason = e && e.name === "AbortError" ? "request timed out" : ((e && e.message) || e);
+        var ne = new Error("couldn't reach the oauth3 node (" + reason + ")");
         ne.terminal = true; throw ne;
+      } finally {
+        if (timer) clearTimeout(timer);
       }
       var body = null;
       try { body = await r.json(); } catch (_) { body = null; }
