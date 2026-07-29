@@ -1,57 +1,26 @@
-# PLAN — #67 (calendar-share): adopt ShareKit.oauth3Connect
+# PLAN — feedling #49: test-mode (ping on ANY watch)
 
-Issue #67 is a meta-issue, **one PR per app** (reddit-karma shipped via #74). This PR is
-**calendar-share** — the next app that genuinely hand-rolls the browser connect handshake.
-(feedling-web's connect is server-side via its own SDK poll loop, not `window.oauth3`, so
-the browser helper doesn't fit it without a rearchitecture; otterpilot already inlines an
-older share-kit + a working step-up; screenshare-debug is an outbound UCAN consent app, not
-a connect+read relying party. calendar-share is the pure target.)
+Prior worker already implemented the change on `ready-49` (commit d83bf86). Verified the diff is
+complete and correct vs. acceptance; base is an ancestor of staging (PR merges as 1 commit).
+This iteration: verify by tier and ship.
 
-## Acceptance (from #67, for calendar-share)
-- [x] adopts `ShareKit.oauth3Connect()`; no longer hand-rolls the handshake.
-- [x] connect works (extension path OR wallet self-provision, via the shared helper).
-- [x] step-up / no dead-end: `oauth3Read`'s step-up marker is surfaced as an actionable
-      retry message, NOT a raw `challenge_pending` string (the bug the helper fixes). The
-      helper's automatic probe-loop recovery is available once the google-calendar read goes
-      live; today the read returns "not yet captured" (not 409), so the step-up branch is
-      documented + code-present, not live-exercised.
-- [x] errors render honestly (helper's terminal Errors + the read's real error shown verbatim).
-      **Reinforced (pass 2):** `_walletSignIn`'s challenge `.json()` no longer leaks a raw parse
-      error on a non-JSON node response (e.g. the current staging 500) — it throws a clean
-      `login <status>` like every other step. Walked in-page (`.evidence/…/03-*.png`).
-- [x] Tier-2 walked flow on staging — **COMPLETE on reachable axes (pass 4)**: page-serves +
-      connect-ready (01), **connect success** (02 — real scoped token via the wallet
-      self-provision branch → page renders "Connected", `connectWrapHidden:true`),
-      wallet-path→clean-honest-error/no-dead-end (03), extension-branch selection (04).
-      `connect` success is now walked; the extension branch's success is browser-chrome-
-      mediated (popup) — the CONSTITUTION's recognized carve-out. See `flow.md` § Pass 4.
+> **Rework pass (2026-08-01):** PR was `CONFLICTING` + `needs-e2e`. Rebased onto staging (impl
+> was already in staging → impl commit dropped as empty; branch now = tests + evidence + PLAN).
+> Captured the pixel screenshot (bridge healthy this run). Push delivery stays operator-run.
 
-## Build
-- [x] share-kit v0.4.0: `oauth3Connect` + `_connectViaWallet` forward `caps` (mint path).
-- [x] `inline.sh`: resolve entry html at `<app>/index.html` OR `<app>/public/index.html`.
-- [x] inline share-kit (v0.4.0) into `calendar-share/public/index.html`.
-- [x] `onConnect` → `ShareKit.oauth3Connect` (pure-handshake: the read path isn't live, and
-      gating connect on it would regress the mint envelope that is this app's value today).
-- [x] `loadEvents` → `ShareKit.oauth3Read` (+ step-up vs terminal handling).
-- [x] `mintShare` → `ShareKit.oauth3Connect({caps:[cap]})`.
-- [x] remove ~60 lines of hand-rolled wallet self-provision (walletKey/walletSignIn/
-      connectViaWallet + the b58/did:key crypto).
-- [x] `revokeShare` reuses ShareKit's persisted `oauth3_session`.
-- [x] `node --check` on the combined script — OK (re-run after the hardening below: OK).
-- [x] **harden wallet error render** (rework pass 2): `_walletSignIn` `/api/login/challenge` was
-      the only uncaught `.json()` in the connect path — a non-JSON 500 leaked `Unexpected token…`.
-      Now parses with `.catch(()=>({}))` + `if(!lr.ok) throw "login "+status`, matching the
-      adjacent `/api/login` POST. Source `share-kit.js` edited, `inline.sh calendar-share` re-run.
+## Acceptance (from issue #49)
+> With verbose mode on and a push subscription active: watch ONE regular (non-short) YouTube
+> video briefly, and within one poll interval receive a push naming that you just watched.
+> Screenshot the received notification (or the [push] server log line `trigger=watch_detected
+> sent>0`) in the PR.
 
-## Verify (Tier 2)
-- [x] deploy calendar-share (ready-67) to webhost-staging (tree `d0ed7cd4`, 22:52 UTC).
-- [x] envoy rig (HTTP `:4000`, real Brave/neko — no CDP): open `/calendar-share/`, screenshot
-      landing (01) + connect-takes-extension-branch (02).
-- [x] drive Connect on the **wallet** branch (extension-less), screenshot the **clean** honest
-      error render + Connect re-enabled (03) — proves the hardening + "errors render honestly".
-- [x] assert acceptance content via `evaluate` (location.href asserted; DOM state at each capture).
-- [x] commit `.evidence/issue-67/calendar-share/` + `flow.md`; embed in PR.
-- [x] **connect success** — WALKED (pass 4): the shared screenshot rig came free
-      (`:4000/screenshot` 0.26s); drove the wallet self-provision branch to a **real scoped
-      token** on staging → page rendered "Connected" (`connectWrapHidden:true`,
-      `hasSession:true`). Captured as `02-connect-success.png`. `needs-e2e` → `ready-to-merge`.
+## Tasks
+- [x] Confirm #49 open, no PR, has `## Acceptance` (merge-gate grep) — PASS
+- [x] Reuse prior worker's complete implementation on ready-49 (re-validated diff)
+- [x] Parse-check all .TS (`deno check`) — exit 0
+- [x] Unit-test the NEW decision logic (`pendingWatchDetected` + verbose-mode activity branch + per-session re-arm) against the real production functions — `deno test` → 4 passed
+- [x] Deploy feedling-web to webhost-staging — feature already present on live staging (verified `GET /api/verbose` → 200)
+- [x] Tier 1 HTTP transcript on deployed staging: `POST /api/verbose {enabled:true}` → `GET /api/verbose` == `{"verbose":true}` (new endpoint = version pin)
+- [x] Tier 2 walked flow: envoy-bridge screenshot of UI `TEST MODE: ON` captured (navigation-verified) — `.evidence/issue-49/01-test-mode-on.png`
+- [x] Commit test + evidence; PR open (base staging); issue labelled `in-review`
+- [ ] STILL NOT ready-to-merge: the watch→push delivery needs the operator's live YouTube watch + a real push sub (feedling must be approved on the pod first). `needs-e2e` stays ON for this step — see flow.md §4.
