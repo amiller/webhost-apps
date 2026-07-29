@@ -5,6 +5,7 @@ import handler, {
   isBanger,
   mergeOtterSegments,
   normalizeSegments,
+  parseConvType,
   parseJudge,
   parseRecap,
   parseShift,
@@ -355,4 +356,63 @@ Deno.test("#83 stateRecent uses the override LLM, records one shift, and is serv
   assertEquals(body.recap, "deciding the oauth3 rollout window");
   assertEquals(body.last_topic, "oauth3 rollout window");
   assertEquals(body.estimate.register, "working");
+});
+
+Deno.test("conversation-type parse pulls a known genre + rationale out of noisy wrapper text", () => {
+  const v = parseConvType('prefix {"type":"brainstorming","rationale":"exploring wild options for the rollout"} suffix');
+  assert(v);
+  assertEquals(v.type, "brainstorming");
+  assertEquals(v.rationale, "exploring wild options for the rollout");
+});
+
+Deno.test("conversation-type parse clamps a runaway rationale to 14 words", () => {
+  const long = Array.from({ length: 18 }, (_, i) => "w" + i).join(" ");
+  const v = parseConvType(`{"type":"decision-making","rationale":"${long}"}`);
+  assert(v);
+  assertEquals(v.type, "decision-making");
+  assertEquals(v.rationale.split(/\s+/).length, 14);
+  assertEquals(v.rationale.endsWith("w13"), true);
+});
+
+Deno.test("conversation-type parse rejects garbage and a missing type", () => {
+  assertEquals(parseConvType("not json at all"), null);
+  assertEquals(parseConvType('{"rationale":"no type here"}'), null);
+});
+
+Deno.test("conversation-type parse keeps an honest unknown genre instead of masking", () => {
+  const v = parseConvType('{"type":"planning","rationale":"does not match the enum"}');
+  assert(v);
+  assertEquals(v.type, "planning");
+});
+
+Deno.test("/conv-type reflects the rolling verdict from real text (mocked LLM, no network)", async () => {
+  const rt = new GoodpointRuntime(env, undefined, undefined, undefined, undefined, async (text) => ({
+    type: text.includes("shipped") ? "status-update" : "social",
+    rationale: "standup pacing",
+  }));
+  rt.transcript.push({
+    order: 1,
+    text: "yesterday I shipped the helper and today I will verify it",
+    t: Date.now(),
+  });
+  const v = await rt.convTypeRecent(true);
+  assert(v);
+  assertEquals(v.type, "status-update");
+  const res = await handler(new Request("https://app.example/conv-type"), { runtime: rt });
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assertEquals(body.type, "status-update");
+  assertEquals(body.rationale, "standup pacing");
+});
+
+Deno.test("convTypeRecent throttles to one LLM call per window", async () => {
+  let calls = 0;
+  const rt = new GoodpointRuntime(env, undefined, undefined, undefined, undefined, async () => {
+    calls++;
+    return { type: "debate", rationale: "x" };
+  });
+  rt.transcript.push({ order: 1, text: "some segment long enough to clear the length gate", t: Date.now() });
+  await rt.convTypeRecent(true);
+  await rt.convTypeRecent(false); // within the 20s window — must not call
+  assertEquals(calls, 1);
 });

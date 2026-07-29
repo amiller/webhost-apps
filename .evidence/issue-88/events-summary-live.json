@@ -1,0 +1,34 @@
+{
+  "running": true,
+  "total_events": 96,
+  "by_type": {
+    "activity": 25,
+    "status": 25,
+    "segment": 44,
+    "conv-type": 2
+  },
+  "real_segment_count": 44,
+  "segment_orders_range": [
+    68448000,
+    87538560
+  ],
+  "segment_text_redacted": "NOT SHOWN \u2014 real meeting transcript is personal data; lengths only",
+  "segment_text_lengths_sample": [
+    189,
+    190,
+    71,
+    322,
+    83
+  ],
+  "conv_type_verdicts": [
+    {
+      "type": "decision-making",
+      "rationale": "converging on a choice the group commits to"
+    },
+    {
+      "type": "decision-making",
+      "rationale": "converging on a choice the group commits to"
+    }
+  ],
+  "note": "real Otter live read against the staging oauth3 core; LLM verdict mocked (no NEAR key on box, permitted by #88)."
+}

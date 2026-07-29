@@ -50,11 +50,27 @@
   .dot.on { background: var(--pink); animation: blink .8s steps(2) infinite; }
   @keyframes blink { 50% { opacity: .35; } }
   .grid {
-    height: calc(100vh - 58px);
+    height: calc(100vh - 90px);
     display: grid;
     grid-template-columns: minmax(360px, 43vw) minmax(340px, 1fr);
     min-height: 0;
   }
+  /* conversation-type band — secondary readout, one quiet line, no placeholder rows (#88) */
+  .convband {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px;
+    min-height: 32px;
+    border-bottom: 2px solid var(--line);
+    background: #fff;
+    font-size: 13px;
+    color: var(--muted);
+    overflow: hidden;
+  }
+  .convband .ctype { font-weight: 950; color: var(--teal); text-transform: capitalize; }
+  .convband .ctype.quiet { color: var(--muted); font-weight: 700; text-transform: none; }
+  .convband .crate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .left {
     border-right: 3px solid var(--line);
     display: flex;
@@ -217,7 +233,7 @@
   .pchip { display: inline-block; border: 2px solid var(--line); background: var(--wash); font: 11px ui-monospace, Menlo, monospace; padding: 1px 6px; margin: 2px 4px 0 0; }
   .briefcard { border: 3px solid var(--line); background: var(--wash); padding: 8px 10px; margin: 0 0 12px; font-size: 13px; }
   .briefcard b { text-transform: uppercase; font-size: 11px; }
-  body.pop .top, body.pop .left, body.pop .strip { display: none; }
+  body.pop .top, body.pop .left, body.pop .strip, body.pop .convband { display: none; }
   body.pop .grid { display: block; height: 100vh; }
   body.pop .right { height: 100vh; display: block; }
   @media (max-width: 860px) {
@@ -243,6 +259,7 @@
   <button class="ghost" id="stop">stop</button>
   <button class="ghost" id="reset">reset</button>
 </header>
+<div class="convband" id="convband"><span class="ctype quiet" id="convType">listening…</span><span class="crate" id="convRat"></span></div>
 <main class="grid">
   <aside class="left">
     <nav class="tabs">
@@ -385,6 +402,18 @@ function activity(ev) {
   if (ev.who === "toolsmith") $("toolState").textContent = `toolsmith ${ev.state}`;
   if (ev.who === "compositor") $("compState").textContent = `compositor ${ev.state}`;
   if (ev.who === "toolsmith" && String(ev.state).startsWith("rejected")) rejectNote(ev.state + " (sandbox refused it)");
+}
+function setConvType(ct) {
+  const t = $("convType"), r = $("convRat");
+  if (!ct || !ct.type) {
+    t.textContent = "listening…";
+    t.className = "ctype quiet";
+    r.textContent = "";
+    return;
+  }
+  t.textContent = ct.type;
+  t.className = "ctype";
+  r.textContent = ct.rationale ? "— " + ct.rationale : "";
 }
 
 // --- tabs ---
@@ -607,6 +636,7 @@ async function poll() {
       for (const ev of j.events || []) {
         if (ev.type === "segment") { addSegment(ev.segment); bump("pSeg"); }
         else if (ev.type === "goodpoint") { addPoint(ev.point); if (ev.brief) showBrief(ev.brief); bump("pBang"); }
+        else if (ev.type === "conv-type") setConvType(ev.convType);
         else if (ev.type === "state") setState(ev.state);
         else if (ev.type === "brief") showBrief(ev.brief);
         else if (ev.type === "build-delta") buildDelta(ev.text);
