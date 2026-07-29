@@ -6,6 +6,9 @@ import handler, {
   mergeOtterSegments,
   normalizeSegments,
   parseJudge,
+  parseRecap,
+  parseShift,
+  parseFlow,
   STARTER_TOOLS,
 } from "../server.ts";
 
@@ -296,4 +299,60 @@ Deno.test("#124 traces: an unwritable cwd surfaces a status event + write_ok=fal
   const diag = await res.json();
   assertEquals(diag.trace.write_ok, false);
   await Deno.remove(blocker);
+});
+
+Deno.test("#83 conversation-state verdict parsers sanitize, clamp, and reject empty", () => {
+  const recap = parseRecap('noise {"recap":"  the team is debating the deploy window for the OAuth3 rollout  "} trailing');
+  assert(recap);
+  assertEquals(recap.recap, "the team is debating the deploy window for the OAuth3 rollout");
+  assertEquals(parseRecap('{"recap":"   "}'), null);
+  assertEquals(parseRecap("not json at all"), null);
+
+  const shift = parseShift('{"shifted":true,"topic":"oauth3 deploy window","junk":1}');
+  assert(shift);
+  assertEquals(shift.shifted, true);
+  assertEquals(shift.topic, "oauth3 deploy window");
+  assertEquals(parseShift('{"shifted":true,"topic":""}'), null);
+
+  const flow = parseFlow('{"audience":"core eng team","purpose":"decide the rollout","register":"working","extra":2}');
+  assert(flow);
+  assertEquals(flow.register, "working");
+  assertEquals(flow.audience, "core eng team");
+  // unknown register is kept verbatim (not silently coerced), per no-masking rule
+  const flowUnknown = parseFlow('{"audience":"folks","purpose":"sync","register":"intense"}');
+  assert(flowUnknown);
+  assertEquals(flowUnknown.register, "intense");
+  assertEquals(parseFlow('{"audience":"","purpose":""}'), null);
+});
+
+Deno.test("#83 stateRecent uses the override LLM, records one shift, and is served by /state", async () => {
+  // brainrot-box ctor: (env, judgeOverride?, streams?, traceStore?, stateOverride?) — pass null
+  // traceStore so the test doesn't touch disk, and a stateOverride so no e2ee key is needed.
+  const rt = new GoodpointRuntime(env, undefined, undefined, null, async (kind) => {
+    if (kind === "recap") return '{"recap":"deciding the oauth3 rollout window"}';
+    if (kind === "shift") return '{"shifted":true,"topic":"oauth3 rollout window"}';
+    return '{"audience":"core eng","purpose":"decide rollout","register":"working"}';
+  });
+  for (const s of normalizeSegments({ segments: [
+    { order: 1, text: "we need to pick the deploy window for the oauth3 rollout" },
+    { order: 2, text: "the staging gate requires real evidence before we ship" },
+  ] })) rt.transcript.push(s);
+
+  const state = await rt.stateRecent(true);
+  assert(state);
+  assertEquals(state.recap, "deciding the oauth3 rollout window");
+  assertEquals(state.last_topic, "oauth3 rollout window");
+  assertEquals(state.shifts.length, 1);
+  assertEquals(state.estimate.register, "working");
+
+  // same topic again -> no duplicate shift
+  await rt.stateRecent(true);
+  assertEquals(rt.shifts.length, 1);
+
+  const res = await handler(new Request("https://app.example/state"), { runtime: rt });
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assertEquals(body.recap, "deciding the oauth3 rollout window");
+  assertEquals(body.last_topic, "oauth3 rollout window");
+  assertEquals(body.estimate.register, "working");
 });

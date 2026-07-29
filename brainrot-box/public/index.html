@@ -99,6 +99,14 @@
     padding: 12px;
     background: #fff7fb;
   }
+  /* #83: secondary conversation-state band — recap + topic/shifts/audience/purpose/register chips. */
+  .state-band { background: var(--wash); }
+  .state { padding: 9px 12px; font-size: 13px; line-height: 1.4; color: var(--ink); }
+  .state .empty { color: var(--muted); }
+  .state .recap { font-weight: 800; }
+  .state .recap b { color: var(--teal); text-transform: uppercase; font-size: 10px; letter-spacing: 0.04em; margin-right: 4px; }
+  .state .chips { margin-top: 3px; color: var(--muted); font-size: 12px; display: flex; flex-wrap: wrap; gap: 10px; }
+  .state .chips b { color: var(--ink); font-weight: 800; margin-right: 3px; }
   .point {
     border: 3px solid var(--line);
     background: #fff;
@@ -251,6 +259,10 @@
         <h2>Good points</h2>
         <div class="points" id="points"><div class="empty">No bangers yet.</div></div>
       </section>
+      <section class="section state-band">
+        <h2>Conversation state</h2>
+        <div class="state" id="state"><span class="empty">No conversation state yet.</span></div>
+      </section>
     </div>
     <div class="pane" id="paneGraph">
       <section class="section" style="flex:1">
@@ -323,6 +335,23 @@ function addPoint(point) {
   flash.classList.remove("show");
   void flash.offsetWidth;
   flash.classList.add("show");
+}
+
+// #83: render the conversation-state band. Empty/junk verdicts fall through to the quiet empty line
+// (no fabricated values, no placeholder rows — per the #80 secondary-band direction).
+function setState(s) {
+  const el = $("state");
+  const est = (s && s.estimate) || { audience: "", purpose: "", register: "" };
+  const has = s && (s.recap || s.last_topic || est.audience || est.purpose || est.register);
+  if (!has) { el.innerHTML = `<span class="empty">No conversation state yet.</span>`; return; }
+  const chips = [
+    s.last_topic ? `<span><b>topic</b>${esc(s.last_topic)}</span>` : "",
+    s.shifts && s.shifts.length ? `<span><b>shifts</b>${s.shifts.length}</span>` : "",
+    est.audience ? `<span><b>audience</b>${esc(est.audience)}</span>` : "",
+    est.purpose ? `<span><b>purpose</b>${esc(est.purpose)}</span>` : "",
+    est.register ? `<span><b>register</b>${esc(est.register)}</span>` : "",
+  ].filter(Boolean).join("");
+  el.innerHTML = `${s.recap ? `<div class="recap"><b>we're talking about</b>${esc(s.recap)}</div>` : ""}${chips ? `<div class="chips">${chips}</div>` : ""}`;
 }
 
 function addTool(tool) {
@@ -565,6 +594,7 @@ async function start() {
     for (const t of j.tools || []) { addTool(t); paletteCard(t, ""); }
     $("pTool").textContent = registry.size;
   } catch (_) {}
+  try { setState(await (await fetch("state")).json()); } catch (_) {}
   poll();
 }
 
@@ -577,6 +607,7 @@ async function poll() {
       for (const ev of j.events || []) {
         if (ev.type === "segment") { addSegment(ev.segment); bump("pSeg"); }
         else if (ev.type === "goodpoint") { addPoint(ev.point); if (ev.brief) showBrief(ev.brief); bump("pBang"); }
+        else if (ev.type === "state") setState(ev.state);
         else if (ev.type === "brief") showBrief(ev.brief);
         else if (ev.type === "build-delta") buildDelta(ev.text);
         else if (ev.type === "tool") { addTool(ev.tool); paletteCard(ev.tool, ev.updated ? "" : ""); $("pTool").textContent = registry.size; }
