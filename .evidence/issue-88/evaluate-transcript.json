@@ -1,0 +1,32 @@
+{
+  "issue": 88,
+  "what": "DOM assertions captured via the envoy bridge `evaluate` tool (navigate + evaluate both responsive; only `screenshot` is down — see flow.md). These are the authoritative content checks per the constitution's 'verify navigation, not just capture' rule: location.href asserted before every read.",
+  "live_real_otter": {
+    "server": "http://172.17.0.1:8941/app (real Otter feed from the staging oauth3 core, LLM mocked — no NEAR key on box, permitted by #88)",
+    "location_href": "http://172.17.0.1:8941/app",
+    "conv_type_band_textContent": "decision-making",
+    "conv_rationale_textContent": "— converging on a choice the group commits to",
+    "conv_type_className": "ctype",
+    "transcript_segment_count_in_DOM": 46,
+    "note": "Filled state — the band rendered a real verdict derived from the live meeting transcript. (Transcript text deliberately not captured here — it is the operator's real meeting = personal data; see CONSTITUTION public-repo rule. Counts only.)"
+  },
+  "sample_labeled": {
+    "server": "http://172.17.0.1:8942/app (clearly-labeled synthetic SAMPLE transcript, NOT live data; same unchanged render path)",
+    "location_href": "http://172.17.0.1:8942/app",
+    "filled_state": {
+      "conv_type_band_textContent": "status-update",
+      "conv_rationale_textContent": "— progress check against prior work",
+      "conv_type_className": "ctype",
+      "transcript_segment_count_in_DOM": 3
+    },
+    "empty_state_after_reset": {
+      "conv_type_band_textContent": "listening…",
+      "conv_type_className": "ctype quiet",
+      "note": "The quiet one-line empty state required by #80's hierarchy — no placeholder rows."
+    }
+  },
+  "rolling_verdict_proof": {
+    "note": "The live /conv-type read changed over the session as the real meeting topic shifted (decision-making → social), proving the verdict ROLLS with the transcript window, not a one-shot.",
+    "seen_types": ["decision-making", "social"]
+  }
+}

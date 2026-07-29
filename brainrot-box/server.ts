@@ -55,6 +55,23 @@ export interface JudgeResult {
   score: number;
 }
 
+// Conversation-type readout (#88). Classifies the current stretch of meeting into one of
+// a small set of genres, with a one-line rationale. Shares the judge loop / e2ee path and
+// the otter-loop hook (no new timer); kept standalone + namespaced so it composes with #83's
+// ConversationState (recap/shift/flow) without collision.
+export const CONVERSATION_TYPES = [
+  "decision-making",
+  "brainstorming",
+  "status-update",
+  "debate",
+  "social",
+] as const;
+export type ConversationTypeKind = (typeof CONVERSATION_TYPES)[number];
+export interface ConversationType {
+  type: string;
+  rationale: string;
+}
+
 // #83 conversation-state readouts: a rolling recap, topic-shift markers, and audience/purpose/register
 // estimates, produced by the SAME judge-loop machinery (strict-JSON verdicts over a transcript window).
 export interface RecapResult {
@@ -186,6 +203,12 @@ const FLOW_SYSTEM = `Estimate the conversational register of this live meeting s
 Return STRICT JSON only:
 {"audience":"<=6 words","purpose":"<=6 words","register":"one of: casual | working | formal"}`;
 
+// #88: classify the current stretch into one genre with a one-line rationale.
+const TYPE_SYSTEM = `You classify the current stretch of a live meeting into exactly one genre.
+Return STRICT JSON only:
+{"type":"one of: decision-making | brainstorming | status-update | debate | social","rationale":"<=14 words why"}
+Use the genre that best fits the dominant activity in this stretch.`;
+
 // Hand-built starter toolbox: the compositor has a full palette from second zero instead of
 // waiting on the toolsmith's first builds. One per TOOLSMITH_SYSTEM category, same craft rules.
 // Starters are protected from eviction (a guaranteed floor) but the toolsmith may still improve
@@ -311,6 +334,19 @@ export function scoreTranscript(data: any): Scored {
 
 export function isBanger(j: JudgeResult | null): j is JudgeResult {
   return !!j && j.good_point && j.score >= 7 && j.quote.length > 0;
+}
+
+// #88: parse the conversation-type verdict. Defensively clamps both fields; lowercases the type.
+// An unknown type is kept verbatim (honest) rather than forced into the enum — the enum is the
+// target vocabulary, not a mask. Returns null only on non-JSON or a missing type.
+export function parseConvType(raw: string): ConversationType | null {
+  const j = extractJson(raw) as Partial<ConversationType> | null;
+  if (!j || typeof j !== "object") return null;
+  const type = String(j.type ?? "").replace(/\s+/g, " ").trim().toLowerCase().slice(0, 40);
+  if (!type) return null;
+  const rationale = String(j.rationale ?? "")
+    .replace(/\s+/g, " ").trim().split(/\s+/).slice(0, 14).join(" ").slice(0, 160).trim();
+  return { type, rationale };
 }
 
 // #83: sanitize + clamp the conversation-state verdicts. Empty/junk -> null (rendered as the quiet
@@ -566,6 +602,9 @@ export class GoodpointRuntime {
   lastFetchErr = "";
   lastFetchAt = 0;
   lastJudgeAt = 0;
+  // #88 conversation-type readout (decision-making / brainstorming / status-update / debate / social).
+  lastConvTypeAt = 0;
+  convType: ConversationType = { type: "", rationale: "" };
   // #83 conversation-state readouts (recap / topic shifts / audience-purpose-register).
   lastStateAt = 0;
   recap = "";
@@ -607,6 +646,8 @@ export class GoodpointRuntime {
   private judgeOverride?: (text: string) => Promise<JudgeResult | null>;
   // #83: optional in-process state-verdict provider (tests / harness), mirrors judgeOverride.
   private stateOverride?: (kind: StateKind, text: string) => Promise<string | null>;
+  // #88: optional conversation-type provider (tests / harness), mirrors judgeOverride.
+  private typeOverride?: (text: string) => Promise<ConversationType | null>;
   private streams?: StreamProvider;
 
   constructor(
@@ -615,10 +656,12 @@ export class GoodpointRuntime {
     streams?: StreamProvider,
     traceStore?: TraceStore | null,
     stateOverride?: (kind: StateKind, text: string) => Promise<string | null>,
+    typeOverride?: (text: string) => Promise<ConversationType | null>,
   ) {
     this.cfg = requireCfg(env);
     this.judgeOverride = judgeOverride;
     this.stateOverride = stateOverride;
+    this.typeOverride = typeOverride;
     this.streams = streams;
     // #124: persistence is on by default (writes traces/ under the cwd); pass null to disable.
     this.traces = traceStore === undefined ? new TraceStore(env.TRACE_DIR || "traces") : traceStore;
@@ -870,6 +913,28 @@ export class GoodpointRuntime {
     return state;
   }
 
+  // #88: conversation-type verdict. Shares the judge loop's machinery (NEAR e2ee via
+  // streamComplete, strict JSON) and is fired from the SAME otter-loop iteration as
+  // judgeRecent — no new timer. Throttled to one call per ~20s window (lastConvTypeAt). The
+  // typeOverride seam lets evidence runs mock the LLM (no NEAR key) while still driving REAL
+  // transcript text through the pipeline. A parse miss leaves the prior verdict in place
+  // rather than blanking — no flicker, no fake.
+  async convTypeRecent(force = false): Promise<ConversationType | null> {
+    if (!force && Date.now() - this.lastConvTypeAt < 20_000) return null;
+    const text = this.recentText(60_000);
+    if (text.length < 20) return null;
+    this.lastConvTypeAt = Date.now();
+    const verdict = this.typeOverride
+      ? await this.typeOverride(text)
+      : parseConvType(
+        await this.streamComplete(this.cfg.toolsmithModel, TYPE_SYSTEM, `Transcript:\n${text}\n\nJSON:`, 160),
+      );
+    if (!verdict || !verdict.type) return null;
+    this.convType = verdict;
+    this.push({ type: "conv-type", convType: verdict });
+    return verdict;
+  }
+
   smokeTest(tool: ToolDef): string | null {
     if (/\bclearRect\b/.test(tool.draw)) return "clearRect erases the layers below — draw over them instead";
     const grad = { addColorStop() {} };
@@ -1049,6 +1114,7 @@ export class GoodpointRuntime {
         try {
           const added = await this.pollOtter(ac.signal);
           if (added.length) await this.judgeRecent();
+          if (added.length) await this.convTypeRecent();
           if (added.length) await this.stateRecent();
           if (added.length) await this.distill(ac.signal);
           await this.decoderTurn(ac.signal);
@@ -1151,6 +1217,9 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
     });
   }
   if (req.method === "GET" && path === "/goodpoints") return json({ goodpoints: app.ledger });
+  if (req.method === "GET" && path === "/conv-type") {
+    return json({ type: app.convType.type, rationale: app.convType.rationale, last_at: app.lastConvTypeAt });
+  }
   if (req.method === "GET" && path === "/state") {
     return json({ recap: app.recap, shifts: app.shifts, estimate: app.estimate, last_topic: app.lastTopic });
   }
@@ -1199,6 +1268,7 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
         segment_count: app.transcript.length,
       },
       ledger_count: app.ledger.length,
+      conv_type: { type: app.convType.type, rationale_len: app.convType.rationale.length, last_at: app.lastConvTypeAt },
       state: { recap_len: app.recap.length, shifts: app.shifts.length, last_topic: app.lastTopic },
       tools: { count: app.registry.size, max: app.cfg.maxTools },
       graph: { nodes: app.graphNodes.length, topics: app.graphTopics.length, undecoded: app.decodeQueue.length - app.decodedCount },
@@ -1236,6 +1306,8 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
     app.shifts = [];
     app.lastTopic = "";
     app.lastStateAt = 0;
+    app.convType = { type: "", rationale: "" };
+    app.lastConvTypeAt = 0;
     app.estimate = { audience: "", purpose: "", register: "" };
     app.events = [];
     app.seq = 0;
