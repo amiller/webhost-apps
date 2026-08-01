@@ -61,3 +61,19 @@ at the instant of capture** (DOM state pinned: href/title/`window.oauth3`/`Share
 `#oauth3-approve` shadowRoot `.go` for the dialog; `#note` className+textContent for the settled
 state). The PNGs are the human-reviewable artifact; the `evaluate` transcripts in this file are the
 content check.
+
+## Reverification for this PR (2026-07-27)
+
+The shared read now has a 15-second abort boundary, so a stalled browser-SPI read cannot leave the
+user indefinitely on “Reading your feed…”. The wallet branch calls the same shared read primitive.
+
+1. **`01-approval.png`** — on deployed staging, clicked Connect with the real OAuth3 extension;
+   the visible consent dialog appeared. This confirms the signed-in extension-mediated journey
+   reaches the real connect surface.
+2. **`02-honest-timeout.png`** — using the staging wallet session and the no-extension branch,
+   clicked Connect against the down/stalled Twitter backend. After the bounded read, the visible
+   note was exactly `Couldn't connect: couldn't reach the oauth3 node (request timed out)`.
+
+This is the acceptance path: no raw `challenge_pending`, no mock feed, and the actual backend
+failure is rendered as a readable terminal error. Both PNGs are non-empty and were inspected after
+capture.
