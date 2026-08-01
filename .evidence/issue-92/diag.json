@@ -1,0 +1,28 @@
+{
+  "_source": "GET <STAGING_BASE>/brainrot-box/diag on 2026-08-01 (live staging tee-daemon, ready-92 deployed as project tree 8374e4eb21a0)",
+  "_staging_base": "https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network (the gate STAGING_BASE)",
+  "self_eval": {
+    "staleness": 2,
+    "stale_window": 10,
+    "stale_threshold": 8,
+    "composition_count": 108,
+    "nudge_count": 0,
+    "last_nudge_at": 0,
+    "last_nudge_action": ""
+  },
+  "e2ee": {
+    "toolsmith_model": "deepseek-ai/DeepSeek-V4-Flash",
+    "compositor_model": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+    "critic_model": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+    "critic_enabled": true,
+    "ready": true
+  },
+  "idle": {
+    "weave_running": true,
+    "otter_running": false,
+    "enabled": true
+  },
+  "otter_status": "last_fetch_ok=false on this fresh project instance (Otter 500); irrelevant to staleness \u2014 the compositor self-drives the weave lane, so compositions accrue and staleness tracks without live speech (see composition_count).",
+  "ledger_count": 0,
+  "composition_count_evidence": 108
+}

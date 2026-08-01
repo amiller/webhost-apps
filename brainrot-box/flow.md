@@ -64,3 +64,29 @@ Current status (unchanged from #80): blocked for complete Tier 2 verification �
 read returns `challenge_pending` and a live weave needs operator-held `NEAR_API_KEY`/`CHUTES_API_KEY`.
 The #90 idle logic is verified offline (unit tests) + via a local HTTP transcript; see
 `../.evidence/issue-90/transcript.md`.
+
+## Self-eval / staleness self-regulation (issue #92)
+
+The box keeps a value marker on its own output. On the **compositor weave lane**, after each
+`compositorTurn`, `observeComposition()`:
+
+1. **Staleness metric (cheap, no LLM):** `signatureOf()` quantizes the composition to a sorted tool
+   set + params rounded to a 0.2 bucket (so small jitter collapses). A rolling window of the last
+   `STALE_WINDOW` (10) signatures is kept; `staleness` = how many match the current one.
+2. **Self-regulate when stuck** (>= `STALE_THRESHOLD` 8 identical), escalating and cycling:
+   (a) perturb the brief mood/direction — banger `emphasis` is preserved; (b) set a transient
+   `brief.avoid` so the toolsmith is told to build something UNLIKE the over-used tools; (c) retire
+   the most-used **non-starter** tool (starters are protected; the palette floor holds).
+3. **Optional critic** (`CRITIC_MODEL` / `ENABLE_CRITIC` env, or an injected override): every
+   `CRITIC_EVERY` (10) compositions the compositor-class model is asked whether the last 5 are
+   visually distinct; its one-line verdict is folded into the brief. Default off.
+4. **Surface:** `/diag` gains `self_eval { staleness, stale_window, stale_threshold,
+   composition_count, nudge_count, last_nudge_at, last_nudge_action }` and `e2ee.critic_model` /
+   `e2ee.critic_enabled`; each nudge pushes an `activity { who: "self-eval", state: "self-nudge: …" }`
+   event rendered in the `#selfState` strip span. `/reset` clears the self-eval state.
+
+Integration with the re-architecture (the three design calls): staleness rides the compositor lane,
+so it **idles with the weave (#90)** — no new timer, same pattern as #83/#88. `retireMostUsedTool`
+respects the **starter-protected LRU (#130)**. `brief.avoid` survives a `distill()`/`judgeRecent()`
+brief rewrite until the toolsmith consumes it (one-shot). Offline unit tests prove near-identical
+runs nudge and varied runs do not; see `../.evidence/issue-92/`.

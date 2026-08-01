@@ -21,6 +21,9 @@ interface Cfg {
   traceKeep: number; // max local rotating-buffer trace files (open session never pruned)
   seedLibraryCount: number; // cap on tools reseeded from the library at boot
   archiveFlushMs: number; // supervisor-driven flush cadence
+  // #92 optional compositor-class critic (default off).
+  criticModel: string;
+  enableCritic: boolean;
 }
 
 export interface GraphNode {
@@ -446,6 +449,8 @@ function requireCfg(env: Env): Cfg {
     traceKeep: Number(get("TRACE_KEEP")) || 20,
     seedLibraryCount: Number(get("SEED_LIBRARY_COUNT")) || 6,
     archiveFlushMs: Number(get("ARCHIVE_FLUSH_MS")) || 60_000,
+    criticModel: get("CRITIC_MODEL") || get("COMPOSITOR_MODEL") || "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+    enableCritic: /^(1|true|yes)$/i.test(get("ENABLE_CRITIC") || ""),
   };
   const missing = [
     ["OAUTH3_CORE", cfg.oauth3Core],
@@ -767,7 +772,19 @@ export class GoodpointRuntime {
   estimate: FlowEstimate = { audience: "", purpose: "", register: "" };
   registry = new Map<string, ToolDef>();
   composition: unknown = { layers: [] };
-  brief = { mood: "", emphasis: "", tone: "", direction: "" };
+  // #92 real-time self-eval: detect visual staleness and self-regulate. Cheap (no LLM) quantized
+  // signature per composition; a rolling window flags a stuck compositor; selfNudge escalates.
+  readonly STALE_WINDOW = 10; // rolling compositions considered
+  readonly STALE_THRESHOLD = 8; // identical sigs in-window => stuck => self-nudge
+  readonly CRITIC_EVERY = 10; // optional critic fires every N compositions
+  recentSigs: string[] = [];
+  staleness = 0;
+  compositionCount = 0;
+  nudgeCount = 0;
+  lastNudgeAt = 0;
+  lastNudgeAction = "";
+  toolUseCount = new Map<string, number>();
+  brief: { mood: string; emphasis: string; tone: string; direction: string; avoid?: string[] } = { mood: "", emphasis: "", tone: "", direction: "" };
   events: { seq: number; ev: unknown }[] = [];
   seq = 0;
   // #124: per-session JSONL trace of every pushed event. null only when explicitly disabled.
@@ -811,6 +828,8 @@ export class GoodpointRuntime {
   // #88: optional conversation-type provider (tests / harness), mirrors judgeOverride.
   private typeOverride?: (text: string) => Promise<ConversationType | null>;
   private streams?: StreamProvider;
+  // #92: optional compositor-class critic provider (tests / harness), mirrors the other overrides.
+  private criticOverride?: (sigs: string[]) => Promise<string>;
 
   constructor(
     env: Env,
@@ -820,12 +839,14 @@ export class GoodpointRuntime {
     stateOverride?: (kind: StateKind, text: string) => Promise<string | null>,
     typeOverride?: (text: string) => Promise<ConversationType | null>,
     archive?: ArchiveBackend | null,
+    criticOverride?: (sigs: string[]) => Promise<string>,
   ) {
     this.cfg = requireCfg(env);
     this.judgeOverride = judgeOverride;
     this.stateOverride = stateOverride;
     this.typeOverride = typeOverride;
     this.streams = streams;
+    this.criticOverride = criticOverride;
     // #124: persistence is on by default (writes traces/ under the cwd); pass null to disable.
     this.traces = traceStore === undefined ? new TraceStore(env.TRACE_DIR || "traces") : traceStore;
     // #130: durable archive — opt-in via ARCHIVE_DIR (external volume); pass null to disable.
@@ -1072,6 +1093,7 @@ export class GoodpointRuntime {
       emphasis: String(j.emphasis ?? "").trim(),
       tone: String(j.tone ?? "").trim(),
       direction: String(j.direction ?? "").trim(),
+      avoid: this.brief.avoid, // #92: keep a pending self-nudge steer alive across a distill rewrite
     };
     this.push({ type: "brief", brief: this.brief });
   }
@@ -1153,6 +1175,7 @@ export class GoodpointRuntime {
       emphasis: point.quote,
       tone: point.why || "sharp, useful",
       direction: `Make the banger legible and steer the motion around: ${point.quote}`,
+      avoid: this.brief.avoid, // #92: keep a pending self-nudge steer alive across a banger rewrite
     };
     this.push({ type: "goodpoint", point, brief: this.brief });
     return point;
@@ -1242,6 +1265,11 @@ export class GoodpointRuntime {
   async toolsmithTurn(signal: AbortSignal): Promise<void> {
     this.push({ type: "activity", who: "toolsmith", state: "thinking" });
     const existing = [...this.registry.keys()].join(", ") || "(none)";
+    // #92: a self-nudge may have set a one-shot brief.avoid — steer the toolsmith off over-used
+    // tools this turn, then clear it (the nudge is consumed).
+    const avoid = this.brief.avoid && this.brief.avoid.length
+      ? `\nAvoid these (already overused — build something deliberately UNLIKE them): ${this.brief.avoid.join(", ")}`
+      : "";
     // stream the build so the workflow tab can show code being written live (interleave-style)
     let deltaBuf = "";
     let lastFlush = Date.now();
@@ -1254,7 +1282,7 @@ export class GoodpointRuntime {
     const raw = await this.streamComplete(
       this.cfg.toolsmithModel,
       TOOLSMITH_SYSTEM,
-      `Existing tools: ${existing}\nBrief: ${JSON.stringify(this.brief)}\nBuild one distinct compact layer tool. JSON only:`,
+      `Existing tools: ${existing}\nBrief: ${JSON.stringify(this.brief)}${avoid}\nBuild one distinct compact layer tool. JSON only:`,
       1600,
       (t) => {
         deltaBuf += t;
@@ -1263,6 +1291,7 @@ export class GoodpointRuntime {
       signal,
     );
     flush();
+    if (avoid) this.brief.avoid = undefined; // one-shot: the nudge steered this turn
     const tool = extractJson(raw) as ToolDef | null;
     if (!tool || typeof tool.name !== "string" || typeof tool.draw !== "string" || !Array.isArray(tool.params)) {
       this.push({ type: "activity", who: "toolsmith", state: "parse miss" });
@@ -1313,6 +1342,137 @@ export class GoodpointRuntime {
       this.registry.set(l.tool, t);
     }
     this.push({ type: "composition", layers: comp.layers });
+  }
+
+  // --- self-eval (issue #92): detect visual staleness and self-regulate ---
+
+  /** Quantize a composition to a signature: sorted tool set + params rounded so small deltas collapse. */
+  signatureOf(comp: unknown): string {
+    const layers = ((comp as any)?.layers as any[] | undefined) ?? [];
+    const norm = layers
+      .filter((l) => l && typeof l.tool === "string")
+      .map((l) => ({
+        tool: String(l.tool),
+        params: Object.fromEntries(
+          Object.entries(l.params || {})
+            .filter(([, v]) => typeof v === "number" && Number.isFinite(v))
+            .map(([k, v]) => [k, Math.round((v as number) * 5) / 5]), // 0.2 bucket
+        ),
+      }))
+      .sort((a, b) => (a.tool < b.tool ? -1 : 1));
+    return JSON.stringify(norm);
+  }
+
+  /** Record one composition; update the rolling staleness score + per-tool usage. Returns the score. */
+  recordComposition(comp: unknown = this.composition): number {
+    this.compositionCount++;
+    const sig = this.signatureOf(comp);
+    this.recentSigs.push(sig);
+    if (this.recentSigs.length > this.STALE_WINDOW) this.recentSigs.shift();
+    this.staleness = this.recentSigs.filter((s) => s === sig).length;
+    for (const l of ((comp as any)?.layers as any[] | undefined) ?? []) {
+      if (l && typeof l.tool === "string") this.toolUseCount.set(l.tool, (this.toolUseCount.get(l.tool) ?? 0) + 1);
+    }
+    return this.staleness;
+  }
+
+  /** Retire the most-used non-starter tool still in the registry; returns its name ("" if none).
+   *  Starters are protected (guaranteed palette floor — a self-nudge must not burn the hand-built
+   *  toolbox); in-use tools are NOT protected — the point of a retire is to force the compositor off
+   *  its crutch. (#92 integration with #130's starter-protected LRU.) */
+  retireMostUsedTool(): string {
+    let name = "";
+    let best = -1;
+    for (const [t, n] of this.toolUseCount) {
+      if (n > best && this.registry.has(t) && !STARTER_NAMES.has(t)) {
+        best = n;
+        name = t;
+      }
+    }
+    if (name) {
+      this.registry.delete(name);
+      this.toolUseCount.delete(name);
+      const layers = ((this.composition as any)?.layers as any[] | undefined) ?? [];
+      const kept = layers.filter((l) => l && l.tool !== name);
+      if (kept.length !== layers.length) this.composition = { layers: kept };
+    }
+    return name;
+  }
+
+  /** Escalating self-regulation (a perturb brief → b avoid → c retire), cycling. Keeps banger emphasis. */
+  selfNudge(): void {
+    this.nudgeCount++;
+    const level = (this.nudgeCount - 1) % 3;
+    const emphasis = this.brief.emphasis; // preserve a banger's emphasis across the nudge
+    let action = "";
+    if (level === 0) {
+      const moods = ["sparse", "dense", "kinetic", "calm", "angular", "organic", "warm", "cold"];
+      const pick = moods[Math.floor(Math.random() * moods.length)];
+      this.brief = {
+        mood: `self-nudge: steer toward ${pick}`,
+        emphasis,
+        tone: this.brief.tone || "deliberately varied",
+        direction: `deliberately unlike the last run — push ${pick}`,
+      };
+      action = `perturb brief → ${pick}`;
+    } else if (level === 1) {
+      const over = [...this.toolUseCount.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([t]) => t)
+        .filter((t) => this.registry.has(t));
+      this.brief = { ...this.brief, emphasis, avoid: over };
+      action = over.length ? `toolsmith avoid: ${over.join(", ")}` : "toolsmith avoid: (palette empty)";
+    } else {
+      const retired = this.retireMostUsedTool();
+      action = retired ? `retire most-used tool: ${retired}` : "retire: (no tools to retire)";
+    }
+    this.lastNudgeAt = Date.now();
+    this.lastNudgeAction = action;
+    this.recentSigs = []; // observe fresh after intervening
+    this.staleness = 0;
+    this.push({ type: "activity", who: "self-eval", state: `self-nudge: ${action}` });
+  }
+
+  /** Optional compositor-class critic; only fires when configured (override or ENABLE_CRITIC env). */
+  async criticTurn(signal: AbortSignal): Promise<void> {
+    const recent = this.recentSigs.slice(-5);
+    const verdict = this.criticOverride
+      ? await this.criticOverride(recent)
+      : await this.streamComplete(
+        this.cfg.criticModel,
+        COMPOSITOR_SYSTEM,
+        `Recent composition signatures:\n${recent.join("\n")}\n\nAre the last 5 visually distinct? If not, name ONE concrete change (mood/motion). One short line:`,
+        60,
+        () => {},
+        signal,
+      );
+    const line = String(verdict || "").trim().slice(0, 160);
+    if (line) {
+      this.brief = { ...this.brief, direction: `${this.brief.direction} [critic: ${line}]` };
+      this.push({ type: "activity", who: "self-eval", state: `critic: ${line}` });
+    }
+  }
+
+  /** Weave-loop hook: observe the latest composition and self-regulate / critique as needed.
+   *  Lives on the compositor lane, so it idles with the weave (#90) — no new timer, composes like
+   *  #83/#88 do instead of adding a subsystem. */
+  async observeComposition(signal: AbortSignal): Promise<void> {
+    this.recordComposition();
+    if (this.staleness >= this.STALE_THRESHOLD) {
+      this.selfNudge();
+      return; // nudge reset; skip critic this cycle
+    }
+    if (
+      this.compositionCount > 0 && this.compositionCount % this.CRITIC_EVERY === 0 &&
+      (this.criticOverride || this.cfg.enableCritic)
+    ) {
+      try {
+        await this.criticTurn(signal);
+      } catch (e) {
+        if (!signal.aborted) this.push({ type: "status", text: `critic: ${e instanceof Error ? e.message : String(e)}` });
+      }
+    }
   }
 
   // A viewer polled /events -> they are watching. Refresh the heartbeat and, if the weave lane
@@ -1370,7 +1530,7 @@ export class GoodpointRuntime {
       }
     };
     loop((s) => this.toolsmithTurn(s), 1200).finally(() => {});
-    loop((s) => this.compositorTurn(s), 1400).finally(() => {});
+    loop(async (s) => { await this.compositorTurn(s); await this.observeComposition(s); }, 1400).finally(() => {});
   }
 
   private stopWeave(reason: string): void {
@@ -1590,7 +1750,18 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
       e2ee: {
         toolsmith_model: app.cfg.toolsmithModel,
         compositor_model: app.cfg.compositorModel,
+        critic_model: app.cfg.criticModel,
+        critic_enabled: app.cfg.enableCritic,
         ready: true,
+      },
+      self_eval: {
+        staleness: app.staleness,
+        stale_window: app.STALE_WINDOW,
+        stale_threshold: app.STALE_THRESHOLD,
+        composition_count: app.compositionCount,
+        nudge_count: app.nudgeCount,
+        last_nudge_at: app.lastNudgeAt,
+        last_nudge_action: app.lastNudgeAction,
       },
       idle: {
         enabled: app.enabled,
@@ -1641,6 +1812,13 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
     app.micSeq = 0;
     app.registry.clear();
     app.composition = { layers: [] };
+    app.recentSigs = [];
+    app.staleness = 0;
+    app.compositionCount = 0;
+    app.nudgeCount = 0;
+    app.lastNudgeAt = 0;
+    app.lastNudgeAction = "";
+    app.toolUseCount.clear();
     await app.flushArchive(); // #130: archive the closing session before rotating to a fresh one
     app.traces?.rotate(); // #124: start a fresh session trace file
     app.seedTools();

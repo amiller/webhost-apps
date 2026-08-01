@@ -1,0 +1,49 @@
+$ deno check server.ts tests/server_test.ts
+check exit: 0
+
+$ deno test --allow-read --allow-write
+[0m[38;5;245mrunning 9 tests from ./tests/archive_test.ts[0m
+#130 toolHash: sha256 hex of the draw body; identical bodies collide, different diverge ... [0m[32mok[0m [0m[38;5;245m(929µs)[0m
+#130 LocalArchiveBackend: tools dedup by hash; blobs are content-addressed; traces gzip round-trip ... [0m[32mok[0m [0m[38;5;245m(5ms)[0m
+#130 archiveTool records {name,desc,params,draw,session,ts,hash} on generation ... [0m[32mok[0m [0m[38;5;245m(3ms)[0m
+#130 archiveTool on eviction: evicted generated tools land in the library before deletion ... [0m[32mok[0m [0m[38;5;245m(1ms)[0m
+#130 flushArchive: gzips every local trace, prunes the buffer to TRACE_KEEP (open session kept) ... [0m[32mok[0m [0m[38;5;245m(4ms)[0m
+#130 kill+restart: an evicted tool is re-seeded from the archive; traces survive on the archive ... [0m[32mok[0m [0m[38;5;245m(3ms)[0m
+#130 routes: /tools/library, /archive/flush, /archive/traces(+id), and /diag archive block ... [0m[32mok[0m [0m[38;5;245m(6ms)[0m
+#130 no-fallback: a failing backend surfaces a status event on put + sets last_err on flush ... [0m[32mok[0m [0m[38;5;245m(1ms)[0m
+#130 buildArchive: opt-in via ARCHIVE_DIR; ARCHIVE_BACKEND=none and unimplemented backends disable ... [0m[32mok[0m [0m[38;5;245m(80µs)[0m
+[0m[38;5;245mrunning 31 tests from ./tests/server_test.ts[0m
+otter cursor and dedup logic keeps only new orders ... [0m[32mok[0m [0m[38;5;245m(746µs)[0m
+judge JSON parse and threshold marks only score>=7 bangers ... [0m[32mok[0m [0m[38;5;245m(187µs)[0m
+/goodpoints returns the server-side ledger ... [0m[32mok[0m [0m[38;5;245m(8ms)[0m
+#90 idle: a stale viewer window stops the weave; a new /events poll resumes it ... [0m[32mok[0m [0m[38;5;245m(6ms)[0m
+#90 idle: a quiet meeting idles the otter lane too; /start resumes everything ... [0m[32mok[0m [0m[38;5;245m(1ms)[0m
+#90 /events refreshes the consumer heartbeat and exposes lane state ... [0m[32mok[0m [0m[38;5;245m(1ms)[0m
+#90 /diag reports the idle block ... [0m[32mok[0m [0m[38;5;245m(1ms)[0m
+mic ingest feeds transcript + judge + decoder; /graph exposes typed nodes ... [0m[32mok[0m [0m[38;5;245m(1ms)[0m
+/listen rejects empty audio; smokeTest rejects clearRect; compositor dedupes layers ... [0m[32mok[0m [0m[38;5;245m(690µs)[0m
+scoreTranscript drops silence hallucinations and non-speech garbage ... [0m[32mok[0m [0m[38;5;245m(264µs)[0m
+starter toolbox seeds the registry at boot and every tool passes the smoke test ... [0m[32mok[0m [0m[38;5;245m(4ms)[0m
+registry eviction: LRU extras drop at the cap; starters and on-screen tools survive ... [0m[32mok[0m [0m[38;5;245m(640µs)[0m
+/tools returns the palette snapshot; /reset clears and reseeds the registry ... [0m[32mok[0m [0m[38;5;245m(3ms)[0m
+#124 traces: push appends to the session JSONL; /traces lists + /traces/<id> round-trips ... [0m[32mok[0m [0m[38;5;245m(2ms)[0m
+#124 traces: /reset rotates to a fresh session file ... [0m[32mok[0m [0m[38;5;245m(835µs)[0m
+#124 traces: an unwritable cwd surfaces a status event + write_ok=false (no fallback) ... [0m[32mok[0m [0m[38;5;245m(608µs)[0m
+#83 conversation-state verdict parsers sanitize, clamp, and reject empty ... [0m[32mok[0m [0m[38;5;245m(125µs)[0m
+#83 stateRecent uses the override LLM, records one shift, and is served by /state ... [0m[32mok[0m [0m[38;5;245m(496µs)[0m
+conversation-type parse pulls a known genre + rationale out of noisy wrapper text ... [0m[32mok[0m [0m[38;5;245m(81µs)[0m
+conversation-type parse clamps a runaway rationale to 14 words ... [0m[32mok[0m [0m[38;5;245m(85µs)[0m
+conversation-type parse rejects garbage and a missing type ... [0m[32mok[0m [0m[38;5;245m(39µs)[0m
+conversation-type parse keeps an honest unknown genre instead of masking ... [0m[32mok[0m [0m[38;5;245m(43µs)[0m
+/conv-type reflects the rolling verdict from real text (mocked LLM, no network) ... [0m[32mok[0m [0m[38;5;245m(586µs)[0m
+convTypeRecent throttles to one LLM call per window ... [0m[32mok[0m [0m[38;5;245m(476µs)[0m
+#92 near-identical compositions trigger a self-nudge ... [0m[32mok[0m [0m[38;5;245m(744µs)[0m
+#92 small param deltas still count as stale (quantization collapses them) ... [0m[32mok[0m [0m[38;5;245m(516µs)[0m
+#92 a varied run does NOT self-nudge ... [0m[32mok[0m [0m[38;5;245m(495µs)[0m
+#92 self-nudge escalates and retires the most-used tool (starters protected) ... [0m[32mok[0m [0m[38;5;245m(637µs)[0m
+#92 self-nudge preserves a banger's emphasis ... [0m[32mok[0m [0m[38;5;245m(457µs)[0m
+#92 /diag surfaces the self-eval fields after a nudge ... [0m[32mok[0m [0m[38;5;245m(572µs)[0m
+#92 optional critic (via override) feeds the brief, only when configured ... [0m[32mok[0m [0m[38;5;245m(558µs)[0m
+
+[0m[32mok[0m | 40 passed | 0 failed [0m[38;5;245m(172ms)[0m
+
