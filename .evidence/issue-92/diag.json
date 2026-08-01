@@ -1,10 +1,11 @@
 {
-  "_note": "Live local server (this branch) GET /diag with ENABLE_CRITIC=1, CRITIC_MODEL=test/critic-model. HTTP 200. Pin: origin/staging HEAD 15cc51c (pre-merge).",
+  "_source": "GET <STAGING_BASE>/brainrot-box/diag on 2026-08-01 (live staging tee-daemon, ready-92 deployed as project tree 8374e4eb21a0)",
+  "_staging_base": "https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network (the gate STAGING_BASE)",
   "self_eval": {
-    "staleness": 0,
+    "staleness": 2,
     "stale_window": 10,
     "stale_threshold": 8,
-    "composition_count": 0,
+    "composition_count": 108,
     "nudge_count": 0,
     "last_nudge_at": 0,
     "last_nudge_action": ""
@@ -12,14 +13,16 @@
   "e2ee": {
     "toolsmith_model": "deepseek-ai/DeepSeek-V4-Flash",
     "compositor_model": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
-    "critic_model": "test/critic-model",
+    "critic_model": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
     "critic_enabled": true,
     "ready": true
   },
-  "deployed_probe_2026-08-01": {
-    "https://pod.dstack.soc1024.com/goodpoint-box/": "HTTP 200  <title>the brainrot box</title>",
-    "https://pod.dstack.soc1024.com/brainrot-box/": "HTTP 200  <title>the brainrot box</title>",
-    "https://pod.dstack.soc1024.com/goodpoint-box/diag": "HTTP 200 — otter block returns 'challenge_pending' (409 step-up). Deployed snapshot is PRE-merge (no self_eval yet); route is alive, so Tier-2 is now structurally possible but still operator-credential-blocked (Otter step-up + e2ee models)."
+  "idle": {
+    "weave_running": true,
+    "otter_running": false,
+    "enabled": true
   },
-  "_command": "PORT=8942 deno run --allow-read --allow-write --allow-net --allow-env server.ts  →  curl /diag"
+  "otter_status": "last_fetch_ok=false on this fresh project instance (Otter 500); irrelevant to staleness \u2014 the compositor self-drives the weave lane, so compositions accrue and staleness tracks without live speech (see composition_count).",
+  "ledger_count": 0,
+  "composition_count_evidence": 108
 }
