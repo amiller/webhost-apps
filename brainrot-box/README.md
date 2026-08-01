@@ -27,8 +27,9 @@ is the version that ran the Demo Day booth all day (registry held at its 24-tool
 - `/` landing · `/app` the box UI (live / graph / studio tabs)
 - `/listen` POST wav → whisper (confidence-gated) → the full pipeline
 - `/goodpoints` ledger · `/graph` conversation graph · `/tools` palette snapshot
+- `/tools/library` durable archived tools (content-addressed by draw-body hash) · `/archive/flush` gzip+ship local traces to the external store · `/archive/traces` (+`/<id>`) durable trace listing + gunzipped NDJSON
 - `/traces` list session traces · `/traces/<id>` stream a session's events back as NDJSON
-- `/diag` lane + registry + otter status + trace write state · `/reset` fresh session (reseeds starters, rotates the trace)
+- `/diag` lane + registry + otter status + trace write state + **archive** block · `/reset` fresh session (reseeds starters, archives+rotates the trace)
 
 ## Honest edges
 
@@ -39,6 +40,15 @@ is the version that ran the Demo Day booth all day (registry held at its 24-tool
   still in-memory. Traces survive a process restart within the same deployed tree and accumulate
   across `/reset`; a **redeploy** wipes them (the daemon re-extracts the tarball, which does not
   carry `traces/`) — verified on staging 2026-07-24.
+- **Durable external archive + tool library** (#130): an `ARCHIVE_DIR`-backed store (reference
+  `local` backend; `ARCHIVE_BACKEND` selects the implementation, never baked in) holds gzipped
+  session traces and a content-addressed tool library (`tools/<sha256(draw)>.json`, deduped by
+  draw body). The toolsmith archives every generated tool on generation **and** eviction; a
+  `SEED_FROM_LIBRARY=true` boot reseeds a fresh registry from the library so a good tool from one
+  session returns in the next. `flushArchive()` (supervisor cadence + `/reset` + `POST
+  /archive/flush`) gzips local traces to the store then prunes the rotating buffer to `TRACE_KEEP`
+  (the open session is never pruned); failures surface as one `status` event + `/diag`
+  `archive.last_err` (no fallback). Snapshots flush through the same blob sink once #125 lands.
 - Froze a couple of times during the 7/24 all-day run — `streamComplete` has no per-call
   timeout, so a hung stream can wedge a lane.
 - STT is TLS to the enclave (not app-layer e2ee); enclave keys are TOFU.
