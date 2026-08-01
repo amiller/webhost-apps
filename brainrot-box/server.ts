@@ -1,4 +1,5 @@
 import vm from "node:vm";
+import { gzipSync, gunzipSync } from "node:zlib";
 import { nearStream } from "./near_e2ee.ts";
 import { chutesStream } from "./chutes_e2ee.ts";
 
@@ -16,6 +17,10 @@ interface Cfg {
   sttBase: string;
   sttModel: string;
   maxTools: number;
+  // #130 durable archive cadence + caps.
+  traceKeep: number; // max local rotating-buffer trace files (open session never pruned)
+  seedLibraryCount: number; // cap on tools reseeded from the library at boot
+  archiveFlushMs: number; // supervisor-driven flush cadence
 }
 
 export interface GraphNode {
@@ -438,6 +443,9 @@ function requireCfg(env: Env): Cfg {
     sttBase: (get("TRANSCRIBE_BASE_URL") || get("NEAR_BASE") || "https://cloud-api.near.ai/v1").replace(/\/+$/, ""),
     sttModel: get("TRANSCRIBE_MODEL") || "openai/whisper-large-v3",
     maxTools: Number(get("MAX_TOOLS")) || 24,
+    traceKeep: Number(get("TRACE_KEEP")) || 20,
+    seedLibraryCount: Number(get("SEED_LIBRARY_COUNT")) || 6,
+    archiveFlushMs: Number(get("ARCHIVE_FLUSH_MS")) || 60_000,
   };
   const missing = [
     ["OAUTH3_CORE", cfg.oauth3Core],
@@ -592,6 +600,152 @@ function countLines(path: string): number {
   }
 }
 
+// --- durable external archive (#130) ---------------------------------------------
+// Off-pod sink for the local traces (#124) + snapshots (#125, when it lands) and the reusable
+// tool library. The backend is selectable via env (`ARCHIVE_BACKEND`, default `local`) and points
+// at an external volume / bucket via `ARCHIVE_DIR` — never baked in, no creds in source. The
+// reference `LocalArchiveBackend` writes a content-addressed layout (tools/<sha256-of-draw>.json,
+// blobs/<hash>, traces/<id>.jsonl.gz) so re-generated identical tools dedup by hash and snapshots
+// dedup by content; traces are gzipped on flush. No fallback: a backend failure surfaces as one
+// `status` event and sets last_err; the runtime never pretends persistence succeeded.
+export interface ArchiveToolRecord {
+  name: string;
+  desc: string;
+  params: ToolDef["params"];
+  draw: string;
+  session: string; // session id (trace stem) that produced it
+  ts: number;
+  hash: string; // sha256(draw) — the content-address key + dedup identity
+}
+
+export interface ArchiveTraceEntry {
+  id: string;
+  bytes: number; // compressed bytes held in the archive
+}
+
+export interface ArchiveBackend {
+  readonly name: string;
+  // tool library, content-addressed by hash of the draw body (identical bodies dedup to one entry)
+  putTool(rec: ArchiveToolRecord): Promise<string | null>; // null = ok, string = error message
+  listTools(): Promise<ArchiveToolRecord[]>; // one record per unique hash, newest ts first
+  // content-addressed blobs — #125 snapshots flush through here when that issue merges
+  putBlob(hash: string, bytes: Uint8Array): Promise<string | null>;
+  hasBlob(hash: string): Promise<boolean>;
+  // gzipped session traces
+  putTrace(id: string, gz: Uint8Array): Promise<string | null>;
+  listTraces(): Promise<ArchiveTraceEntry[]>;
+  readTrace(id: string): Promise<Uint8Array | null>; // gzipped bytes, or null if absent / unsafe id
+}
+
+export async function toolHash(draw: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(draw));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Reference backend: a directory (env ARCHIVE_DIR). Treat that dir as an external volume — on a
+// persistent mount it IS the durable copy; the pod's traces/ dir is the rotating buffer flushed-
+// then-pruned against it. An S3-compatible backend implements the same interface and is selected
+// by ARCHIVE_BACKEND=s3 once added; the contract here is the stable surface.
+export class LocalArchiveBackend implements ArchiveBackend {
+  readonly name = "local";
+  readonly dir: string;
+  constructor(dir: string) {
+    this.dir = dir;
+  }
+  private ensure(): void {
+    Deno.mkdirSync(`${this.dir}/tools`, { recursive: true });
+    Deno.mkdirSync(`${this.dir}/blobs`, { recursive: true });
+    Deno.mkdirSync(`${this.dir}/traces`, { recursive: true });
+  }
+  async putTool(rec: ArchiveToolRecord): Promise<string | null> {
+    try {
+      this.ensure();
+      await Deno.writeTextFile(`${this.dir}/tools/${rec.hash}.json`, JSON.stringify(rec));
+      return null;
+    } catch (e) {
+      return emsg(e);
+    }
+  }
+  async listTools(): Promise<ArchiveToolRecord[]> {
+    const out: ArchiveToolRecord[] = [];
+    try {
+      for (const e of Deno.readDirSync(`${this.dir}/tools`)) {
+        if (!e.isFile || !e.name.endsWith(".json")) continue;
+        try {
+          const rec = JSON.parse(await Deno.readTextFile(`${this.dir}/tools/${e.name}`)) as ArchiveToolRecord;
+          if (rec && typeof rec.draw === "string" && typeof rec.hash === "string") out.push(rec);
+        } catch { /* corrupt entry — skip, never crash a list */ }
+      }
+    } catch { /* dir missing → empty list */ }
+    return out.sort((a, b) => b.ts - a.ts); // one per hash (filename is the hash), newest ts first
+  }
+  async putBlob(hash: string, bytes: Uint8Array): Promise<string | null> {
+    if (!/^[0-9a-f]{8,}$/.test(hash)) return "invalid hash";
+    try {
+      this.ensure();
+      const p = `${this.dir}/blobs/${hash}`;
+      try {
+        if ((await Deno.stat(p)).isFile) return null; // content-addressed → already present
+      } catch { /* not present — fall through to write */ }
+      await Deno.writeFile(p, bytes);
+      return null;
+    } catch (e) {
+      return emsg(e);
+    }
+  }
+  async hasBlob(hash: string): Promise<boolean> {
+    if (!/^[0-9a-f]{8,}$/.test(hash)) return false;
+    try {
+      await Deno.stat(`${this.dir}/blobs/${hash}`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async putTrace(id: string, gz: Uint8Array): Promise<string | null> {
+    if (!/^[A-Za-z0-9_-]+$/.test(id)) return "invalid id";
+    try {
+      this.ensure();
+      await Deno.writeFile(`${this.dir}/traces/${id}.jsonl.gz`, gz);
+      return null;
+    } catch (e) {
+      return emsg(e);
+    }
+  }
+  async listTraces(): Promise<ArchiveTraceEntry[]> {
+    const out: ArchiveTraceEntry[] = [];
+    try {
+      for (const e of Deno.readDirSync(`${this.dir}/traces`)) {
+        if (!e.isFile || !e.name.endsWith(".jsonl.gz")) continue;
+        out.push({ id: e.name.slice(0, -".jsonl.gz".length), bytes: sizeOf(`${this.dir}/traces/${e.name}`) });
+      }
+    } catch { /* dir missing → empty */ }
+    return out;
+  }
+  async readTrace(id: string): Promise<Uint8Array | null> {
+    if (!/^[A-Za-z0-9_-]+$/.test(id)) return null;
+    try {
+      return await Deno.readFile(`${this.dir}/traces/${id}.jsonl.gz`);
+    } catch {
+      return null;
+    }
+  }
+}
+
+// Build the archive from env. Opt-in: nothing is baked in, and the operator mounts the volume /
+// provides creds via env. Returns null (archive disabled, surfaced honestly as backend:"none" in
+// /diag) unless ARCHIVE_DIR names a writable target and ARCHIVE_BACKEND isn't "none". Only the
+// `local` reference backend ships here; an unimplemented selection (s3, …) disables rather than
+// silently pretending to persist.
+export function buildArchive(env: Env): ArchiveBackend | null {
+  const backend = (env.ARCHIVE_BACKEND ?? "").toLowerCase();
+  if (["none", "off", "disabled"].includes(backend)) return null;
+  if (backend && backend !== "local") return null; // not yet implemented — disabled, not a fake
+  const dir = env.ARCHIVE_DIR ?? "";
+  if (!dir) return null; // opt-in via ARCHIVE_DIR (an external volume mount)
+  return new LocalArchiveBackend(dir);
+}
+
 export class GoodpointRuntime {
   cfg: Cfg;
   transcript: Segment[] = [];
@@ -618,6 +772,14 @@ export class GoodpointRuntime {
   seq = 0;
   // #124: per-session JSONL trace of every pushed event. null only when explicitly disabled.
   traces: TraceStore | null;
+  // #130: durable external archive (traces + tool library). null only when explicitly disabled
+  // (no ARCHIVE_DIR) — surfaced honestly as backend:"none" in /diag.
+  archive: ArchiveBackend | null;
+  archiveFlushed = 0; // cumulative sessions written to the archive this process
+  archiveLastOk = 0; // ts of the last fully-successful flush
+  archiveLastErr = "";
+  private lastArchiveFlushAt = 0;
+  bootSeedPromise: Promise<void> = Promise.resolve();
   // master on/off (set by /start or /app load). `running` stays as a back-compat read of this.
   enabled = false;
   // two independent lanes: the weave (toolsmith+compositor) can idle while otter+judge keep
@@ -657,6 +819,7 @@ export class GoodpointRuntime {
     traceStore?: TraceStore | null,
     stateOverride?: (kind: StateKind, text: string) => Promise<string | null>,
     typeOverride?: (text: string) => Promise<ConversationType | null>,
+    archive?: ArchiveBackend | null,
   ) {
     this.cfg = requireCfg(env);
     this.judgeOverride = judgeOverride;
@@ -665,8 +828,17 @@ export class GoodpointRuntime {
     this.streams = streams;
     // #124: persistence is on by default (writes traces/ under the cwd); pass null to disable.
     this.traces = traceStore === undefined ? new TraceStore(env.TRACE_DIR || "traces") : traceStore;
+    // #130: durable archive — opt-in via ARCHIVE_DIR (external volume); pass null to disable.
+    this.archive = archive === undefined ? buildArchive(env) : archive;
     this.traces?.rotate(); // open the boot-session file (rotates again on /reset)
     this.seedTools();
+    // #130: reseed the registry from the durable tool library when gated on, so a good tool from
+    // one session is available in the next (survives a redeploy). Fire-and-forget at boot.
+    if (this.archive && (env.SEED_FROM_LIBRARY ?? "").toLowerCase() === "true") {
+      this.bootSeedPromise = this.seedFromLibrary()
+        .then((_n) => {})
+        .catch((e) => this.push({ type: "status", text: `library seed failed: ${emsg(e)}` }));
+    }
   }
 
   seedTools(): void {
@@ -678,15 +850,122 @@ export class GoodpointRuntime {
 
   // registry doubles as an LRU: composed tools are re-inserted at the tail, so the head is the
   // least recently used. Starters are never evicted (guaranteed palette floor), nor is anything
-  // in the composition currently on screen.
-  evictTools(): void {
+  // in the composition currently on screen. #130: a generated tool is archived to the durable
+  // library BEFORE it leaves the registry, so an evicted tool is recoverable in a later session.
+  async evictTools(): Promise<void> {
     const inUse = new Set(((this.composition as any).layers ?? []).map((l: any) => l?.tool));
     for (const name of this.registry.keys()) {
       if (this.registry.size <= this.cfg.maxTools) return;
       if (STARTER_NAMES.has(name) || inUse.has(name)) continue;
+      const tool = this.registry.get(name);
+      if (tool) await this.archiveTool(tool);
       this.registry.delete(name);
       this.push({ type: "tool-evicted", name });
     }
+  }
+
+  // #130: archive a generated tool (called on generation and on eviction). Content-addressed by
+  // sha256(draw) so an identical draw body dedups to one library entry. A failure surfaces as a
+  // single `status` event (no silent in-memory fallback). No-op when the archive is disabled.
+  async archiveTool(tool: ToolDef): Promise<void> {
+    const store = this.archive;
+    if (!store) return;
+    const hash = await toolHash(tool.draw);
+    const rec: ArchiveToolRecord = {
+      name: tool.name,
+      desc: tool.desc,
+      params: tool.params,
+      draw: tool.draw,
+      session: this.traces?.id ?? "",
+      ts: Date.now(),
+      hash,
+    };
+    const err = await store.putTool(rec);
+    if (err) this.push({ type: "status", text: `archive putTool failed: ${err}` });
+  }
+
+  // #130: flush every local trace to the external store (gzipped), then prune the rotating buffer
+  // to its cap (keeping the currently-open session). #125 snapshots flush through putBlob once
+  // that issue lands; the sink is already wired. A failure sets last_err and emits one status
+  // event — never a silent pretend-persistence. Returns {flushed, pending, ok}.
+  async flushArchive(now = Date.now()): Promise<{ flushed: number; pending: number; ok: boolean }> {
+    const store = this.archive;
+    const ts = this.traces;
+    if (!store || !ts) return { flushed: 0, pending: ts?.list().length ?? 0, ok: false };
+    let flushed = 0;
+    let ok = true;
+    let errText = "";
+    for (const e of ts.list()) {
+      let bytes: Uint8Array;
+      try {
+        bytes = Deno.readFileSync(`${ts.dir}/${e.id}.jsonl`);
+      } catch (err) {
+        ok = false;
+        errText = emsg(err);
+        continue;
+      }
+      const err = await store.putTrace(e.id, new Uint8Array(gzipSync(bytes)));
+      if (err) {
+        ok = false;
+        errText = err;
+        continue;
+      }
+      flushed += 1;
+    }
+    if (ok) {
+      this.archiveFlushed += flushed;
+      this.archiveLastOk = now;
+      this.archiveLastErr = "";
+      this.pruneTraces();
+    } else {
+      this.archiveLastErr = errText || "archive flush failed";
+      this.push({ type: "status", text: `archive flush failed: ${this.archiveLastErr}` });
+    }
+    return { flushed, pending: ts.list().length, ok };
+  }
+
+  // Keep the rotating local buffer bounded: drop the oldest CLOSED sessions beyond TRACE_KEEP.
+  // The currently-open session (ts.id) is never pruned — it is still being appended to.
+  private pruneTraces(): void {
+    const ts = this.traces;
+    if (!ts) return;
+    const keep = this.cfg.traceKeep;
+    const closed = ts.list().filter((e) => e.id !== ts.id); // newest first
+    const victims = closed.slice(keep - 1); // beyond the cap, oldest (tail)
+    for (const v of victims) {
+      try {
+        Deno.removeSync(`${ts.dir}/${v.id}.jsonl`);
+      } catch { /* best effort */ }
+    }
+  }
+
+  // #130: seed the registry from the durable tool library (env-gated). Picks a curated subset —
+  // distinct names not already in the registry, newest first, capped at SEED_LIBRARY_COUNT — so a
+  // good tool from one session is available in the next. Each candidate is smoke-tested; a
+  // failure is skipped with a status event (never crashes boot). Idempotent.
+  async seedFromLibrary(): Promise<number> {
+    const store = this.archive;
+    if (!store) return 0;
+    const seen = new Set<string>();
+    const distinct: ArchiveToolRecord[] = [];
+    for (const r of await store.listTools()) { // newest ts first
+      if (this.registry.has(r.name) || seen.has(r.name)) continue;
+      seen.add(r.name);
+      distinct.push(r);
+    }
+    let seeded = 0;
+    for (const r of distinct.slice(0, this.cfg.seedLibraryCount)) {
+      const tool: ToolDef = { name: r.name, desc: r.desc, params: r.params, draw: r.draw };
+      const err = this.smokeTest(tool);
+      if (err) {
+        this.push({ type: "status", text: `library seed skipped ${r.name}: ${err}` });
+        continue;
+      }
+      this.registry.set(tool.name, tool);
+      this.push({ type: "tool", tool, updated: false, seeded: true });
+      seeded += 1;
+    }
+    return seeded;
   }
 
   get running(): boolean {
@@ -998,7 +1277,8 @@ export class GoodpointRuntime {
     this.registry.delete(tool.name);
     this.registry.set(tool.name, tool);
     this.push({ type: "tool", tool, updated });
-    this.evictTools();
+    await this.archiveTool(tool); // #130: archive on generation
+    await this.evictTools();
   }
 
   async compositorTurn(signal: AbortSignal): Promise<void> {
@@ -1147,6 +1427,12 @@ export class GoodpointRuntime {
         await delay(5000);
         if (ac.signal.aborted) break;
         this.tickIdle();
+        // #130: flush the rotating trace buffer to the durable archive on a cadence.
+        const now = Date.now();
+        if (this.archive && now - this.lastArchiveFlushAt > this.cfg.archiveFlushMs) {
+          this.lastArchiveFlushAt = now;
+          this.flushArchive(now).catch(() => {});
+        }
       }
     };
     loop().finally(() => {});
@@ -1226,6 +1512,11 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
   // full palette snapshot: a fresh viewer must not depend on tool events still being in the
   // (500-capped) events buffer.
   if (req.method === "GET" && path === "/tools") return json({ tools: [...app.registry.values()] });
+  // #130: the durable tool library — archived tools (one per draw-body hash), served back across sessions.
+  if (req.method === "GET" && path === "/tools/library") {
+    if (!app.archive) return json({ tools: [], backend: "none" });
+    return json({ tools: await app.archive.listTools(), backend: app.archive.name });
+  }
   if (req.method === "POST" && path === "/listen") {
     const audio = new Uint8Array(await req.arrayBuffer());
     if (!audio.length) return json({ error: "empty audio" }, 400);
@@ -1257,6 +1548,29 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
     const fh = app.traces?.openRead(id) ?? null;
     if (!fh) return new Response("trace not found", { status: 404 });
     return new Response(fh.readable, { headers: { "content-type": "application/x-ndjson", "cache-control": "no-store" } });
+  }
+  // #130: durable archive — list flushed traces, stream one back (gunzipped), force a flush.
+  if (req.method === "GET" && path === "/archive/traces") {
+    if (!app.archive) return json({ traces: [], backend: "none" });
+    return json({ traces: await app.archive.listTraces(), backend: app.archive.name });
+  }
+  if (req.method === "GET" && path.startsWith("/archive/traces/")) {
+    const id = path.slice("/archive/traces/".length);
+    if (!app.archive) return new Response("archive disabled", { status: 404 });
+    const gz = await app.archive.readTrace(id);
+    if (!gz) return new Response("trace not found", { status: 404 });
+    return new Response(new Uint8Array(gunzipSync(gz)), { headers: { "content-type": "application/x-ndjson", "cache-control": "no-store" } });
+  }
+  if (req.method === "POST" && path === "/archive/flush") {
+    const r = await app.flushArchive();
+    return json({
+      ok: r.ok,
+      flushed: r.flushed,
+      pending: r.pending,
+      last_ok: app.archiveLastOk,
+      last_err: app.archiveLastErr,
+      backend: app.archive?.name ?? "none",
+    });
   }
   if (req.method === "GET" && path === "/diag") {
     return json({
@@ -1294,6 +1608,15 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
       trace: app.traces
         ? { session_id: app.traces.id, events_written: app.traces.events, write_ok: app.traces.writeOk }
         : { session_id: "", events_written: 0, write_ok: false },
+      archive: app.archive
+        ? {
+            backend: app.archive.name,
+            flushed: app.archiveFlushed,
+            pending: app.traces?.list().length ?? 0,
+            last_ok: app.archiveLastOk,
+            last_err: app.archiveLastErr,
+          }
+        : { backend: "none", flushed: 0, pending: 0, last_ok: 0, last_err: "" },
     });
   }
   if (req.method === "POST" && path === "/reset") {
@@ -1318,6 +1641,7 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
     app.micSeq = 0;
     app.registry.clear();
     app.composition = { layers: [] };
+    await app.flushArchive(); // #130: archive the closing session before rotating to a fresh one
     app.traces?.rotate(); // #124: start a fresh session trace file
     app.seedTools();
     return json({ ok: true });
