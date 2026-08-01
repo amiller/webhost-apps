@@ -1,0 +1,18 @@
+{
+  "seq": 10,
+  "acc": "9",
+  "rej": "0",
+  "cap": "capability live \u00b7 4fps \u00b7 1800s",
+  "fmt": "full-jpeg",
+  "emaDraw": 0.2,
+  "emaEnc": 3,
+  "emaPost": 90.4,
+  "lastTickMs": 92.3,
+  "dutyCycle": 15.38,
+  "emaBytes": 1714,
+  "bytesPerMin": 171373,
+  "fullFrames": 9,
+  "heartbeats": 0,
+  "keyframes": 0,
+  "encRows": null
+}

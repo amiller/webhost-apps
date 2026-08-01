@@ -29,7 +29,7 @@ PY
 )
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
-tar czf "$TMP/app.tgz" -C "$DIR" server.ts project.json public
+tar czf "$TMP/app.tgz" -C "$DIR" server.ts ucan.ts project.json public
 RESP=$(curl -fsS -X POST "$CVM/_api/projects" \
   -H "Authorization: Bearer $TEE_DAEMON_TOKEN" \
   -F "manifest=$MANIFEST;type=application/json" \

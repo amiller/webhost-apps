@@ -1,0 +1,40 @@
+# Local-serve verification transcript — issue #72 compute panel
+Date: 2026-07-18T12:02:23Z
+Branch: ready-72 (base origin/staging cee4c20)
+Method: the UNCHANGED server.ts handler served the NEW public/index.html via a local
+deno runner on :8931 (the staging daemon's /screenshare-debug/ mount is pre-existing
+not-serving — see PR body — so verification ran against the real handler locally).
+
+## GET / through real handler
+HTTP 200 · 17155B
+
+## #72 additions present in served markup (25 expected)
+  PRESENT: compute · cost panel
+  PRESENT: encoding comparison
+  PRESENT: tile-delta (needs #71)
+  PRESENT: duty-cycle
+  PRESENT: bytes / frame
+  PRESENT: bytes / min
+  PRESENT: compare encodings
+  PRESENT: WebP
+  PRESENT: PNG
+  PRESENT: AVIF
+  PRESENT: id=cDraw
+  PRESENT: id=cEnc
+  PRESENT: id=cPost
+  PRESENT: id=cDuty
+  PRESENT: id=cBpf
+  PRESENT: id=cBpm
+  PRESENT: id=cKinds
+  PRESENT: id=cDiff
+  PRESENT: id=compare
+  PRESENT: id=fmtsel
+  PRESENT: id=encRows
+  PRESENT: id=encNote
+  PRESENT: __ssdebug
+  PRESENT: performance.now
+  PRESENT: tile-delta needs the #71
+
+## unchanged server endpoints (sanity)
+  /health: {"ok":true,"build":"ucan-b1","authority":"did:key:z6Mksd5FUdNMsuFcQhvaZ4J4n3Nu4JBdgSDb5eFSzBMKbtuc"}
+  /authority: {"did":"did:key:z6Mksd5FUdNMsuFcQhvaZ4J4n3Nu4JBdgSDb5eFSzBMKbtuc","sink":"did:key:z6Mksd5FUdNMsuFcQhvaZ4J4n3Nu4JBdgSDb5eFSzBMKbtuc","with":"stream://did:key:z6Mksd5FUdNMsuFcQhvaZ4J4n3Nu4JBdgSDb5eFSzBMKbtuc"}

@@ -1,6 +1,6 @@
 <!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>screenshare-debug · oauth3</title><style>
-:root{--paper:#faf7f0;--ink:#1c2528;--teal:#00838a;--pink:#ff48b0;--mut:#5c6b6e;--pass:#1e7d46;--fail:#c62828;--hair:#ddd7c9;--card:#fffdf8}
+:root{--paper:#faf7f0;--ink:#1c2528;--teal:#00838a;--pink:#ff48b0;--mut:#5c6b6e;--pass:#1e7d46;--fail:#c62828;--hair:#ddd7c9;--card:#fffdf8;--wash:rgba(0,131,138,.07)}
 *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
 .wrap{max-width:940px;margin:0 auto;padding:26px 18px 70px}
 .kick{font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--teal)}
@@ -15,17 +15,33 @@ button.ghost{background:var(--card);color:var(--ink);box-shadow:3px 3px 0 var(--
 button.rev{background:var(--pink)}button:active{transform:translate(2px,2px);box-shadow:1px 1px 0 var(--pink)}
 button:disabled{opacity:.4;cursor:not-allowed;box-shadow:none}
 .pill{font-family:ui-monospace,Menlo,monospace;font-size:11px;padding:3px 9px;border:1.5px solid var(--mut);color:var(--mut)}
+label.sel{display:flex;flex-direction:column;gap:3px;font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+select{font:inherit;border:2px solid var(--ink);background:var(--card);color:var(--ink);padding:5px 8px;font-family:ui-monospace,Menlo,monospace;font-size:12px;cursor:pointer}
+select option:disabled{color:var(--mut)}
 .grid{display:grid;grid-template-columns:230px 1fr;gap:16px}@media(max-width:640px){.grid{grid-template-columns:1fr}}
-.card{border:2px solid var(--ink);background:var(--card)}
+.card{border:2px solid var(--ink);background:var(--card);margin-top:16px}
 .card h2{margin:0;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);font-family:ui-monospace,Menlo,monospace;padding:8px 12px;border-bottom:1px solid var(--hair)}
+.card h2 .h{color:var(--teal)}
 #prev{display:block;width:100%;height:auto;background:#0c0f12}
 .stat{display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--hair);font-size:13px}
 .stat b{font-variant-numeric:tabular-nums;font-size:17px}.ok{color:var(--pass)}.no{color:var(--fail)}
+.cost{display:grid;grid-template-columns:repeat(2,1fr);gap:0}
+@media(max-width:640px){.cost{grid-template-columns:1fr}}
+.cost .stat{font-size:12px;align-items:center;gap:6px;border-bottom:1px solid var(--hair)}
+.cost .stat>span:first-child{flex:1}
+.cost .stat b{font-size:15px}
+.cost .stat.duty{grid-column:1/-1;background:var(--wash);border-bottom:none}
+.cost .stat.duty b{font-size:18px;color:var(--teal)}
+.cost .unit{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:var(--mut);min-width:8ch;text-align:right}
+.cost .sub{font-family:ui-monospace,Menlo,monospace;font-size:9px;color:var(--mut);text-transform:none;letter-spacing:0}
+.cost b.pending{color:var(--mut);font-size:12px;font-weight:600}
 table{width:100%;border-collapse:collapse}
 th{font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);text-align:left;padding:6px 10px;border-bottom:2px solid var(--ink)}
 td{padding:5px 10px;border-bottom:1px solid var(--hair);font-family:ui-monospace,Menlo,monospace;font-size:12px}
 td.a{color:var(--pass);font-weight:700}td.r{color:var(--fail);font-weight:700}.reason{color:var(--mut);font-weight:400}
 .note{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--mut)}
+.note b{color:var(--teal)}
+.defer{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--mut);background:var(--wash);border-left:4px solid var(--teal);padding:8px 10px;margin:0 12px 12px}
 </style></head><body><div class=wrap>
 <div class=kick>oauth3 · outbound-stream consent · RFC 0011 did:key UCAN</div>
 <h1>Screenshare Debug</h1>
@@ -35,17 +51,41 @@ td.a{color:var(--pass);font-weight:700}td.r{color:var(--fail);font-weight:700}.r
   <button id=start>Start capture (screen)</button>
   <button id=demo class=ghost>Start synthetic demo</button>
   <button id=revoke class=rev disabled>Revoke</button>
+  <label class=sel>format <select id=fmtsel><option value="full-jpeg" selected>full-jpeg</option><option disabled>tile-delta (needs #71)</option></select></label>
   <span class="mono note" id=note></span>
 </div>
 <div class=grid>
-  <div class=card><h2>live frame → jpeg → sink</h2><canvas id=prev width=200 height=125></canvas>
+  <div class=card style=margin-top:0><h2>live frame → jpeg → sink</h2><canvas id=prev width=200 height=125></canvas>
     <div class=stat><span>accepted by sink</span><b class=ok id=nA>0</b></div>
     <div class=stat><span>rejected by sink</span><b class=no id=nR>0</b></div>
   </div>
-  <div class=card><h2>sink console — what the pod verified offline</h2>
-    <table><thead><tr><th>seq</th><th>bytes</th><th>luma</th><th>sink verdict</th></tr></thead><tbody id=log></tbody></table>
+  <div class=card style=margin-top:0><h2>sink console — what the pod verified offline</h2>
+    <table><thead><tr><th>seq</th><th>bytes</th><th>luma</th><th>fmt</th><th>ms</th><th>sink verdict</th></tr></thead><tbody id=log></tbody></table>
   </div>
 </div>
+
+<div class=card>
+  <h2><span class=h>compute · cost panel</span> — can I afford to run this all day?</h2>
+  <div class=cost>
+    <div class=stat><span>draw <span class=sub>(drawImage)</span></span><b id=cDraw>–</b><span class=unit>ms</span></div>
+    <div class=stat><span>diff <span class=sub>(change detect)</span></span><b id=cDiff class=pending>n/a</b><span class=unit>pending #71</span></div>
+    <div class=stat><span>encode <span class=sub>(toBlob JPEG)</span></span><b id=cEnc>–</b><span class=unit>ms</span></div>
+    <div class=stat><span>post <span class=sub>(fetch sink)</span></span><b id=cPost>–</b><span class=unit>ms</span></div>
+    <div class=stat duty><span>duty-cycle <span class=sub>(pipeline / interval)</span></span><b id=cDuty>–</b><span class=unit>% of one core</span></div>
+    <div class=stat><span>bytes / frame</span><b id=cBpf>–</b><span class=unit>B (ema)</span></div>
+    <div class=stat><span>bytes / min</span><b id=cBpm>–</b><span class=unit>at current rate</span></div>
+    <div class=stat><span>frame kinds</span><b id=cKinds class=pending>–</b><span class=unit>full·hb·key</span></div>
+  </div>
+  <p class=note style="padding:8px 12px 12px">per-stage ms wraps each pipeline step in <b>performance.now()</b>; duty-cycle is pipeline ms over the 600 ms frame interval. <b>diff</b> (change detection), <b>heartbeat/keyframe</b> kinds, and the <b>tile-delta</b> format all land with the change-detection foundation (<a href="https://github.com/amiller/webhost-apps/issues/71">#71</a>, PR <a href="https://github.com/amiller/webhost-apps/pull/100">#100</a>) — until then every frame is a full JPEG.</p>
+</div>
+
+<div class=card>
+  <h2><span class=h>encoding comparison</span> — what each codec would cost for this frame</h2>
+  <div class=row style="margin:10px 12px"><button id=compare class=ghost>compare encodings</button><span class="mono note" id=encNote>encodes the current canvas as JPEG / WebP / PNG</span></div>
+  <table><thead><tr><th>format</th><th>bytes</th><th>encode ms</th><th>vs JPEG</th></tr></thead><tbody id=encRows><tr><td colspan=4 class=reason>no comparison yet — press the button (works on the synthetic demo too)</td></tr></tbody></table>
+  <p class=defer><b>scoped to #72:</b> the per-stage timing, bandwidth accounting, and this encoding comparison are verified here. The <b>tile-delta wire format</b>, <b>delta-vs-full bandwidth</b>, and <b>reassembly error row</b> are deferred to the #71 foundation they depend on — see the PR body.</p>
+</div>
+
 <script>
 const BASE=location.pathname.replace(/\/$/,'');
 const $=id=>document.getElementById(id);
@@ -53,19 +93,89 @@ const B58="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 function b58(b){let z=0;while(z<b.length&&b[z]===0)z++;const d=[0];for(let i=z;i<b.length;i++){let c=b[i];for(let j=0;j<d.length;j++){c+=d[j]<<8;d[j]=c%58;c=c/58|0}while(c){d.push(c%58);c=c/58|0}}let o='1'.repeat(z);for(let i=d.length-1;i>=0;i--)o+=B58[d[i]];return o}
 async function sessionDid(){const k=await crypto.subtle.generateKey('Ed25519',true,['sign','verify']);const raw=new Uint8Array(await crypto.subtle.exportKey('raw',k.publicKey));const p=new Uint8Array(2+raw.length);p[0]=0xed;p[1]=0x01;p.set(raw,2);return 'did:key:z'+b58(p)}
 const ctx=$('prev').getContext('2d');
-let ucan=null,seq=0,timer=null,video=null;
+const INTERVAL=600; // ms/frame — matches setInterval in begin(); duty-cycle denominator
+let ucan=null,seq=0,timer=null,video=null,fmt='full-jpeg';
+// per-stage timing + bandwidth state (#72 compute panel)
+let emaDraw=0,emaEnc=0,emaPost=0,emaBytes=0,lastBytes=0,lastTickMs=0,dutyCycle=0,bytesPerMin=0;
+let fullFrames=0,heartbeats=0,keyframes=0; // heartbeat/keyframe stay 0 until #71 lands still/scene classification
+let encRows=null,_webp=null;
 function synthFrame(){const w=200,h=125,t=Date.now()/300;ctx.fillStyle='#0c0f12';ctx.fillRect(0,0,w,h);ctx.fillStyle='hsl('+((t*40)%360)+',85%,55%)';const x=(Math.sin(t)*.5+.5)*(w-42),y=(Math.cos(t*.7)*.5+.5)*(h-30);ctx.fillRect(x,y,42,30);ctx.fillStyle='#fff';ctx.font='11px monospace';ctx.fillText('synthetic · seq '+seq,6,16)}
 function drawVideo(){try{ctx.drawImage(video,0,0,200,125)}catch(e){}}
 function luma(){const im=ctx.getImageData(0,0,200,125).data;let s=0;for(let i=0;i<im.length;i+=400)s+=im[i];return Math.round(s/(im.length/400))}
 function blobOf(){return new Promise(r=>$('prev').toBlob(r,'image/jpeg',0.6))}
-function logRow(seq,bytes,lm,r){const tr=document.createElement('tr');tr.innerHTML='<td>'+seq+'</td><td>'+(bytes||'–')+'</td><td>'+lm+'</td>'+(r.ok?'<td class=a>ACCEPTED</td>':'<td class=r>401 <span class=reason>'+(r.reason||'')+'</span></td>');$('log').prepend(tr);while($('log').children.length>10)$('log').lastChild.remove()}
-async function tick(draw){draw();const lm=luma();const blob=await blobOf();seq++;let r;try{r=await(await fetch(BASE+'/sink/frame',{method:'POST',headers:{authorization:'Bearer '+ucan,'x-seq':String(seq),'x-luma':String(lm),'content-type':'image/jpeg'},body:blob})).json()}catch(e){r={ok:false,reason:String(e)}}logRow(seq,r.bytes,lm,r);const s=await(await fetch(BASE+'/sink/frames')).json();$('nA').textContent=s.accepted;$('nR').textContent=s.rejected}
+function logRow(seq,bytes,lm,r,f,ms){const tr=document.createElement('tr');tr.innerHTML='<td>'+seq+'</td><td>'+(bytes||'–')+'</td><td>'+lm+'</td><td>'+f+'</td><td>'+(ms!=null?ms.toFixed(1):'–')+'</td>'+(r.ok?'<td class=a>ACCEPTED</td>':'<td class=r>401 <span class=reason>'+(r.reason||'')+'</span></td>');$('log').prepend(tr);while($('log').children.length>10)$('log').lastChild.remove()}
+function fmtBytes(n){if(n<1024)return n.toFixed(0)+'B';if(n<1048576)return(n/1024).toFixed(1)+'KB';return(n/1048576).toFixed(2)+'MB'}
+function renderCost(){
+  $('cDraw').textContent=emaDraw?emaDraw.toFixed(1):'–';
+  $('cEnc').textContent=emaEnc?emaEnc.toFixed(1):'–';
+  $('cPost').textContent=emaPost?emaPost.toFixed(1):'–';
+  $('cDuty').textContent=dutyCycle?dutyCycle.toFixed(2):'–';
+  $('cBpf').textContent=emaBytes?emaBytes.toFixed(0):'–';
+  $('cBpm').textContent=bytesPerMin?fmtBytes(bytesPerMin):'–';
+  $('cKinds').textContent=fullFrames+'·'+heartbeats+'·'+keyframes;
+}
+async function tick(draw){
+  const tD0=performance.now();draw();const tDraw=performance.now()-tD0;        // DRAW stage
+  const lm=luma();
+  const tE0=performance.now();const blob=await blobOf();const tEnc=performance.now()-tE0; // ENCODE stage
+  seq++;
+  const tP0=performance.now();let r;                                       // POST stage
+  try{r=await(await fetch(BASE+'/sink/frame',{method:'POST',headers:{authorization:'Bearer '+ucan,'x-seq':String(seq),'x-luma':String(lm),'x-format':fmt,'content-type':'image/jpeg'},body:blob})).json()}catch(e){r={ok:false,reason:String(e)}}
+  const tPost=performance.now()-tP0;
+  // exponential moving averages (alpha 0.2) — stable per-stage readout, not per-frame jitter
+  const a=0.2;
+  emaDraw=emaDraw?emaDraw*(1-a)+tDraw*a:tDraw;
+  emaEnc=emaEnc?emaEnc*(1-a)+tEnc*a:tEnc;
+  emaPost=emaPost?emaPost*(1-a)+tPost*a:tPost;
+  emaBytes=emaBytes?emaBytes*(1-a)+blob.size*a:blob.size;
+  lastBytes=blob.size;fullFrames++;
+  lastTickMs=tDraw+tEnc+tPost; // excludes diff: change detection not yet in the pipeline (#71)
+  dutyCycle=(lastTickMs/INTERVAL)*100;
+  bytesPerMin=emaBytes*(60000/INTERVAL);
+  logRow(seq,r.bytes,lm,r,fmt,lastTickMs);
+  renderCost();
+  const s=await(await fetch(BASE+'/sink/frames')).json();$('nA').textContent=s.accepted;$('nR').textContent=s.rejected;
+}
+async function webpSupported(){if(_webp!==null)return _webp;const c=document.createElement('canvas');c.width=2;c.height=2;return _webp=await new Promise(r=>c.toBlob(b=>r(!!(b&&b.type==='image/webp')),'image/webp',0.6))}
+function renderEnc(){
+  const jb=encRows.find(r=>r[0].startsWith('JPEG'));const jbBytes=jb?jb[1]:0;
+  $('encRows').innerHTML=encRows.map(r=>{
+    if(r[1]<0){const why=r[0]==='AVIF'?'N/A — canvas.toBlob has no AVIF encoder':'unsupported in this browser';return '<tr><td>'+r[0]+'</td><td colspan=3 class=reason>'+why+'</td></tr>'}
+    const vs=jbBytes?(r[1]/jbBytes*100).toFixed(0)+'%':'–';
+    return '<tr><td>'+r[0]+'</td><td>'+r[1]+'</td><td>'+r[2].toFixed(1)+'</td><td>'+vs+'</td></tr>';
+  }).join('');
+  $('encNote').textContent=encRows.length+' codecs · JPEG baseline · snapshot of one real frame';
+}
+async function compareEncodings(){
+  $('encNote').textContent='encoding…';
+  const src=$('prev');
+  // snapshot the current canvas so all three codecs encode the SAME frame (no inter-frame drift)
+  const snap=document.createElement('canvas');snap.width=src.width;snap.height=src.height;snap.getContext('2d').drawImage(src,0,0);
+  const q=0.6;const out=[];
+  const encAs=type=>new Promise(res=>snap.toBlob(b=>res(b),type,q));
+  let t=performance.now();const jb=await encAs('image/jpeg');out.push(['JPEG q'+q,jb.size,performance.now()-t]);
+  if(await webpSupported()){t=performance.now();const wb=await encAs('image/webp');out.push(['WebP q'+q,wb.size,performance.now()-t])}else out.push(['WebP',-1,-1]);
+  t=performance.now();const pb=await new Promise(r=>snap.toBlob(r,'image/png'));out.push(['PNG',pb.size,performance.now()-t]);
+  out.push(['AVIF',-1,-1]); // canvas.toBlob has no AVIF encoder in practice
+  encRows=out;renderEnc();
+}
 async function getGrant(){const sd=await sessionDid();const c=await(await fetch(BASE+'/consent/grant',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionDid:sd,rate:4,ttlMin:30})})).json();ucan=c.grant;$('capstate').textContent='capability live · '+c.maxRate+'fps · '+c.expiresInSec+'s';$('capstate').style.borderColor='var(--pass)';$('capstate').style.color='var(--pass)';$('revoke').disabled=false;return c}
-function begin(draw,label){$('start').disabled=true;$('demo').disabled=true;$('note').textContent=label;timer=setInterval(()=>tick(draw),600)}
+function begin(draw,label){$('start').disabled=true;$('demo').disabled=true;$('note').textContent=label;timer=setInterval(()=>tick(draw),INTERVAL)}
 $('demo').onclick=async()=>{$('note').textContent='minting session key + requesting consent…';await getGrant();begin(synthFrame,'streaming synthetic frames (headless-safe; real capture is the other button)')};
 $('start').onclick=async()=>{if(!navigator.mediaDevices?.getDisplayMedia){$('note').textContent='getDisplayMedia unavailable — use synthetic demo';return}$('note').textContent='pick a window/screen…';try{const s=await navigator.mediaDevices.getDisplayMedia({video:true,audio:false});video=document.createElement('video');video.srcObject=s;await video.play()}catch(e){$('note').textContent='capture cancelled';return}await getGrant();begin(drawVideo,'streaming your screen under the signed capability')};
 $('revoke').onclick=async()=>{await fetch(BASE+'/consent/revoke',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({grant:ucan})});$('capstate').textContent='capability REVOKED';$('capstate').style.borderColor='var(--fail)';$('capstate').style.color='var(--fail)';$('note').textContent='revoked — the SAME capability is now rejected by the sink (watch the console)';$('revoke').disabled=true};
+$('compare').onclick=compareEncodings;
+$('fmtsel').onchange=e=>{const v=e.target.value;if(v==='full-jpeg'){fmt=v;$('note').textContent='format: full JPEG'}else{$('note').textContent='tile-delta needs the #71 change-detection foundation'}};
 (async()=>{const a=await(await fetch(BASE+'/authority')).json();$('anchor').textContent=a.did})();
-// headless driver for the evidence rig
-window.__ssdebug={demo:()=>$('demo').onclick(),revoke:()=>$('revoke').onclick(),state:()=>({seq,acc:$('nA').textContent,rej:$('nR').textContent,cap:$('capstate').textContent})};
+// headless driver for the evidence rig — assert via the envoy bridge after __ssdebug.demo()
+window.__ssdebug={
+  demo:()=>$('demo').onclick(),
+  revoke:()=>$('revoke').onclick(),
+  compare:()=>$('compare').onclick(),
+  state:()=>({seq,acc:$('nA').textContent,rej:$('nR').textContent,cap:$('capstate').textContent,fmt,
+    emaDraw:round(emaDraw),emaEnc:round(emaEnc),emaPost:round(emaPost),lastTickMs:round(lastTickMs),
+    dutyCycle:round(dutyCycle,2),emaBytes:Math.round(emaBytes),bytesPerMin:Math.round(bytesPerMin),
+    fullFrames,heartbeats,keyframes,encRows})
+};
+function round(n,d=1){return n?Number(n.toFixed(d)):0}
 </script></div></body></html>
