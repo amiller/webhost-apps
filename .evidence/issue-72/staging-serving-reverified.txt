@@ -1,0 +1,15 @@
+staging /screenshare-debug/ — RE-VERIFIED SERVING 2026-08-01 (supersedes "not serving")
+
+The first iteration recorded a 404 + daemon fallback at /screenshare-debug/. Re-checked today against
+the staging CVM (https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network):
+
+  GET /screenshare-debug/      → HTTP 200, ~19 KB, <title>screenshare-debug · change detection</title>
+                                 (this was #100/ready-71's mount immediately before the PR-101 walk)
+  GET /screenshare-debug/authority → HTTP 200, application/json, server.ts route hit
+                                    (deno process up; ucan.ts resolves)
+
+GET /_api/projects (Bearer token) lists screenshare-debug {runtime:deno, mode:dev, healthy}. The
+prior non-serving state was transient (daemon/process), not a property of this PR, and has cleared.
+
+For the Tier-2 walk, ready-72 was deployed to this same project, walked, and #100's deploy restored
+verbatim afterward (tree 48e4654aa91d == pre-walk). See flow.md.

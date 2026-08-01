@@ -1,1 +1,16 @@
-{"status":"ok","pendingCommands":62,"wsClients":0}
+envoy bridge health — RE-CHECKED 2026-08-01 (supersedes the "wsClients:0 = down" claim)
+
+GET http://localhost:3000/health  →  {"status":"ok","pendingCommands":0,"wsClients":0}
+
+wsClients:0 is NOT a fault. The bridge (projects/envoy/neko/ws-bridge.js) supports TWO transports;
+the browser extension polls commands over HTTP (GET /api/commands, POST /api/responses) rather than
+holding a WebSocket, so wss.clients.size stays 0 by design. The container log shows real
+navigate/evaluate/screenshot round-trips succeeding over the HTTP path.
+
+Live functional test against the deployed staging URL:
+  POST /api/bridge {"tool":"navigate",...}        → {"success":true,"result":{"success":true}}
+  POST /api/bridge {"tool":"evaluate","document.title"} → "screenshare-debug · oauth3"
+  POST /api/bridge {"tool":"screenshot",...}      → 158 675 B PNG (real bytes)
+
+Conclusion: the rig was never the blocker. The first iteration's e2e was simply not attempted after
+the wsClients misread.
