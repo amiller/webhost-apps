@@ -416,3 +416,119 @@ Deno.test("convTypeRecent throttles to one LLM call per window", async () => {
   await rt.convTypeRecent(false); // within the 20s window — must not call
   assertEquals(calls, 1);
 });
+
+// --- issue #92: real-time self-eval (staleness -> self-regulation) ---
+// Ported from goodpoint-box into brainrot-box. observeComposition/selfNudge are synchronous and
+// need no e2ee key; only the optional critic uses the injected criticOverride (last ctor arg).
+
+const ac = () => new AbortController().signal;
+const comp = (tool: string, speed = 1) => ({ layers: [{ tool, params: { speed } }] });
+
+Deno.test("#92 near-identical compositions trigger a self-nudge", async () => {
+  const rt = new GoodpointRuntime(env);
+  rt.composition = comp("snake", 1.0);
+  for (let i = 0; i < 9; i++) await rt.observeComposition(ac());
+  // 8 identical sigs in a window of 10 crosses the threshold exactly once (nudge resets the window)
+  assertEquals(rt.nudgeCount, 1);
+  assert(rt.lastNudgeAction.length > 0);
+  assert(rt.events.some((e) => {
+    const ev = e.ev as any;
+    return ev?.type === "activity" && ev?.who === "self-eval" && String(ev?.state).includes("self-nudge");
+  }));
+});
+
+Deno.test("#92 small param deltas still count as stale (quantization collapses them)", async () => {
+  const rt = new GoodpointRuntime(env);
+  // jitter well inside the 0.2 bucket must read as the same composition
+  for (const s of [1.01, 1.04, 1.0, 1.05, 1.02, 1.03, 1.0, 1.04, 1.01]) {
+    rt.composition = comp("snake", s);
+    await rt.observeComposition(ac());
+  }
+  assertEquals(rt.nudgeCount, 1);
+});
+
+Deno.test("#92 a varied run does NOT self-nudge", async () => {
+  const rt = new GoodpointRuntime(env);
+  const tools = ["snake", "grid", "orbit", "ribbon", "glyph", "wave", "burst", "drift", "spoke"];
+  for (const t of tools) {
+    rt.composition = comp(t);
+    await rt.observeComposition(ac());
+  }
+  assertEquals(rt.nudgeCount, 0);
+  assertEquals(rt.lastNudgeAction, "");
+  assert(!rt.events.some((e) => {
+    const ev = e.ev as any;
+    return ev?.who === "self-eval" && String(ev?.state).includes("self-nudge");
+  }));
+});
+
+Deno.test("#92 self-nudge escalates and retires the most-used tool (starters protected)", async () => {
+  const rt = new GoodpointRuntime(env);
+  // seed non-starters so level-2 (retire) has something to retire; starters stay in the registry
+  const startersBefore = rt.registry.size;
+  (rt.registry as Map<string, unknown>).set("snake", { name: "snake", params: [] });
+  (rt.registry as Map<string, unknown>).set("grid", { name: "grid", params: [] });
+  // three stuck episodes => one of each escalating level (perturb, avoid, retire)
+  for (let ep = 0; ep < 3; ep++) {
+    rt.composition = comp("snake");
+    for (let i = 0; i < 8; i++) await rt.observeComposition(ac());
+  }
+  assertEquals(rt.nudgeCount, 3);
+  // the third nudge (level 2) retires snake, the most-used tool
+  assert(rt.lastNudgeAction.startsWith("retire most-used tool: snake"));
+  assert(!rt.registry.has("snake"));
+  // starters survived the retire (palette floor intact)
+  assertEquals(rt.registry.size, startersBefore + 1); // +grid still present, -snake
+});
+
+Deno.test("#92 self-nudge preserves a banger's emphasis", async () => {
+  const rt = new GoodpointRuntime(env);
+  rt.brief = { mood: "good point: ship it", emphasis: "ship it", tone: "sharp", direction: "legible" };
+  rt.composition = comp("snake");
+  for (let i = 0; i < 8; i++) await rt.observeComposition(ac());
+  assertEquals(rt.nudgeCount, 1);
+  assertEquals(rt.brief.emphasis, "ship it"); // banger emphasis survives the perturb
+});
+
+Deno.test("#92 /diag surfaces the self-eval fields after a nudge", async () => {
+  const rt = new GoodpointRuntime(env);
+  rt.composition = comp("snake");
+  for (let i = 0; i < 8; i++) await rt.observeComposition(ac());
+  const res = await handler(new Request("https://app.example/diag"), { runtime: rt });
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assert(!!body.self_eval);
+  assertEquals(body.self_eval.stale_window, 10);
+  assertEquals(body.self_eval.stale_threshold, 8);
+  assertEquals(body.self_eval.nudge_count, 1);
+  assert(body.self_eval.last_nudge_action.length > 0);
+  assertEquals(typeof body.e2ee.critic_model, "string");
+  assertEquals(body.e2ee.critic_enabled, false);
+});
+
+Deno.test("#92 optional critic (via override) feeds the brief, only when configured", async () => {
+  let seen: string[] = [];
+  const rt = new GoodpointRuntime(
+    env,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    async (sigs) => {
+      seen = sigs;
+      return "shift to warmer motion";
+    },
+  );
+  rt.composition = comp("snake");
+  // CRITIC_EVERY is 10; drive 10 cycles without crossing the staleness threshold (vary the tool)
+  const tools = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+  for (const t of tools) {
+    rt.composition = comp(t);
+    await rt.observeComposition(ac());
+  }
+  assertEquals(rt.nudgeCount, 0); // never stuck
+  assert(seen.length > 0); // critic saw recent signatures
+  assert(rt.brief.direction.includes("[critic: shift to warmer motion]"));
+});

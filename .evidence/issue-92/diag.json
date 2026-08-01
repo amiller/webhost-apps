@@ -1,0 +1,25 @@
+{
+  "_note": "Live local server (this branch) GET /diag with ENABLE_CRITIC=1, CRITIC_MODEL=test/critic-model. HTTP 200. Pin: origin/staging HEAD 15cc51c (pre-merge).",
+  "self_eval": {
+    "staleness": 0,
+    "stale_window": 10,
+    "stale_threshold": 8,
+    "composition_count": 0,
+    "nudge_count": 0,
+    "last_nudge_at": 0,
+    "last_nudge_action": ""
+  },
+  "e2ee": {
+    "toolsmith_model": "deepseek-ai/DeepSeek-V4-Flash",
+    "compositor_model": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+    "critic_model": "test/critic-model",
+    "critic_enabled": true,
+    "ready": true
+  },
+  "deployed_probe_2026-08-01": {
+    "https://pod.dstack.soc1024.com/goodpoint-box/": "HTTP 200  <title>the brainrot box</title>",
+    "https://pod.dstack.soc1024.com/brainrot-box/": "HTTP 200  <title>the brainrot box</title>",
+    "https://pod.dstack.soc1024.com/goodpoint-box/diag": "HTTP 200 — otter block returns 'challenge_pending' (409 step-up). Deployed snapshot is PRE-merge (no self_eval yet); route is alive, so Tier-2 is now structurally possible but still operator-credential-blocked (Otter step-up + e2ee models)."
+  },
+  "_command": "PORT=8942 deno run --allow-read --allow-write --allow-net --allow-env server.ts  →  curl /diag"
+}

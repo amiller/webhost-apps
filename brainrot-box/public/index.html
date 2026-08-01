@@ -310,6 +310,7 @@
       <span><i class="dot" id="runDot"></i><b id="runState">starting</b></span>
       <span id="toolState">toolsmith idle</span>
       <span id="compState">compositor idle</span>
+      <span id="selfState"></span>
       <span id="layerState"></span>
     </div>
   </section>
@@ -401,6 +402,7 @@ function setComposition(newLayers) {
 function activity(ev) {
   if (ev.who === "toolsmith") $("toolState").textContent = `toolsmith ${ev.state}`;
   if (ev.who === "compositor") $("compState").textContent = `compositor ${ev.state}`;
+  if (ev.who === "self-eval") $("selfState").textContent = `${ev.state}`;
   if (ev.who === "toolsmith" && String(ev.state).startsWith("rejected")) rejectNote(ev.state + " (sandbox refused it)");
 }
 function setConvType(ct) {
