@@ -197,12 +197,12 @@ Deno.test("starter toolbox seeds the registry at boot and every tool passes the 
   assertEquals(rt.events.filter((e) => (e.ev as any).type === "tool").length, STARTER_TOOLS.length);
 });
 
-Deno.test("registry eviction: LRU extras drop at the cap; starters and on-screen tools survive", () => {
+Deno.test("registry eviction: LRU extras drop at the cap; starters and on-screen tools survive", async () => {
   const rt = new GoodpointRuntime({ ...env, MAX_TOOLS: "8" });
   const mk = (name: string) => ({ name, desc: "x", params: [], draw: "(ctx,p,t,w,h)=>{}" });
   for (let i = 0; i < 6; i++) rt.registry.set("gen" + i, mk("gen" + i));
   rt.composition = { layers: [{ tool: "gen0", params: {} }] };
-  rt.evictTools();
+  await rt.evictTools();
   assertEquals(rt.registry.size, 8);
   assert(rt.registry.has("gen0"), "on-screen tool survives");
   for (const t of STARTER_TOOLS) assert(rt.registry.has(t.name), "starter survives: " + t.name);
