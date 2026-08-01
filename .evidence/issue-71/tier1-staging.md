@@ -36,3 +36,34 @@ $ -XPOST https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.
 $ https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network/screenshare-debug/sink/frames
 {"accepted":2,"rejected":0,"still":1,"scene":1,"modelCalls":0,"keyframe":{"bytes":2004,"width":1280,"height":800,"ts":1784373265899},"configured":{"ocr":false,"vlm":false},"last":[{"seq":3,"bytes":2004,"luma":0,"scene":false,"ts":1784373266712},{"seq":1,"bytes":2004,"luma":120,"scene":true,"ts":1784373265085}]}
 
+
+---
+
+## Re-verification 2026-08-01 (rework pass on PR #100)
+
+The original transcript above was against a `change-detect-1` deploy that is **no longer present**
+on staging (the project had been removed). Re-deployed the PR branch and re-ran the backend flow
+against the live instance; pin + transcript:
+
+```
+GET /screenshare-debug/health  -> {"ok":true,"build":"change-detect-1","authority":"did:key:z6Mkv…"}
+GET /screenshare-debug/config  -> {"build":"change-detect-1","ocr":{"configured":false},"vlm":{"configured":false}}
+POST /consent/grant            -> grant issued (EdDSA UCAN, maxRate 4, expiresInSec 300)
+POST /sink/heartbeat           -> {"ok":true,"still":true,"wantKeyframe":null}
+POST /sink/want-keyframe {width:1280} -> {"ok":true,"wantKeyframe":1280}
+GET  /sink/frames             -> {"accepted":1346,"rejected":0,"still":1865,"scene":58,"modelCalls":0,
+                                  "keyframe":{"bytes":11907,"width":1280,"height":800,…},
+                                  "configured":{"ocr":false,"vlm":false},"last":[…per-frame seq/bytes/luma…]}
+```
+
+`modelCalls:0` confirms no OCR/VLM call fires when unconfigured (by design). OCR/VLM report
+`"not configured"`, never silent.
+
+### Defect found & fixed while un-sticking this PR
+`screenshare-debug/deploy.sh` shipped a tarball of `server.ts project.json public` but **omitted
+`ucan.ts`**, which `server.ts` imports (`import {…} from "./ucan.ts"`). The shared deno runtime
+router does `import("…/files/server.ts")` at boot; the missing `./ucan.ts` made that import throw, so
+the router skipped `screenshare-debug` and the public route 404'd (body = the router's other-project
+list). Fix: `tar … server.ts ucan.ts project.json public`. Verified: with `ucan.ts` included the app
+serves HTTP 200, `/health` reports `build change-detect-1`. (Diagnosis confirmed by the router picking
+up another project deployed the same day but not this one.)
