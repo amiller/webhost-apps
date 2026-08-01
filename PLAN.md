@@ -16,7 +16,13 @@ a connect+read relying party. calendar-share is the pure target.)
       live; today the read returns "not yet captured" (not 409), so the step-up branch is
       documented + code-present, not live-exercised.
 - [x] errors render honestly (helper's terminal Errors + the read's real error shown verbatim).
-- [ ] Tier-2 walked flow on staging.
+      **Reinforced this pass:** `_walletSignIn`'s challenge `.json()` no longer leaks a raw parse
+      error on a non-JSON node response (e.g. the current staging 500) — it throws a clean
+      `login <status>` like every other step. Walked in-page (`.evidence/…/03-*.png`).
+- [~] Tier-2 walked flow on staging — **partial, honestly stuck**: walked page-serves (01),
+      connect-takes-extension-branch (02), and wallet-path→clean-honest-error/no-dead-end (03).
+      `connect` **success** remains unwalkable: staging `/oauth3` is 500 (infra) **and**
+      `calendar-share` is not listed on the prod node (operator). Both re-verified live.
 
 ## Build
 - [x] share-kit v0.4.0: `oauth3Connect` + `_connectViaWallet` forward `caps` (mint path).
@@ -29,12 +35,19 @@ a connect+read relying party. calendar-share is the pure target.)
 - [x] remove ~60 lines of hand-rolled wallet self-provision (walletKey/walletSignIn/
       connectViaWallet + the b58/did:key crypto).
 - [x] `revokeShare` reuses ShareKit's persisted `oauth3_session`.
-- [x] `node --check` on the combined script — OK.
+- [x] `node --check` on the combined script — OK (re-run after the hardening below: OK).
+- [x] **harden wallet error render** (rework pass 2): `_walletSignIn` `/api/login/challenge` was
+      the only uncaught `.json()` in the connect path — a non-JSON 500 leaked `Unexpected token…`.
+      Now parses with `.catch(()=>({}))` + `if(!lr.ok) throw "login "+status`, matching the
+      adjacent `/api/login` POST. Source `share-kit.js` edited, `inline.sh calendar-share` re-run.
 
 ## Verify (Tier 2)
-- [ ] deploy calendar-share (ready-67) to webhost-staging.
-- [ ] envoy bridge: open `/calendar-share/`, screenshot landing (owner mode + Connect).
-- [ ] drive Connect (wallet path — drivable HTTP, no extension popup), screenshot the honest
-      read result + the still-reachable mint envelope.
-- [ ] assert acceptance content via `evaluate` (connect transitions; error renders honestly).
-- [ ] commit `.evidence/issue-67/calendar-share/` + `flow.md`; embed in PR.
+- [x] deploy calendar-share (ready-67) to webhost-staging (tree `d0ed7cd4`, 22:52 UTC).
+- [x] envoy rig (HTTP `:4000`, real Brave/neko — no CDP): open `/calendar-share/`, screenshot
+      landing (01) + connect-takes-extension-branch (02).
+- [x] drive Connect on the **wallet** branch (extension-less), screenshot the **clean** honest
+      error render + Connect re-enabled (03) — proves the hardening + "errors render honestly".
+- [x] assert acceptance content via `evaluate` (location.href asserted; DOM state at each capture).
+- [x] commit `.evidence/issue-67/calendar-share/` + `flow.md`; embed in PR.
+- [ ] **connect success** — BLOCKED on staging `/oauth3` 500 (infra) + calendar-share listing
+      (operator). Not walkable today; left `needs-e2e`.

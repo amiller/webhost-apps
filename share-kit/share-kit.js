@@ -390,7 +390,10 @@
       } catch (_) {}
     }
     var kr = await _walletKey();
-    var ch = (await (await fetch(node + "/api/login/challenge")).json()).challenge;
+    var lr = await fetch(node + "/api/login/challenge");
+    var lb = await lr.json().catch(function () { return {}; });
+    if (!lr.ok) throw new Error(lb.error || ("login " + lr.status));
+    var ch = lb.challenge;
     var sig = _b64(new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, kr.priv, new TextEncoder().encode(ch))));
     var r = await fetch(node + "/api/login", {
       method: "POST", headers: { "Content-Type": "application/json" },
