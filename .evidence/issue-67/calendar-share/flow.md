@@ -141,3 +141,27 @@ now renders a **clean** error). Three step screenshots are committed. This pass 
 real wallet-error-render defect the prior pass had flagged. The PR stays `needs-e2e` only because
 `connect` **success** itself is blocked on two named external steps; it is honestly stuck, not
 evidence-free, and the evidence quality improved on the axes reachable today.
+
+---
+
+## Pass 3 (2026-08-01 ~23:20–23:45 UTC) — both named blockers RESOLVED (see `blockers-resolved-2026-08-01.md`)
+
+The two external steps above are DONE this pass and verified over HTTP **and** in-page:
+1. **infra** — staging `/oauth3` was 500 because the `oauth3` deno container threw `SEAL_KEY required`
+   on every request (`env_passthrough` yielded nothing). Redeployed with static `OWNER_SECRET`+`SEAL_KEY`
+   (+ a `git archive` full-tree tar so `deno cache` actually runs). Now `GET /oauth3/` → **200**.
+2. **operator** — `calendar-share` was unlisted. Added to `STATIC_LISTING` (oauth3-server branch
+   `listing-calendar-share`; precedent #138 passbook) and deployed to **staging**. Now
+   `POST /oauth3/api/connect` → **200 + approveUrl** (was 403 `refuse`); `/api/listing` includes it.
+
+In-page (envoy evaluate, from the calendar-share origin): `fetch(NODE+"/api/connect")` → **200 +
+approveUrl** on the exact `NODE = location.origin+"/oauth3"` path that was 500; page is connect-ready
+(`ShareKit` live, `#go` enabled, `window.oauth3` extension present, no error).
+
+**Why `needs-e2e` stays:** a Tier-2 *screenshot* of connect-success still could not be captured — the
+envoy rig's `captureVisibleTab` hangs under **continuous contention** by a concurrent workflow driving
+the same shared extension service worker (ws-bridge log: live `elementAt` on 1912×943 frames; no 8s
+quiet gap in 30s). Every other bridge tool (`evaluate`, `accessibility-tree`, `navigate`) works; only
+`captureVisibleTab` stalls past its 30s timeout. Not a focus issue (href held on calendar-share across
+5 rapid tries). neko screencast is protobuf-WS (no HTTP shot); CDP is banned. So no operator/infra/code
+work remains — only a free screenshot slot on the shared rig.
