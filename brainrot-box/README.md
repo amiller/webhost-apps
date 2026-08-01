@@ -29,7 +29,10 @@ is the version that ran the Demo Day booth all day (registry held at its 24-tool
 - `/goodpoints` ledger · `/graph` conversation graph · `/tools` palette snapshot
 - `/tools/library` durable archived tools (content-addressed by draw-body hash) · `/archive/flush` gzip+ship local traces to the external store · `/archive/traces` (+`/<id>`) durable trace listing + gunzipped NDJSON
 - `/traces` list session traces · `/traces/<id>` stream a session's events back as NDJSON
-- `/diag` lane + registry + otter status + trace write state + **archive** block · `/reset` fresh session (reseeds starters, archives+rotates the trace)
+- POST `/snapshot` image/jpeg → stores a canvas capture under `snapshots/<session>/` (rejects
+  non-image / >2MB with 400; per-session 200-file cap evicts oldest with a status event) ·
+  `/snapshots` gallery `[{session,file,t,bytes}]` · `/snapshots/<session>/<file>` the jpeg
+- `/diag` lane + registry + otter status + trace write state + **archive** block + snapshot state · `/reset` fresh session (reseeds starters, archives+rotates the trace)
 
 ## Honest edges
 
@@ -48,7 +51,12 @@ is the version that ran the Demo Day booth all day (registry held at its 24-tool
   session returns in the next. `flushArchive()` (supervisor cadence + `/reset` + `POST
   /archive/flush`) gzips local traces to the store then prunes the rotating buffer to `TRACE_KEEP`
   (the open session is never pruned); failures surface as one `status` event + `/diag`
-  `archive.last_err` (no fallback). Snapshots flush through the same blob sink once #125 lands.
+  `archive.last_err` (no fallback). Routing canvas snapshots through this same sink is future work.
+- **Canvas snapshots persist to disk** (#125): the `/app` client POSTs `canvas.toBlob('image/jpeg')`
+  on every goodpoint and on a 60s interval while the weave runs, stored to `snapshots/<session>/`
+  under the cwd and listed by `/snapshots` (per-session 200-file cap evicts the oldest with a status
+  event). Snapshots survive a process restart within the same deployed tree like traces do; a
+  **redeploy** wipes them too (the tarball does not carry runtime `snapshots/`).
 - Froze a couple of times during the 7/24 all-day run — `streamComplete` has no per-call
   timeout, so a hung stream can wedge a lane.
 - STT is TLS to the enclave (not app-layer e2ee); enclave keys are TOFU.

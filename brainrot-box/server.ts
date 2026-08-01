@@ -290,6 +290,120 @@ export const STARTER_TOOLS: ToolDef[] = [
 ];
 const STARTER_NAMES = new Set(STARTER_TOOLS.map((t) => t.name));
 
+// #125: canvas snapshot gallery. The box paints client-side and nothing was ever captured; the
+// client POSTs jpegs here (on goodpoints + a 60s interval while the weave runs) and they are
+// stored under snapshots/<session>/ NEXT TO the traces dir (#124), reusing #124's writable-cwd
+// discovery — the dev-mode app cwd is writable (confirmed on staging), so we write straight to
+// cwd; an unwritable cwd records writeOk=false and surfaces fs errors as a `status` event, never
+// faked in memory. The session id mirrors #124's trace id format so a gallery can correlate the
+// two later.
+export const SNAP_MAX_BYTES = 2 * 1024 * 1024; // POST /snapshot rejects bodies larger than 2MB (issue #125)
+export const SNAP_CAP_FILES = 200; // per-session cap; oldest evicted first, announced by a status event
+
+export interface SnapshotRef {
+  session: string;
+  file: string;
+  t: number;
+  bytes: number;
+}
+
+/** Filesystem-safe session id, format `2026-07-24T13-00-34-207Z-8c4b8d8a` (ISO with `:`/`.` -> `-`,
+ *  + 8 random hex). Same shape as #124's trace session id. */
+export function newSessionId(d = new Date()): string {
+  const iso = d.toISOString().replace(/[:.]/g, "-");
+  const sfx = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${iso}-${sfx}`;
+}
+
+export class SnapshotStore {
+  readonly dir: string;
+  writeOk = true;
+  lastErr = "";
+  written = 0; // successful stores this process (for /diag)
+  private seq = 0;
+
+  constructor(dir: string) {
+    this.dir = dir;
+  }
+
+  // single path segment only — blocks traversal (`..`, separators, empties)
+  private safeSeg(name: string): boolean {
+    return !!name && /^[A-Za-z0-9._-]+$/.test(name) && name !== "." && name !== "..";
+  }
+
+  /** Store one jpeg under <dir>/<session>/. Returns {ref, evicted, err}; ref is null on failure. */
+  async store(session: string, bytes: Uint8Array): Promise<{ ref: SnapshotRef | null; evicted: string[]; err: string }> {
+    if (!this.safeSeg(session)) return { ref: null, evicted: [], err: "bad session id" };
+    const sdir = `${this.dir}/${session}`;
+    try {
+      await Deno.mkdir(sdir, { recursive: true });
+      const iso = new Date().toISOString().replace(/[:.]/g, "-");
+      const file = `${iso}-${String(++this.seq).padStart(4, "0")}.jpg`;
+      await Deno.writeFile(`${sdir}/${file}`, bytes);
+      const evicted = await this.enforceCap(sdir);
+      this.written++;
+      this.writeOk = true;
+      this.lastErr = "";
+      return { ref: { session, file, t: Date.now(), bytes: bytes.length }, evicted, err: "" };
+    } catch (e) {
+      this.writeOk = false;
+      this.lastErr = e instanceof Error ? e.message : String(e);
+      return { ref: null, evicted: [], err: this.lastErr };
+    }
+  }
+
+  // keep the session dir at SNAP_CAP_FILES; evict oldest by mtime. Returns the removed filenames.
+  private async enforceCap(sdir: string): Promise<string[]> {
+    const ents: { name: string; t: number }[] = [];
+    for await (const e of Deno.readDir(sdir)) {
+      if (!e.isFile || !e.name.endsWith(".jpg")) continue;
+      try {
+        const st = await Deno.stat(`${sdir}/${e.name}`);
+        ents.push({ name: e.name, t: st.mtime?.getTime() ?? 0 });
+      } catch { /* raced — skip */ }
+    }
+    if (ents.length <= SNAP_CAP_FILES) return [];
+    ents.sort((a, b) => a.t - b.t);
+    const removed: string[] = [];
+    while (ents.length > SNAP_CAP_FILES) {
+      const old = ents.shift()!;
+      try { await Deno.remove(`${sdir}/${old.name}`); removed.push(old.name); } catch { /* raced */ }
+    }
+    return removed;
+  }
+
+  /** List every snapshot across sessions, oldest first. Returns [] when nothing is stored yet. */
+  async list(): Promise<SnapshotRef[]> {
+    const out: SnapshotRef[] = [];
+    try {
+      for await (const session of Deno.readDir(this.dir)) {
+        if (!session.isDirectory || !this.safeSeg(session.name)) continue;
+        const sdir = `${this.dir}/${session.name}`;
+        for await (const e of Deno.readDir(sdir)) {
+          if (!e.isFile || !e.name.endsWith(".jpg") || !this.safeSeg(e.name)) continue;
+          try {
+            const st = await Deno.stat(`${sdir}/${e.name}`);
+            out.push({ session: session.name, file: e.name, t: st.mtime?.getTime() ?? 0, bytes: st.size });
+          } catch { /* raced */ }
+        }
+      }
+    } catch (e) {
+      if (!(e instanceof Deno.errors.NotFound)) this.lastErr = e instanceof Error ? e.message : String(e);
+    }
+    return out.sort((a, b) => a.t - b.t);
+  }
+
+  /** Read one jpeg's bytes; null if missing or the name is unsafe. */
+  async read(session: string, file: string): Promise<Uint8Array | null> {
+    if (!this.safeSeg(session) || !this.safeSeg(file) || !file.endsWith(".jpg")) return null;
+    try {
+      return await Deno.readFile(`${this.dir}/${session}/${file}`);
+    } catch {
+      return null;
+    }
+  }
+}
+
 const JSON_H = { "content-type": "application/json", "cache-control": "no-store" };
 const json = (o: unknown, status = 200) => new Response(JSON.stringify(o), { status, headers: JSON_H });
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -830,6 +944,11 @@ export class GoodpointRuntime {
   private streams?: StreamProvider;
   // #92: optional compositor-class critic provider (tests / harness), mirrors the other overrides.
   private criticOverride?: (sigs: string[]) => Promise<string>;
+  // #125: snapshot session + store. sessionId is the single source of truth for "the current
+  // session" (boot + /reset); the snapshot dir groups jpegs under it. When #124's traces land they
+  // should adopt this same runtime sessionId so snapshots <-> traces correlate.
+  sessionId: string;
+  snapshots: SnapshotStore;
 
   constructor(
     env: Env,
@@ -852,6 +971,8 @@ export class GoodpointRuntime {
     // #130: durable archive — opt-in via ARCHIVE_DIR (external volume); pass null to disable.
     this.archive = archive === undefined ? buildArchive(env) : archive;
     this.traces?.rotate(); // open the boot-session file (rotates again on /reset)
+    this.sessionId = newSessionId();
+    this.snapshots = new SnapshotStore(env.SNAPSHOT_DIR || "snapshots");
     this.seedTools();
     // #130: reseed the registry from the durable tool library when gated on, so a good tool from
     // one session is available in the next (survives a redeploy). Fire-and-forget at boot.
@@ -1669,6 +1790,34 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
   if (req.method === "GET" && path === "/state") {
     return json({ recap: app.recap, shifts: app.shifts, estimate: app.estimate, last_topic: app.lastTopic });
   }
+  if (req.method === "POST" && path === "/snapshot") {
+    // #125: client-captured canvas jpeg. Validate content-type + magic bytes + size before storing;
+    // a store/fs failure becomes a `status` event for every viewer (no silent swallow, no mock).
+    const ct = (req.headers.get("content-type") || "").toLowerCase();
+    const clen = Number(req.headers.get("content-length") || 0);
+    if (!ct.startsWith("image/jpeg")) return json({ error: "expected image/jpeg" }, 400);
+    if (clen && clen > SNAP_MAX_BYTES) return json({ error: "body exceeds 2MB" }, 400);
+    const bytes = new Uint8Array(await req.arrayBuffer());
+    if (bytes.length < 2 || !(bytes[0] === 0xff && bytes[1] === 0xd8)) return json({ error: "not a jpeg" }, 400);
+    if (bytes.length > SNAP_MAX_BYTES) return json({ error: "body exceeds 2MB" }, 400);
+    const { ref, evicted, err } = await app.snapshots.store(app.sessionId, bytes);
+    if (!ref) {
+      app.push({ type: "status", text: `snapshot store failed: ${err}` });
+      return json({ error: err }, 500);
+    }
+    if (evicted.length) app.push({ type: "status", text: `snapshots: capped ${app.sessionId}, evicted ${evicted.length} oldest (${evicted[0]})` });
+    return json(ref, 201);
+  }
+  if (req.method === "GET" && path === "/snapshots") {
+    return json(await app.snapshots.list());
+  }
+  const snap = path.match(/^\/snapshots\/([^/]+)\/([^/]+)$/);
+  if (req.method === "GET" && snap) {
+    const src = await app.snapshots.read(snap[1], decodeURIComponent(snap[2]));
+    if (!src) return new Response("not found", { status: 404 });
+    const buf = new Uint8Array(src); // ArrayBuffer-backed copy (BlobPart needs ArrayBuffer, not SharedArrayBuffer)
+    return new Response(new Blob([buf], { type: "image/jpeg" }), { headers: { "cache-control": "public, max-age=300" } });
+  }
   // full palette snapshot: a fresh viewer must not depend on tool events still being in the
   // (500-capped) events buffer.
   if (req.method === "GET" && path === "/tools") return json({ tools: [...app.registry.values()] });
@@ -1788,6 +1937,13 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
             last_err: app.archiveLastErr,
           }
         : { backend: "none", flushed: 0, pending: 0, last_ok: 0, last_err: "" },
+      snapshot: {
+        dir: app.snapshots.dir,
+        session_id: app.sessionId,
+        write_ok: app.snapshots.writeOk,
+        written: app.snapshots.written,
+        last_err: app.snapshots.lastErr,
+      },
     });
   }
   if (req.method === "POST" && path === "/reset") {
@@ -1821,6 +1977,7 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
     app.toolUseCount.clear();
     await app.flushArchive(); // #130: archive the closing session before rotating to a fresh one
     app.traces?.rotate(); // #124: start a fresh session trace file
+    app.sessionId = newSessionId(); // #125: rotate the snapshot session alongside the reset
     app.seedTools();
     return json({ ok: true });
   }

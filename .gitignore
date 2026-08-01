@@ -2,5 +2,6 @@ node_modules/
 .env
 .env.*
 *.tgz
-# #124: brainrot-box runtime session traces (created at runtime; committed evidence lives in .evidence/)
+# brainrot-box: runtime-generated session snapshots + traces (#125 / #124) — never commit.
+brainrot-box/snapshots/
 brainrot-box/traces/
