@@ -133,3 +133,49 @@ This helper enhancement also removes the no-extension dead-end for **every** ado
 #9 regression, otterpilot, calendar-share) — but those apps are NOT touched here (one PR per app per
 #67; timeline-peek has open PR #63 on it). Re-running `share-kit/inline.sh <app>` on each picks up
 v0.3.0 + the wallet path without hand-merging.
+
+
+---
+
+# #67 · calendar-share → ShareKit.oauth3Connect — acceptance assertion (PR #132)
+
+> This section is the **calendar-share** app of issue #67 (a multi-app umbrella; the reddit-karma
+> record above is from merged PR #74 and is left untouched). It is appended so the canonical
+> `.evidence/issue-67/flow.md` rolls up every app's acceptance in one place, per the CONSTITUTION
+> Tier-2 layout (`.evidence/issue-<N>/flow.md`). The full pass-by-pass record + the four step
+> screenshots live in `.evidence/issue-67/calendar-share/`.
+
+**Acceptance (#67, for calendar-share):** *adopts `oauth3Connect()` and no longer hand-rolls the
+handshake; connect works; step-up recovers (no dead-end); errors render honestly.* — **asserted:**
+
+- ✅ **Adopts the helper, no hand-roll** — `calendar-share/public/index.html` routes connect + mint
+  through `ShareKit.oauth3Connect`; the hand-rolled `window.oauth3.connect` and the did:key wallet
+  self-provision were deleted (~60 lines). `caps` is forwarded, so minting a `write:event:<id>` token
+  uses the same shared handshake.
+- ✅ **Connect works (real token)** — `calendar-share/02-connect-success.png`: drove the **wallet
+  self-provision branch** of `oauth3Connect` on deployed staging to a **real scoped token** minted by
+  the staging node (`_walletSignIn` → challenge → Ed25519 sign → `/api/login` → session →
+  `/api/connect` → `/approve` → poll → token). DOM at capture: `connectWrapHidden:true` (set only
+  after `oauth3Connect` resolves with a token) + `hasSession:true`; page reads "Connected…".
+- ✅ **Errors render honestly** — `calendar-share/03-wallet-path-clean-error.png`: the wallet-path
+  `/api/login/challenge` `.json()` now `.catch(()=>({}))` → clean `login <status>` (was a raw
+  `Unexpected token…` parse leak); the not-yet-live read path (#69) renders an honest actionable note
+  and Connect re-enables. `01-connect-ready.png`: page serves, `#go` enabled, `ShareKit` live, no error.
+- ◐ **Step-up / no dead-end** — code-present as an actionable retry (`oauth3Read` 409 marker, not a
+  raw `challenge_pending`); the live 409 step-up is not exercisable today (the read returns
+  "no jar synced" before reaching a 409, needs #69). **No dead-end is proven** — read failure renders
+  an honest, actionable note and the mint envelope stays reachable.
+- ◐ **Extension branch** — branch *selection* is proven
+  (`calendar-share/04-extension-branch-selection.png`); connect-*success* via the extension popup is
+  browser chrome (CONSTITUTION carve-out) — marked *"could not verify in-page: popup is browser
+  chrome"*. The **wallet self-provision branch** above is the walked connect-success (a real user
+  condition and the #9 fix code path).
+
+**Detailed record:** `.evidence/issue-67/calendar-share/flow.md` (passes 1–4) +
+`calendar-share/blockers-resolved-2026-08-01.md`. All four PNGs `test -s` non-blank (38–63 KB, 256
+distinct byte values). Driven via the envoy/neko HTTP rig (`:4000`, real Brave in neko, **no CDP** per
+the standing LESSONS rule); `location.href` asserted before each capture.
+
+**Staging listing / node** (the two external blockers passes 1–2 named, resolved in pass 3):
+`POST /oauth3/api/connect {google-calendar, calendar-share}` → `200 {requestId, approveUrl}` (was
+403 "not listed"); `/oauth3/api/listing` includes `calendar-share`; staging `/oauth3/*` → 200 (was 500).
