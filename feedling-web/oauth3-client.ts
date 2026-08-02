@@ -79,7 +79,7 @@ export async function stepConnect(): Promise<void> {
       const r = await fetch(`${node}/api/connect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plugin: "youtube", app: "feedling" }),
+        body: JSON.stringify({ plugin: "youtube", app: "feedling-web" }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { conn = { connected: false, approveUrl: "", error: j.error || `connect ${r.status}` }; return; }
