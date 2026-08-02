@@ -53,7 +53,9 @@ persisted revocation set for immediate revoke. The HMAC key is generated into th
 ## Capture controls
 
 interval (s) · width (px) · JPEG quality — all live. Desktop-only: `getDisplayMedia` isn't
-implemented on mobile browsers; a screen-picker prompt appears on Start.
+implemented on mobile browsers; a screen-picker prompt appears on Start. A **synthetic demo**
+source (no capture permission needed) drives the same pipeline headlessly and is what the
+classifier is verified against.
 
 ## Acceptance (issue #51)
 
@@ -61,6 +63,38 @@ Open the app → Start → pick a window: within a few seconds the console shows
 streaming (live preview, the echo strip filling, the per-frame table with bytes/luma/
 latency and `delivered = yes`), the destination's attestation shown. Hit Revoke: the stream
 visibly stops and the next frame POST 401s in the console.
+
+## Change detection (#71)
+
+On top of the frame pipe, cheap pixel math answers "did something change, and where?" per
+frame so a visual model is rarely needed but can be invoked on demand.
+
+- **Per-frame change accounting:** the previous downsampled grayscale frame is kept; each
+  frame emits `changedPct` (pixels beyond a per-pixel threshold) shown in the console table.
+- **Changed-region tiles:** the frame is split into a ~20×12 tile grid; adjacent hot tiles
+  are flood-filled into bounding boxes drawn as an overlay on the live preview.
+- **Classification:** `still` (no hot tiles — **the POST is skipped**, only a heartbeat is
+  sent so sink accounting stays honest) / `local` (few hot tiles, box area < 30%) / `scene`
+  (most tiles hot — alt-tab / page nav; the frame is sent flagged `x-scene`).
+- **Hi-res keyframe on demand:** `POST /sink/keyframe` re-draws the source at a requested
+  width once (the OCR hook — more pixels than the 320px stream). Triggers: a manual button,
+  or a server-side pending request (`POST /sink/want-keyframe`) that the next frame/heartbeat
+  response carries back as `{wantKeyframe: <width>}` — the dynamically-passed-along resolution.
+- **Optional hooks (OFF by default; degrade to an explicit `"not configured"`, never
+  silent):** `OCR_CMD` (server-side, run on each keyframe — e.g. the tesseract CLI) and
+  `VLM_URL` (POST image → caption, invoked only on demand so its call counter stays near
+  zero when tile-diff is doing its job).
+
+### Acceptance (#71)
+
+- Synthetic source: the table shows `changedPct`; moving-rect frames classify `local` with a
+  bounding-box overlay tracking the rect; color-swap frames classify `scene`; static periods
+  classify `still` and provably skip POSTs (accepted-count stops rising).
+- The keyframe button POSTs one frame at the requested width (bytes/dimensions echoed).
+- With no `OCR_CMD`/`VLM_URL` set, the OCR/VLM report reads `"not configured"`.
+
+The classifier (`diffFrame`/`boxes`/`classify`) is unit-verified against those three synth
+modes — run `node classify.test.cjs` (extracts the shipped functions from `index.html`).
 
 ## Deploy
 

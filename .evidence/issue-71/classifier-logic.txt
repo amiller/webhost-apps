@@ -1,0 +1,12 @@
+PASS: static period → class=still (no hot tiles, no POST)
+PASS: still → zero bounding boxes
+PASS: moving rect → class=local (hot tiles, area < 30%)
+PASS: local → ≥1 bounding box overlay
+PASS: local → box area covers movement but < 30% of frame (12.0%)
+PASS: local → changedPct > 0 (10.08%)
+PASS: color swap → class=scene (most tiles hot)
+PASS: scene → >50% tiles hot (100%)
+PASS: scene → changedPct > 90% (100.0%)
+PASS: identical frames → still (POST skipped)
+
+ALL CLASSIFIER ASSERTIONS PASSED
