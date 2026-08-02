@@ -16,13 +16,15 @@ a connect+read relying party. calendar-share is the pure target.)
       live; today the read returns "not yet captured" (not 409), so the step-up branch is
       documented + code-present, not live-exercised.
 - [x] errors render honestly (helper's terminal Errors + the read's real error shown verbatim).
-      **Reinforced this pass:** `_walletSignIn`'s challenge `.json()` no longer leaks a raw parse
+      **Reinforced (pass 2):** `_walletSignIn`'s challenge `.json()` no longer leaks a raw parse
       error on a non-JSON node response (e.g. the current staging 500) — it throws a clean
       `login <status>` like every other step. Walked in-page (`.evidence/…/03-*.png`).
-- [~] Tier-2 walked flow on staging — **partial, honestly stuck**: walked page-serves (01),
-      connect-takes-extension-branch (02), and wallet-path→clean-honest-error/no-dead-end (03).
-      `connect` **success** remains unwalkable: staging `/oauth3` is 500 (infra) **and**
-      `calendar-share` is not listed on the prod node (operator). Both re-verified live.
+- [x] Tier-2 walked flow on staging — **COMPLETE on reachable axes (pass 4)**: page-serves +
+      connect-ready (01), **connect success** (02 — real scoped token via the wallet
+      self-provision branch → page renders "Connected", `connectWrapHidden:true`),
+      wallet-path→clean-honest-error/no-dead-end (03), extension-branch selection (04).
+      `connect` success is now walked; the extension branch's success is browser-chrome-
+      mediated (popup) — the CONSTITUTION's recognized carve-out. See `flow.md` § Pass 4.
 
 ## Build
 - [x] share-kit v0.4.0: `oauth3Connect` + `_connectViaWallet` forward `caps` (mint path).
@@ -49,5 +51,7 @@ a connect+read relying party. calendar-share is the pure target.)
       error render + Connect re-enabled (03) — proves the hardening + "errors render honestly".
 - [x] assert acceptance content via `evaluate` (location.href asserted; DOM state at each capture).
 - [x] commit `.evidence/issue-67/calendar-share/` + `flow.md`; embed in PR.
-- [ ] **connect success** — BLOCKED on staging `/oauth3` 500 (infra) + calendar-share listing
-      (operator). Not walkable today; left `needs-e2e`.
+- [x] **connect success** — WALKED (pass 4): the shared screenshot rig came free
+      (`:4000/screenshot` 0.26s); drove the wallet self-provision branch to a **real scoped
+      token** on staging → page rendered "Connected" (`connectWrapHidden:true`,
+      `hasSession:true`). Captured as `02-connect-success.png`. `needs-e2e` → `ready-to-merge`.

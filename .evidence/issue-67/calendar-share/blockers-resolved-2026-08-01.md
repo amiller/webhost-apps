@@ -96,3 +96,22 @@ rig is free (or a dedicated session), capturing the connect-success step is stra
 not yet met. But the *reason* changed: it is no longer "operator must list calendar-share / infra must
 restore the proxy" (both done + proven) — it is now solely "capture a screenshot once the shared rig is
 free." No code/app/operator action remains from this side.
+
+---
+
+## Pass 4 addendum (2026-08-01 ~19:50 UTC) — screenshot rig FREE; connect-success CAPTURED
+
+The pass-3 residual (a contended shared screenshot rig) cleared this pass. `POST
+:4000/screenshot` returns in **0.26s**; bridge `:3000` healthy (`wsClients:1`,
+`pendingCommands:0`). Re-verified both prior fixes still hold (staging `/oauth3/` → 200;
+`/api/connect {google-calendar, calendar-share}` → 200 `{requestId, approveUrl}`;
+`/api/listing` includes calendar-share) — passes 2–3's word was not taken.
+
+Drove the wallet self-provision branch of `ShareKit.oauth3Connect` to a **real scoped
+token** on staging (login → connect → self-approve → poll → token), in-page, no popup.
+The page rendered **"Connected"** with `connectWrapHidden:true` + `hasSession:true` —
+captured as `02-connect-success.png`. See `flow.md` § Pass 4 for the full DOM-asserted
+record. **`needs-e2e` removed → `ready-to-merge`**: the binding Tier-2 connect-success
+evidence now exists. The extension branch's success remains browser-chrome-mediated
+(popup) — the CONSTITUTION's recognized carve-out; branch selection is proven, the wallet
+branch is the walked connect-success.

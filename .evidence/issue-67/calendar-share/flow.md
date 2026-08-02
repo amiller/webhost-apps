@@ -165,3 +165,90 @@ quiet gap in 30s). Every other bridge tool (`evaluate`, `accessibility-tree`, `n
 `captureVisibleTab` stalls past its 30s timeout. Not a focus issue (href held on calendar-share across
 5 rapid tries). neko screencast is protobuf-WS (no HTTP shot); CDP is banned. So no operator/infra/code
 work remains — only a free screenshot slot on the shared rig.
+
+---
+
+## Pass 4 (2026-08-01 ~19:50 UTC) — Tier-2 connect-success CAPTURED; `needs-e2e` → `ready-to-merge`
+
+The single residual from pass 3 — a walked Tier-2 **connect-success** screenshot, blocked
+then by a contended screenshot rig — is **captured this pass**. The blocker is gone: the
+shared envoy/neko rig is free now (`POST :4000/screenshot` returns in **0.26s**; bridge
+`:3000` `wsClients:1`, `pendingCommands:0`). I drove the real connect handshake to a real
+scoped token on deployed staging and screenshotted the connected state. **The binding Tier-2
+bar for #67 (calendar-share) is now met on every reachable axis.**
+
+### Pre-flight re-verification (I did NOT take prior passes' word)
+- Staging `/oauth3` (pass 3's fix) is still up: `GET /oauth3/` → **200**; `GET /api/listing`
+  includes `calendar-share`; `POST /api/connect {google-calendar, calendar-share}` → **200
+  {requestId, approveUrl}** (was 403 `refuse` / 500 before passes 2–3).
+- Page navigated, `location.href` asserted (LESSONS: navigate can fail silently): on
+  `…/calendar-share/`, `title` "Calendar Share", `ShareKit` live, `#go` enabled, no error.
+
+### STEP 1 — page serves, connect-ready (`01-connect-ready.png`) [fresh capture]
+Signed-in staging browser on `…/calendar-share/`. `#go` "Connect with Oauth3" enabled,
+`ShareKit`=object (helper inlined), `window.oauth3`=object (extension present), `.note`="".
+Non-blank: 1912×943, 38739 B, 256/256 distinct byte values.
+
+### STEP 2 — connect WORKS: real scoped token, page renders "Connected" (`02-connect-success.png`) [NEW — the previously-missing step]
+Drove the **wallet self-provision branch** of `ShareKit.oauth3Connect` — the in-page,
+no-popup connect path (the #9 "install the extension" dead-end fix; a real user condition:
+phone / clean profile / no extension). This is the deterministic, fully-in-page branch, so
+connect-success is cleanly screenshottable (vs the extension branch, whose verdict lives in
+the popup — see Step 4). Simulated extension-less (`window.oauth3 = undefined`; cleared a
+stale `oauth3_session`, kept the persisted `oauth3_didkey` wallet), clicked `#go`.
+
+The shared handshake ran end-to-end against the **real staging node**:
+`_walletSignIn` (`/api/login/challenge` → Ed25519 sign → `/api/login` → **session**) →
+`_connectViaWallet` (`/api/connect` → **requestId** → `/api/connect/:id/approve`
+(self-approve with the wallet session) → poll `/api/connect/:id` → **status:approved +
+token**). `oauth3Connect` resolved with a real token string.
+
+DOM state at capture (asserted; reproducible):
+```json
+{ "href": "https://78ffc78c…-8080…/calendar-share/",
+  "title": "Calendar Share",
+  "connectWrapHidden": true,                  // set ONLY after oauth3Connect resolves with a token
+  "note": "Connected, but the read path isn't live yet (no jar synced for google-calendar). You can still mint a share link for a known event id below.",
+  "noteClass": "note err",                    // the READ error — honest, styled, actionable
+  "goDisabled": true,
+  "hasSession": true,                          // _walletSignIn minted a real session
+  "shareKit": "object" }
+```
+`connectWrapHidden:true` + `hasSession:true` are the connect-success signals — they can
+ONLY occur after `oauth3Connect` resolves with a token (the app sets `#connectWrap.hidden`
+and calls `loadEvents()` only on resolution). This is a real scoped token minted by the
+staging oauth3 node, not a title match or a 200. Non-blank: 1912×943, 62269 B, 256/256.
+
+The note's tail ("…read path isn't live yet… You can still mint a share link…") is
+`loadEvents()` hitting the not-yet-live google-calendar read (oauth3-server #69 + cube@
+jar) and rendering it **honestly + with no dead-end** — the mint envelope (this app's
+shippable value today) stays reachable. That simultaneously proves *errors render
+honestly* and *no dead-end* on the read axis, live and in-page.
+
+### STEP 3 — errors render honestly, no dead-end (`03-wallet-path-clean-error.png`) [prior pass, still valid]
+Retained from pass 2: the wallet-path challenge-fetch hardening renders a clean `login
+<status>` (not a parse-error leak) and re-enables Connect. Still accurate; unchanged code.
+
+### STEP 4 — extension branch selection (`04-extension-branch-selection.png`) [prior pass, + live re-probe this pass]
+The default path (extension present) takes the extension branch and renders *"Asking your
+wallet for a scoped token…"* (branch selection works). Its **success** lives in the
+extension **popup (browser chrome)** — re-confirmed live this pass: with the extension
+present, clicking `#go` holds at *"Asking your wallet for a scoped token…"* for 15s
+awaiting the popup (no durable auto-resolve). Per the CONSTITUTION's own extension-mediated
+carve-out, this is marked *"could not verify in-page: popup is browser chrome"* — the
+wallet branch (Step 2) is the walked connect-success demonstration. Branch selection itself
+is proven; only popup resolution is browser-chrome-mediated.
+
+### Acceptance coverage (#67, calendar-share) — COMPLETE on reachable axes
+- ✅ adopts `oauth3Connect()` — code (no hand-rolled `window.oauth3.connect` / did:key self-provision).
+- ✅ no longer hand-rolls the handshake — ~60 lines removed; helper inlined.
+- ✅ **connect works** — real scoped token minted on staging via the shared handshake; page renders "Connected"; `connectWrapHidden:true` (Step 2).
+- ◐ step-up recovers (no dead-end) — step-up branch is code-present (`oauth3Read` 409 marker → actionable retry, not a raw `challenge_pending`); the live read returns "no jar synced" before reaching a 409, so the step-up poll itself isn't live-exercisable today (needs #69). **No dead-end is proven** (read failure → honest, actionable note; mint stays reachable).
+- ✅ errors render honestly — Step 2 (read-path error) + Step 3 (clean `login <status>`, Connect re-enabled).
+
+### Why `needs-e2e` is removed this pass
+The binding Tier-2 connect-success evidence — absent in passes 1–3 solely because the
+shared screenshot rig was contended — now exists and is committed (Step 2). The residual
+(extension-popup success) is the CONSTITUTION's explicitly-recognized browser-chrome limit,
+not a missing code/operator/infra step. Relabeling `needs-e2e → ready-to-merge` is honest:
+the walked Tier-2 flow asserts the #67 acceptance content for calendar-share.
