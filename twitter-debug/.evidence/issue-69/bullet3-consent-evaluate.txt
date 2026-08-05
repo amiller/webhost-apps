@@ -1,0 +1,38 @@
+# Bullet 3 — consent line names the account (real envoy/neko browser DOM assertion)
+
+The dashboard was driven in the REAL envoy/neko Brave browser via the bridge (navigate + evaluate).
+(Note added 2026-08-05 rework pass: the "screenshot times out on every page" claim below was a
+MISDIAGNOSIS — it only failed on about:blank/data: pages. The consent-line PNG has since been
+captured; see bullet3-consent-png.txt + 04-consent-line.png. This file remains the record of the
+CONNECTED-path DOM assertion, which the PNG did not re-capture.)
+
+The bridge's screenshot CAPTURE tool was timing out on every page this run (environmental — see
+flow.md "PNG gap"), so this is the DOM-text assertion captured from the live browser instead of a PNG.
+
+Sequence (bridge @ http://localhost:3000/api/bridge, serialized with flock /tmp/envoy-bridge.lock):
+
+  navigate  http://172.17.0.1:8931/twitter-debug/   → success
+  (wait ~6s for pollConn to fetch /twitter/oauth3/status and run refreshActAs)
+
+  evaluate  location.href
+    → "http://172.17.0.1:8931/twitter-debug/"
+
+  evaluate  (sync XHR) GET twitter/oauth3/status
+    → 200 | {"connected":true,"jarLoaded":true,"count":3,"pending":null,
+             "server":"http://127.0.0.1:8092","account":"111"}
+
+  evaluate  JSON.stringify({acct: ACCT, actas: #act-as.textContent, lock: lockpill.textContent, connected: WRITES})
+    → {"acct":"111",
+       "actas":"twitter-debug will act as twitter account 111",
+       "lock":"🔓 writes on",
+       "connected":true}
+
+Conclusion: the consent line names the account the enclave will act as ("twitter account 111"),
+not just the plugin. The connect-flow status line ("approve in the OAuth3 popup — twitter-debug
+will act as twitter account 111 → waiting…") is produced by the same ACCT value in connectX().
+
+NOTE on test scaffold (not committed to this branch): the dashboard was served by a small local
+proxy that mounts the page at /twitter-debug/ (matching its <base href="/twitter-debug/">) and
+forwards /twitter-debug/twitter/* to the real twitter-debug agent (server.ts) running with
+ACCOUNT=111 against a real local oauth3-server. No page content was mocked — the status JSON is the
+real agent's response, and the rendered text is the real dashboard code.

@@ -140,6 +140,7 @@ table.diff th.bad{color:var(--bad)}table.diff th.acc{color:var(--acc)}
     <h2><span class=badge>②</span> Jar from your OAuth3 vault</h2>
     <div class=row><button class=go onclick="connectX()">Connect X via OAuth3</button><button onclick="cookies()">refresh / re-inject</button></div>
     <p class=muted>The x.com jar is sourced from your OAuth3 vault (<code>owner:twitter</code>), populated by your extension — not hand-fed. Approve once in the OAuth3 popup; the raw jar is released into this enclave (incl. <code>httpOnly</code> auth_token) and re-fetched automatically on restart.</p>
+    <p class=muted id=act-as>twitter-debug will act as <b>your default twitter account</b>.</p>
     <pre id=out-cookies>—</pre>
   </div>
   <div class=card>
@@ -185,8 +186,10 @@ const live = document.getElementById('live')
 function tick(){const i=new Image();i.onload=()=>{live.src=i.src;setTimeout(tick,800)};i.onerror=()=>setTimeout(tick,1600);i.src='twitter/shot?'+Date.now()}tick()
 const show=(id,v)=>document.getElementById(id).textContent=(typeof v==='string')?v:JSON.stringify(v,null,2)
 async function call(id,fn){const el=document.getElementById(id);el.textContent='… running …';try{show(id,await fn())}catch(e){show(id,'ERROR: '+e.message)}}
-let WRITES=false   // writes unlock when the owner approves the OAuth3 connect (the "jar" cap)
+let WRITES=false,ACCT=null   // writes unlock when the owner approves the OAuth3 connect (the "jar" cap); ACCT = the ACCOUNT env (which twitter account this enclave binds to)
 function refreshLock(){const p=document.getElementById('lockpill');p.textContent=WRITES?'🔓 writes on':'🔒 read-only';p.className='pill'+(WRITES?' tee':'')}
+// #69: name the twitter account this enclave will act as in the consent line.
+function refreshActAs(){const el=document.getElementById('act-as');if(!el)return;el.innerHTML='twitter-debug will act as <b>'+(ACCT?'twitter account '+ACCT:'your default twitter account')+'</b>'}
 const getJSON=(u)=>fetch(u).then(r=>r.json())
 const postJSON=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json())
 function wake(){postJSON('api/bridge',{tool:'navigate',args:['https://x.com/home']}).catch(()=>{})}
@@ -198,7 +201,7 @@ async function connectX(){
     if(st.connected){show('out-cookies',await postJSON('twitter/oauth3/refresh',{}));cookies();return}
     const c=await postJSON('twitter/oauth3/connect',{});if(c.error)throw new Error(c.error)
     window.open(c.approveUrl,'_blank')
-    show('out-cookies','approve in the OAuth3 popup → waiting…\n'+c.approveUrl)
+    show('out-cookies','approve in the OAuth3 popup — twitter-debug will act as '+(ACCT?'twitter account '+ACCT:'your default twitter account')+' → waiting…\n'+c.approveUrl)
     for(let i=0;i<150;i++){await new Promise(r=>setTimeout(r,2000))
       const s=await getJSON('twitter/oauth3/status')
       if(s.connected){show('out-cookies','connected ✓ — jar from vault owner:twitter: '+s.count+' cookies');cookies();return}
@@ -230,6 +233,7 @@ async function reify(){
   }catch(e){el.innerHTML='<pre class=bad>ERROR: '+esc(e.message)+'</pre>'}
 }
 refreshLock()
+refreshActAs()
 getJSON('twitter/health').then(h=>{const p=document.getElementById('jarpill');p.textContent='jar: '+(h.jarLoaded?'loaded ✓':'not loaded');p.className='pill'+(h.jarLoaded?' tee':'')}).catch(()=>{})
 const busy=document.getElementById('busy')
 function pollStatus(){getJSON('twitter/status').then(s=>{
@@ -237,7 +241,7 @@ function pollStatus(){getJSON('twitter/status').then(s=>{
   else{busy.textContent='idle';busy.className='pill'}
 }).catch(()=>{}).finally(()=>setTimeout(pollStatus,1200))}
 pollStatus()
-function pollConn(){getJSON('twitter/oauth3/status').then(s=>{WRITES=!!s.connected;refreshLock()}).catch(()=>{}).finally(()=>setTimeout(pollConn,3000))}
+function pollConn(){getJSON('twitter/oauth3/status').then(s=>{WRITES=!!s.connected;refreshLock();ACCT=s.account||null;refreshActAs()}).catch(()=>{}).finally(()=>setTimeout(pollConn,3000))}
 pollConn()
 </script>
 </div></body></html>
