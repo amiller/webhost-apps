@@ -1,0 +1,21 @@
+# Bullet 1 — ACCOUNT env passed as 'account' in POST /api/connect, app acts as that account
+
+## Config: ACCOUNT=111 in twitter-debug's env → /twitter/oauth3/status exposes it
+{"connected":true,"jarLoaded":true,"count":3,"pending":null,"server":"http://127.0.0.1:8092","account":"111"}
+
+## startConnect() posted account='111': the connect request stored by the REAL oauth3-server
+(local instance, oauth3-server/ server/connect.ts createConnect):
+{
+  "plugin": "twitter",
+  "app": "twitter-debug",
+  "caps": [
+    "jar",
+    "write"
+  ],
+  "account": "111",
+  "status": "approved"
+}
+
+## After owner approval, twitter-debug's refreshJar loaded account 111's jar (NOT 222's):
+server log line:
+[oauth3] connected — jar refreshed (3 cookies)

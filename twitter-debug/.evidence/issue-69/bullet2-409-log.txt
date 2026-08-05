@@ -1,0 +1,12 @@
+# Bullet 2 — 409-with-accounts handled by logging the available accounts
+
+## The subject holds two synthetic twitter accounts (111, 222); token bound to NO account.
+## REAL 409 from oauth3-server GET /api/twitter/jar:
+{"error":"multiple accounts synced for twitter; pass ?account=<id> or bind the token to one","accounts":["111","222"]}
+[HTTP 409]
+
+## twitter-debug's refreshJar() received that 409 and logged the accounts (server log):
+[oauth3] 409: multiple twitter accounts synced for the subject — set ACCOUNT to one of: 111, 222
+
+## /twitter/oauth3/refresh response (non-opaque — names the accounts):
+{"error":"multiple twitter accounts synced — set ACCOUNT to one of: 111, 222"}  [HTTP 502]

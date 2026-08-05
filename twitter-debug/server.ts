@@ -87,6 +87,12 @@ let oauthToken: string | null = null
 // 'jar'; once it grants a distinct 'write' cap and reflects it here, narrow this to write-only.
 const writeOk = () => !!oauthToken
 let connectPending: { requestId: string; approveUrl: string } | null = null
+// #69: bind the connect to ONE named twitter account (e.g. the bot account, not the owner's
+// personal session). Set via the ACCOUNT env to the target's numeric twitter id (the value the
+// OAuth3 vault derives from the twid cookie, e.g. "1234567890"). When set it is sent as `account`
+// in POST /api/connect so the minted token reads that account's jar, and the consent line names
+// it. When unset, single-jar subjects keep working unchanged.
+const TWITTER_ACCOUNT = process.env.ACCOUNT || ''
 
 async function saveToken(tok: string) {
   oauthToken = tok
@@ -98,7 +104,17 @@ async function refreshJar(): Promise<{ count: number }> {
   if (!oauthToken) throw new Error('not connected to OAuth3 — connect X on the dashboard')
   const r = await fetch(`${OAUTH3}/api/twitter/jar`, { headers: { Authorization: `Bearer ${oauthToken}` }, signal: AbortSignal.timeout(15_000) })
   const j = await r.json()
-  if (!r.ok) throw new Error(`jar fetch ${r.status}: ${j.error || 'failed'}`)
+  if (!r.ok) {
+    // #69: a 409-with-accounts means the subject holds several twitter jars and no account was
+    // bound to this token. Log the available accounts (and rethrow them in the message) instead
+    // of an opaque failure, so the operator knows to set ACCOUNT to one of them.
+    if (r.status === 409 && Array.isArray(j.accounts) && (j.accounts as string[]).length) {
+      const accts = (j.accounts as string[]).join(', ')
+      console.log(`[oauth3] 409: multiple twitter accounts synced for the subject — set ACCOUNT to one of: ${accts}`)
+      throw new Error(`multiple twitter accounts synced — set ACCOUNT to one of: ${accts}`)
+    }
+    throw new Error(`jar fetch ${r.status}: ${j.error || 'failed'}`)
+  }
   currentJar = j.jar || {}
   if (currentJar.auth_token) await cmdSoft('setCookies', [jarToCookies(currentJar)])
   return { count: Object.keys(currentJar).length }
@@ -125,7 +141,9 @@ async function startConnect(): Promise<{ approveUrl: string; requestId: string }
     // 'jar' = the raw session credential (what we act with); 'write' = consent to post/like on the
     // owner's behalf. The deployed OAuth3 server grants 'jar' today; 'write' is requested so the
     // approve page discloses it the moment the server supports the cap.
-    body: JSON.stringify({ plugin: 'twitter', caps: ['jar', 'write'], app: 'twitter-debug' }), signal: AbortSignal.timeout(15_000),
+    // #69: when ACCOUNT names the target twitter account, bind the connect to it so the minted
+    // token reads that account's jar (the bot, not the owner's personal session).
+    body: JSON.stringify({ plugin: 'twitter', caps: ['jar', 'write'], app: 'twitter-debug', ...(TWITTER_ACCOUNT ? { account: TWITTER_ACCOUNT } : {}) }), signal: AbortSignal.timeout(15_000),
   })
   const j = await r.json()
   if (!r.ok) throw new Error(`connect ${r.status}: ${j.error || 'failed'}`)
@@ -447,6 +465,7 @@ http.createServer(async (req, res) => {
     if (url === '/twitter/oauth3/status') return send(200, {
       connected: !!oauthToken, jarLoaded: !!currentJar.auth_token,
       count: Object.keys(currentJar).length, pending: connectPending, server: OAUTH3,
+      account: TWITTER_ACCOUNT || null,
     })
     if (post && url === '/twitter/oauth3/refresh') return send(200, await refreshJar())
     if (url === '/twitter/cookies') {
