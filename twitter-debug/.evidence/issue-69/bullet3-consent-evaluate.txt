@@ -1,6 +1,11 @@
 # Bullet 3 — consent line names the account (real envoy/neko browser DOM assertion)
 
 The dashboard was driven in the REAL envoy/neko Brave browser via the bridge (navigate + evaluate).
+(Note added 2026-08-05 rework pass: the "screenshot times out on every page" claim below was a
+MISDIAGNOSIS — it only failed on about:blank/data: pages. The consent-line PNG has since been
+captured; see bullet3-consent-png.txt + 04-consent-line.png. This file remains the record of the
+CONNECTED-path DOM assertion, which the PNG did not re-capture.)
+
 The bridge's screenshot CAPTURE tool was timing out on every page this run (environmental — see
 flow.md "PNG gap"), so this is the DOM-text assertion captured from the live browser instead of a PNG.
 

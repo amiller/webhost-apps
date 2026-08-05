@@ -1,0 +1,57 @@
+# Bullet 3 — consent-line PNG capture (rework pass, 2026-08-05)
+
+The earlier run's "screenshot times out on every page" diagnosis was WRONG. The envoy bridge
+`screenshot` tool works on real http(s) URLs; it only fails on about:blank / data: pages, where the
+extension has no host permission. The bridge log showed the real error for an about:blank attempt:
+
+  {"id":"h-msgkz70l","success":false,
+   "error":"Cannot access contents url \"\". Extension manifest must request permission to access this host."}
+
+and a screenshot of a REAL url the same minute returned a valid PNG data-URL:
+  {"id":"f3","success":true,"result":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."}
+
+So the capture was re-run against the real dashboard URL and succeeded on the first try.
+
+## Rig (real code, no mocks)
+- REAL twitter-debug agent: `ACCOUNT=111 PORT=8093 npx tsx server.ts` (the #69 change →
+  `/twitter/oauth3/status` returns `account:"111"`). systemd unit `rw137-twitter-debug`.
+- Local shim (NOT committed): serves the real `web/index.html` at `/twitter-debug/` and forwards
+  `/twitter-debug/twitter/*` to the real agent. systemd unit `rw137-shim` on :8931.
+  Reachable from the envoy-browser container at http://172.17.0.1:8931/ (verified).
+- REAL envoy/neko Brave via `POST http://localhost:3000/api/bridge`, serialized with
+  `flock /tmp/envoy-bridge.lock`.
+
+## Capture transcript (drive.mjs)
+  navigate  http://172.17.0.1:8931/twitter-debug/   → success
+  (wait 9 s for pollConn → GET twitter/oauth3/status → refreshActAs)
+
+  evaluate  location.href
+    → "http://172.17.0.1:8931/twitter-debug/"            (navigation verified)
+
+  evaluate  (sync XHR) GET twitter/oauth3/status        (the PAGE's own fetch to the real agent)
+    → 200 {"connected":false,"jarLoaded":false,"count":0,"pending":null,
+            "server":"https://pod.dstack.soc1024.com/oauth3","account":"111"}
+
+  evaluate  JSON.stringify({acct: ACCT, actas: #act-as.textContent,
+                            lock: lockpill.textContent, title: document.title})
+    → {"acct":"111",
+       "actas":"twitter-debug will act as twitter account 111",
+       "lock":"🔒 read-only",
+       "title":"OAuth3 debug console · Twitter"}
+
+  screenshot → 04-consent-line.png  (1920×947, 156847 bytes)
+
+## PNG validity (no host renderer / OCR on this box, so checked programmatically)
+  file       : PNG image data, 1920 x 947, 8-bit/color RGB, non-interlaced
+  test -s    : non-empty OK
+  sharp stats: per-channel mean≈244 (dashboard paper-white), stdev≈17–24 → NOT blank;
+               32 coarse distinct colors (rendered text/cards/borders present)
+
+## What this proves / what it does NOT
+- PROVES (bullet 3): the consent line names the account the enclave will act as —
+  "twitter-debug will act as twitter account 111" — rendered by the real dashboard code from the
+  real agent's `account:"111"` (the ACCOUNT env via TWITTER_ACCOUNT).
+- Does NOT re-prove the connected write path: this capture booted no OAuth3 token, so the lockpill
+  reads "🔒 read-only". The connected path ("🔓 writes on", account 111's jar loaded) is already
+  proven end-to-end in bullet1-connect-account.txt and bullet3-consent-evaluate.txt. The consent-line
+  text is identical in either state (it depends only on status.account, not on connection).

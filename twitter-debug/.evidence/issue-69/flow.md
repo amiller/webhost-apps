@@ -48,9 +48,10 @@ twitter-debug's real `refreshJar()` received it and logged the accounts instead 
 The `/twitter/oauth3/refresh` response is likewise non-opaque:
 `multiple twitter accounts synced — set ACCOUNT to one of: 111, 222`. See `bullet2-409-log.txt`.
 
-### Bullet 3 — consent line names the account  (real-browser DOM assertion; PNG blocked)
+### Bullet 3 — consent line names the account  (real-browser DOM assertion + PNG)
 The dashboard (`web/index.html`) now exposes the account in card ② and the connect-flow line.
-Driven in the **real envoy/neko Brave browser** (bridge `navigate` + `evaluate`):
+The earlier run drove it in the **real envoy/neko Brave browser** (bridge `navigate` + `evaluate`,
+full connect flow) and asserted against the live DOM:
 ```
 location.href        = http://172.17.0.1:8931/twitter-debug/
 ACCT (page global)   = "111"
@@ -58,24 +59,42 @@ ACCT (page global)   = "111"
 lockpill             = "🔓 writes on"   (WRITES=true, i.e. connected as account 111)
 sync XHR /twitter/oauth3/status → 200 {"connected":true,...,"account":"111"}
 ```
-So the consent line **does** name the account (`twitter account 111`), asserted against the live DOM
-in the real browser. See `bullet3-consent-evaluate.txt`.
+See `bullet3-consent-evaluate.txt`.
 
-**PNG gap (environmental).** The envoy bridge's **screenshot capture** tool was timing out on every
-page — including `about:blank` and a trivial `data:` page — across 15+ attempts (navigate and
-evaluate work; only screenshot hangs, 30 s `Command timeout` from the extension side). No host
-renderer exists on this box (no chromium/chrome/wkhtmltoimage/puppeteer). So the Tier-2 **PNG of the
-consent line could not be captured this run** — it is the one remaining artifact. The consent-line
-content itself is proven above via the real-browser DOM assertion. PR is labelled `needs-e2e` for
-the screenshot; it is NOT `ready-to-merge` until that PNG lands.
+**PNG captured (rework pass, 2026-08-05).** The earlier "screenshot times out on every page"
+diagnosis was **wrong** — the bridge `screenshot` tool works on real `http(s)` URLs; it only fails
+on `about:blank`/`data:` pages, where the extension has no host permission (error: *"Cannot access
+contents url \"\" — Extension manifest must request permission to access this host"*), which the
+HTTP layer surfaces as a generic `timeout`. Re-running against the real dashboard URL captured the
+consent-line PNG on the first try. The real `server.ts` was booted with `ACCOUNT=111` (the #69
+change), so `/twitter/oauth3/status` returns `account:"111"`; the real dashboard's `pollConn` reads
+it and renders `#act-as`. Captured in the real envoy/neko Brave (serialized via
+`flock /tmp/envoy-bridge.lock`):
+```
+location.href        = http://172.17.0.1:8931/twitter-debug/
+sync XHR /twitter/oauth3/status → 200 {"connected":false,...,"account":"111"}   (real agent)
+#act-as.textContent  = "twitter-debug will act as twitter account 111"
+ACCT (page global)   = "111"
+lockpill             = "🔒 read-only"   (this capture booted no token → unconnected; see note)
+screenshot           = 04-consent-line.png (1920×947, 156847 bytes, non-blank: per-channel
+                       stdev ≈17–24, 32 coarse colors)
+```
+The consent line names the account. See `bullet3-consent-png.txt` and `04-consent-line.png`.
+
+**Honesty note on the PNG's lockpill.** This capture shows `🔒 read-only` (the local rig booted no
+OAuth3 token), where the earlier DOM assertion (connected path) showed `🔓 writes on`. The
+consent-line text — the thing bullet 3 claims — is **identical** in both states: it is driven solely
+by `status.account` (the `ACCOUNT` env via `TWITTER_ACCOUNT`), independent of connection. The
+connected path is already proven end-to-end in `bullet1-connect-account.txt` (real connect→approve
+→jar) and `bullet3-consent-evaluate.txt`. The PNG simply supplies the image artifact that was
+missing; it does not re-assert the connected write path.
 
 ## Operator steps remaining
 1. **Redeploy twitter-debug** to webhost-staging (ghcr push + tee-daemon — operator-run from this
-   box) with `ACCOUNT=<bot twitter id>` in the project env.
-2. **Capture the consent-line PNG** via the envoy bridge once its screenshot capture recovers (or on
-   a box where it works), signed in as `u-swarm`, and attach to this PR — then flip `needs-e2e` →
-   `ready-to-merge`.
-3. The 409 log line is already proven against a real oauth3-server; on staging it will fire for real
+   box; no ghcr creds here) with `ACCOUNT=<bot twitter id>` in the project env, then walk the
+   consent line on deployed staging signed in as `u-swarm` for the fully-deployed Tier-2 pass. The
+   on-box real-code PNG (`04-consent-line.png`) is the verifiable subset per the scope-down rule.
+2. The 409 log line is already proven against a real oauth3-server; on staging it will fire for real
    the first time a multi-account subject connects without `ACCOUNT` set.
 
 ## Diff
