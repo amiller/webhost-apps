@@ -3,6 +3,73 @@
 Issue: amiller/webhost-apps#49
 Branch: `ready-49` → `staging`.
 Staging URL: https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network/feedling-web/
+Running deploy (connected + verbose): https://pod.dstack.soc1024.com/feedling-web/
+
+## Rework pass (2026-08-05) — render-window defect FOUND + FIXED; push delivery PROVEN live; `needs-e2e` stays ON
+
+Every prior pass concluded `watch_detected` was blocked only on the operator's live watch. That was
+**incomplete**: the feature's count-growth signal was provably broken for an established account, so
+`watch_detected` would **never fire even on a real watch**. The acceptance could not have passed.
+This pass found the defect at the code level, fixed it, redeployed, and verified live.
+
+### The defect (code-level, not a guess)
+- `oauth3-server/server/plugins/youtube.ts` `listItems`/`parseHistory` parses **only** the initial
+  `ytInitialData` render — it does **not** follow continuation tokens (the file's own header
+  documents this render-window limitation). So `items.length` is bounded by the first-render batch.
+- `shortCheck()` set `totalCount = items.length`; `server.ts` keyed verbose activity +
+  `watch_detected` off `totalDelta = totalCount − prevTotalCount`.
+- For an established account the window is pinned. **Live proof (this run, pod, raw HTTP):**
+  `totalCount` read **199 → 199** across two polls 70 s apart (headId stable, `watching:false`).
+  A new watch adds to the head and scrolls one off the tail → `totalCount` stays flat →
+  `totalDelta ≈ 0` → `watch_detected` never fires. This is exactly why `/api/pushes` had **no**
+  `watch_detected` across ~77 prior passes.
+
+### The fix (commits `1a3639e` + `297f013` on `ready-49`)
+Key the watch signal off a **HEAD-ITEM id change** instead of total-count growth. A new watch
+(regular, short, or a rewatch) lands at history position 0, so `headId` changing is reliable **even
+when `totalCount` is window-pinned**. Normal (shorts-only) mode is byte-for-byte unchanged.
+- `oauth3-client.ts`: `ShortCheckResult.headId = items[0]?.id`; `totalCount` kept + logged only.
+- `state.ts`: `Snapshot.headId`; pure `headWatchDelta(prev, cur)` that **seeds to 0** when either snap
+  lacks a headId (first poll / migration from a pre-headId build) — see the migration note below.
+- `server.ts`: `headDelta = headWatchDelta(prevSnap, snap)`; verbose `hasActivity = headDelta > 0`;
+  `pendingWatchDetected(hasActivity, headDelta)`. `totalDelta` still computed + logged as a contrast.
+- `logic_test.ts`: **10 passed** (was 4), incl. a REGRESSION test proving `totalCount` flat (199→199,
+  `totalDelta` 0) still fires on a head change, and a migration regression proving a pre-headId
+  `prevSnap` does **not** fire.
+
+### Live verification on the deployed pod (`pod.dstack.soc1024.com`, Bearer `~/.tee-daemon.env`)
+State-preserving redeploy (multipart POST, **no DELETE** — the daemon `ensure_volume`s
+`tee-projdata-feedling-web` idempotently at `/data:rw`; no `remove_volume` exists). Build pin:
+`ref:ready-49`, `tree_hash:e9865bdf40d35409b177849006de5b746b6ccb691a191867f96e2aa4bf1c2a42`,
+`deployed_at:2026-08-05T05:21:08Z`, `isolation:container`.
+
+| probe | result |
+|---|---|
+| `GET /api/verbose` | `200 {"verbose":true}` |
+| `GET /api/state` newest snap | now carries **`headId`** (was absent pre-fix) |
+| `totalCount` across 2 polls 70 s apart | **199 → 199** (the windowing defect, live) |
+| `headId` across same 2 polls | `7LP8WvIxPg8 → 7LP8WvIxPg8` (**stable when idle ⇒ no false positive**) |
+| `GET /api/subs` | **2 FCM** (survived both redeploys — `/data` persisted) |
+| `connect` / `poll.error` | `connected:true` / `""` |
+| forced `/api/poll-now` → `watch_detected` count | **unchanged** (migration guard holds; no spurious fire) |
+| `deno check` + `deno test logic_test.ts` (clean worktree) | exit 0 / **10 passed** |
+
+### Push delivery PROVEN live (new this run) — and an honest caveat
+The first headId deploy (pre-guard) fired **one** `watch_detected` on its first poll (`sent:2`, both
+FCM endpoints **HTTP 201`) because the pre-headId persisted snaps made `prevSnap.headId` look like a
+change. That was a **migration false positive, not a real watch** — so it is **NOT** the acceptance
+evidence, and I am not counting it as one (no-fallbacks, binding). It does, however, prove for the
+first time what ~77 prior passes could only infer: the `watch_detected → pushAll → FCM` delivery
+pipeline works end-to-end. The guard in `headWatchDelta` (commit `297f013`) prevents a recurrence.
+
+### `needs-e2e` stays ON (true external blocker — honestly)
+The Tier-2 acceptance still needs a **real human watch** on the connected account: a new video at
+the head changes `headId` → `headWatchDelta=1` → `watch_detected` → `sent>0` over the 2 live FCM
+subs (delivery just proven). A worker cannot watch YouTube on the operator's account (no
+`SAPISID`/browser jar worker-reachable; no envoy rig on this box; `/api/test-push` records
+`trigger:"test"` ≠ `watch_detected`, so it cannot stand in — no-fallbacks, binding). The difference
+from every prior pass: **the path is now real and tested** — before this fix, even a real watch
+would not have fired.
 
 > **Rework pass (2026-08-01).** PR #135 carried `needs-e2e` AND was `CONFLICTING`. Two things
 > changed this pass:
