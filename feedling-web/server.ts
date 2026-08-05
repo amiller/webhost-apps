@@ -1,5 +1,5 @@
 import { shortCheck, rawHistory, connState, configureOauth3, disconnect, stepConnect } from "./oauth3-client.ts";
-import { computeState, snapshotFrom, pushCopy } from "./state.ts";
+import { computeState, snapshotFrom, pushCopy, headWatchDelta } from "./state.ts";
 import {
   addSnapshot, recentSnapshots, setState, getState,
   addSub, removeSub, allSubs, lastPushed, markPushed,
@@ -64,13 +64,15 @@ async function tick(): Promise<boolean> {
   const prevSnap = prevSnaps.length ? prevSnaps[prevSnaps.length - 1] : null;
   const countDelta = prevSnap ? snap.shortsCount - prevSnap.shortsCount : 0;
   const totalDelta = prevSnap ? snap.totalCount - prevSnap.totalCount : 0;
-  // Verbose/test-mode watch signal = a HEAD-ITEM change. A new watch (regular, short, or rewatch)
-  // lands at position 0, so headId changing is reliable EVEN WHEN totalCount is pinned by
-  // YouTube's render window — which it is: the oauth3-server youtube plugin parses only the
-  // initial ytInitialData render (no continuations), so for an established account totalCount
-  // stays flat across a real watch (observed on staging: 199→199 for hours). totalDelta would
-  // NEVER fire there; headDelta does. Normal mode stays on shorts-count growth exactly as before.
-  const headDelta = prevSnap && snap.headId ? (snap.headId !== prevSnap.headId ? 1 : 0) : 0;
+  // Verbose/test-mode watch signal = a HEAD-ITEM change (headWatchDelta). A new watch (regular,
+  // short, or rewatch) lands at position 0, so headId changing is reliable EVEN WHEN totalCount
+  // is pinned by YouTube's render window — which it is: the oauth3-server youtube plugin parses
+  // only the initial ytInitialData render (no continuations), so for an established account
+  // totalCount stays flat across a real watch (observed on staging: 199→199 for hours).
+  // totalDelta would NEVER fire there; headWatchDelta does. It also seeds to 0 when either snap
+  // lacks a headId (first poll / migration), so a deploy can't fire a spurious watch. Normal
+  // mode stays on shorts-count growth exactly as before.
+  const headDelta = headWatchDelta(prevSnap, snap);
   const hasActivity = verbose ? headDelta > 0 : countDelta > 0;
 
   await addSnapshot(snap);

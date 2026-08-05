@@ -14,6 +14,16 @@
 // totalDelta-based code shipped against and is asserted below.
 import { assertEquals } from "jsr:@std/assert";
 import { initStore, pendingWatchDetected, updateSession } from "./store.ts";
+import { headWatchDelta } from "./state.ts";
+import type { Snapshot } from "./state.ts";
+
+// A minimal snapshot — only the headId-bearing fields matter to headWatchDelta.
+function snap(headId: string): Snapshot {
+  return {
+    at: 0, watching: false, newShorts: 0, shortsCount: 0, totalCount: 0, headId,
+    videosToday: 0, todayHonest: false,
+  };
+}
 
 // Mirrors server.ts tick() exactly: verbose mode counts a HEAD change as activity (render-window
 // robust); normal mode only shorts-count growth.
@@ -57,4 +67,30 @@ Deno.test("watch_detected re-arms on a NEW session after the gap", () => {
   const start = updateSession(true, t);
   assertEquals(start.newSession, true, "long gap starts a fresh session");
   assertEquals(pendingWatchDetected(true, 1), 1, "trigger re-armed for the new session");
+});
+
+// --- headWatchDelta: the render-window-robust signal server.ts feeds to pendingWatchDetected ---
+
+Deno.test("headWatchDelta: head item id changes ⇒ 1 (a new watch landed at position 0)", () => {
+  assertEquals(headWatchDelta(snap("aaa"), snap("bbb")), 1);
+});
+
+Deno.test("headWatchDelta: head stable (idle) ⇒ 0 (no false positive)", () => {
+  assertEquals(headWatchDelta(snap("aaa"), snap("aaa")), 0);
+});
+
+Deno.test("headWatchDelta: no previous snap (first-ever poll) ⇒ 0 (seed baseline, don't fire)", () => {
+  assertEquals(headWatchDelta(null, snap("aaa")), 0);
+});
+
+Deno.test("REGRESSION (migration): prev snap lacks headId (pre-headId build) ⇒ 0, NOT a fire", () => {
+  // This is the exact false-positive that fired once on the first poll after the headId deploy:
+  // old persisted snaps carry no headId, so prevSnap.headId === undefined must NOT count as a
+  // change. Before this guard it did, and a spurious watch_detected pushed (sent:2).
+  const oldFormatSnap = snap(""); // pre-headId build persisted snaps with headId ""
+  assertEquals(headWatchDelta(oldFormatSnap, snap("aaa")), 0, "missing baseline ⇒ seed, no fire");
+});
+
+Deno.test("headWatchDelta: current snap lacks headId ⇒ 0 (nothing to compare)", () => {
+  assertEquals(headWatchDelta(snap("aaa"), snap("")), 0);
 });

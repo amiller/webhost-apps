@@ -30,6 +30,16 @@ export interface PetState {
   computedAt: number;
 }
 
+// Verbose/test-mode watch signal: 1 iff the head item id changed vs the previous snap.
+// SEEDS to 0 when there is no previous snap OR either snap lacks a head id — e.g. the first
+// poll after a deploy, or a snap persisted by a pre-headId build (the migration case). Without
+// this guard the first poll after deploy sees prevSnap.headId === undefined, treats that as a
+// change, and fires a spurious "you watched something" off a missing baseline (observed live:
+// one false watch_detected fired right after the headId deploy, sent:2, before this fix).
+export function headWatchDelta(prev: Snapshot | null, cur: Snapshot): number {
+  return cur.headId && prev?.headId && cur.headId !== prev.headId ? 1 : 0;
+}
+
 export function snapshotFrom(r: ShortCheckResult): Snapshot {
   return {
     at: Date.parse(r.checked) || Date.now(),
