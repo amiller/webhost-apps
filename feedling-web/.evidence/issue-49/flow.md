@@ -5,6 +5,54 @@ Branch: `ready-49` → `staging`.
 Staging URL: https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network/feedling-web/
 Running deploy (connected + verbose): https://pod.dstack.soc1024.com/feedling-web/
 
+## Rework pass 7 (2026-08-05, 11:10Z) — ACCEPTANCE MET live: real watch → `watch_detected` → `sent>0`; `needs-e2e` OFF
+
+The operator performed the one action passes 1–6 had been blocked on (watch a video on the
+connected account). The verbose poller fired `watch_detected` within one poll interval, exactly as
+the acceptance specifies. Nothing below is inferred — every line is server-side state read over
+HTTP from the deployed pod after the watch. Full transcript: `02-watch-detected-live.txt`.
+
+### The acceptance line, live
+The issue's Tier-2 acceptance offers an alternative to the notification screenshot: the
+`[push]` server log line `trigger=watch_detected sent>0`. Its durable form is the `/api/pushes`
+record:
+```
+2026-08-05T11:10:35Z  trigger="watch_detected"  sent=2  pruned=0
+      endpoints: fcm.googleapis.com HTTP 201 ok=true | fcm.googleapis.com HTTP 201 ok=true
+      body="you watched something just now — 1 new item(s)"
+```
+
+### Why this is the REAL signal (not the migration false positive)
+- It correlates, to the second, with a genuine `headId` change in `/api/state`:
+  `7LP8WvIxPg8 → UWP9hQu8oZc` at `2026-08-05T11:10:35Z`. The migration FP (`05:17:21Z`) was a
+  missing-baseline artifact fired *before* the guard commit `297f013`; this fired ~6h later,
+  post-guard, off a real head change.
+- `totalCount` was **pinned at 199** across that change (the render-window defect, live). Under
+  the `totalDelta` signal that `origin/staging` still ships, this watch reads `totalDelta=0` and
+  **never fires**. Only this branch's `headWatchDelta`/`headId` signal caught it — so merging
+  delivers the working detector, not just the `appId` line.
+
+### Guards verified live in the same window
+- **No false positive while idle:** 22 consecutive polls `10:48:14Z`–`11:09:34Z` held
+  `headId=7LP8WvIxPg8` flat; zero `watch_detected`.
+- **Once-per-session holds:** a SECOND head change followed at `11:12:37Z`
+  (`UWP9hQu8oZc → P8Mjz1M6fww`) and **no** new `watch_detected` fired — still exactly 1 this
+  session. `pendingWatchDetected` re-arms only on a new session.
+- **Delivery proven end-to-end:** both live FCM subs (`/api/subs` → 2) returned **HTTP 201**.
+
+### Redaction (LESSONS 2026-07-11)
+This is a PUBLIC repo. The committed transcript carries trigger + count + `headId` (public
+YouTube video ids, already present in earlier passes) + timestamps only. The watched video
+**titles** and the full item list are the operator's personal watch history and are OMITTED; the
+true value-state was read in-session but kept out of the commit.
+
+### Verdict
+`needs-e2e` → OFF; `ready-to-merge` ON. The Tier-2 acceptance is satisfied by its own alternative
+clause (`trigger=watch_detected sent>0`), proven live on deployed staging against this branch's
+commit. Not merged, not closed — promotion stays operator-reviewed.
+
+---
+
 ## Rework pass (2026-08-05) — render-window defect FOUND + FIXED; push delivery PROVEN live; `needs-e2e` stays ON
 
 Every prior pass concluded `watch_detected` was blocked only on the operator's live watch. That was
