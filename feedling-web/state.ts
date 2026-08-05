@@ -9,8 +9,12 @@ export interface Snapshot {
   watching: boolean;
   newShorts: number;
   shortsCount: number;
-  /** Total items on the history page (shorts + regular). Drives verbose/test-mode activity. */
+  /** Total items on the history page (shorts + regular). Logged only — NOT the watch signal
+   *  (the youtube plugin's list is render-window-limited, so this stays flat for established
+   *  accounts even after a new watch). `headId` is the robust signal. */
   totalCount: number;
+  /** Topmost (most-recent) history item id. verbose/test-mode activity = a headId change. */
+  headId: string;
   videosToday: number;
   /** True only when the youtube plugin surfaced per-item watched-at dates, so videosToday is
    *  genuinely today-scoped. False ⇒ videosToday is the whole page; UI must relabel "history". */
@@ -33,6 +37,7 @@ export function snapshotFrom(r: ShortCheckResult): Snapshot {
     newShorts: r.newShorts | 0,
     shortsCount: r.shortsCount | 0,
     totalCount: r.totalCount | 0,
+    headId: r.headId ?? "",
     videosToday: r.videosToday | 0,
     todayHonest: !!r.todayHonest,
   };
