@@ -55,3 +55,16 @@ So the capture was re-run against the real dashboard URL and succeeded on the fi
   reads "🔒 read-only". The connected path ("🔓 writes on", account 111's jar loaded) is already
   proven end-to-end in bullet1-connect-account.txt and bullet3-consent-evaluate.txt. The consent-line
   text is identical in either state (it depends only on status.account, not on connection).
+
+## Pass 2 addendum (2026-08-05) — consent line scrolled into view
+Pass 1's 04-consent-line.png was re-taken because #act-as lays out at viewport y≈986 (below the
+947px envoy fold) and so was NOT in the shot. Pass 2 runs #act-as.scrollIntoView({block:'center'})
+first → rect {x:401,y:463,w:524,h:19,vh:947,inView:true}. The screenshot tool was confirmed to
+reflect live DOM (a full-screen red overlay paint produces a wholly different image).
+
+  SET   (ACCOUNT=111): #act-as = "twitter-debug will act as twitter account 111"   → 04-consent-line.png   (150863 B)
+  UNSET (ACCOUNT not set): #act-as = "twitter-debug will act as your default twitter account" → 03-default-account.png (151344 B)
+
+Both 1920×947, non-blank. The two PNGs differ by exactly 1092 px, all within the consent-line band
+(y≈460–490, x≈395–930) — the only visual difference is the account text (driven by status.account);
+the rest of the dashboard is pixel-identical. See flow.md "Bullet 3" for the full assertion block.
