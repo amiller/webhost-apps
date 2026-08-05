@@ -9,8 +9,12 @@ export interface Snapshot {
   watching: boolean;
   newShorts: number;
   shortsCount: number;
-  /** Total items on the history page (shorts + regular). Drives verbose/test-mode activity. */
+  /** Total items on the history page (shorts + regular). Logged only — NOT the watch signal
+   *  (the youtube plugin's list is render-window-limited, so this stays flat for established
+   *  accounts even after a new watch). `headId` is the robust signal. */
   totalCount: number;
+  /** Topmost (most-recent) history item id. verbose/test-mode activity = a headId change. */
+  headId: string;
   videosToday: number;
   /** True only when the youtube plugin surfaced per-item watched-at dates, so videosToday is
    *  genuinely today-scoped. False ⇒ videosToday is the whole page; UI must relabel "history". */
@@ -26,6 +30,16 @@ export interface PetState {
   computedAt: number;
 }
 
+// Verbose/test-mode watch signal: 1 iff the head item id changed vs the previous snap.
+// SEEDS to 0 when there is no previous snap OR either snap lacks a head id — e.g. the first
+// poll after a deploy, or a snap persisted by a pre-headId build (the migration case). Without
+// this guard the first poll after deploy sees prevSnap.headId === undefined, treats that as a
+// change, and fires a spurious "you watched something" off a missing baseline (observed live:
+// one false watch_detected fired right after the headId deploy, sent:2, before this fix).
+export function headWatchDelta(prev: Snapshot | null, cur: Snapshot): number {
+  return cur.headId && prev?.headId && cur.headId !== prev.headId ? 1 : 0;
+}
+
 export function snapshotFrom(r: ShortCheckResult): Snapshot {
   return {
     at: Date.parse(r.checked) || Date.now(),
@@ -33,6 +47,7 @@ export function snapshotFrom(r: ShortCheckResult): Snapshot {
     newShorts: r.newShorts | 0,
     shortsCount: r.shortsCount | 0,
     totalCount: r.totalCount | 0,
+    headId: r.headId ?? "",
     videosToday: r.videosToday | 0,
     todayHonest: !!r.todayHonest,
   };

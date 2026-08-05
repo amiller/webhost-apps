@@ -1,0 +1,78 @@
+# Live transcript — feedling-web #49 watch_detected acceptance (captured 2026-08-05T11:13:40Z)
+# Source: deployed pod https://pod.dstack.soc1024.com/feedling-web  (build ready-49, tree_hash e9865bdf, deployed 2026-08-05T05:21:08Z)
+# Redaction (LESSONS 2026-07-11): trigger + count + headId (public video IDs) + timestamps only.
+# Video TITLES and the full watched-item list are the operator's personal watch history and are OMITTED.
+
+## GET /api/verbose
+  -> {"verbose": true}
+
+## GET /api/subs  (FCM push subscriptions; endpoint host + fingerprint only)
+  - host=fcm.googleapis.com  fp=ctNskB_q6C8:  createdAt=2026-07-24T15:30:19Z
+  - host=fcm.googleapis.com  fp=fXme5uKPeKE:  createdAt=2026-07-10T01:25:13Z
+  dataDir=/data  nextPollAt=2026-08-05T11:13:37Z
+
+## GET /api/pushes  (FULL push log, newest last)
+  2026-07-01T22:06:06Z  trigger="test"          sent=1 pruned=0  [fcm.googleapis.com HTTP 201 ok=True]
+      body="hello from the server \ud83d\udc08"
+  2026-07-05T14:42:26Z  trigger="confirmed_5"   sent=1 pruned=0  [fcm.googleapis.com HTTP 201 ok=True]
+      body="5 minutes of solid scrolling. Cat noticed."
+  2026-07-07T11:34:09Z  trigger="confirmed_5"   sent=1 pruned=0  [fcm.googleapis.com HTTP 201 ok=True]
+      body="5 minutes of solid scrolling. Cat noticed."
+  2026-07-10T01:25:20Z  trigger="test"          sent=2 pruned=0  [fcm.googleapis.com HTTP 201 ok=True | fcm.googleapis.com HTTP 201 ok=True]
+      body="hello from the server \ud83d\udc08"
+  2026-08-03T03:11:51Z  trigger="confirmed_5"   sent=2 pruned=0  [fcm.googleapis.com HTTP 201 ok=True | fcm.googleapis.com HTTP 201 ok=True]
+      body="5 minutes of solid scrolling. Cat noticed."
+  2026-08-05T03:11:04Z  trigger="test"          sent=2 pruned=0  [fcm.googleapis.com HTTP 201 ok=True | fcm.googleapis.com HTTP 201 ok=True]
+      body="hello from the server \ud83d\udc08"
+  2026-08-05T05:17:21Z  trigger="watch_detected" sent=2 pruned=0  [fcm.googleapis.com HTTP 201 ok=True | fcm.googleapis.com HTTP 201 ok=True]
+      body="you watched something just now \u2014 1 new item(s)"
+  2026-08-05T11:10:35Z  trigger="watch_detected" sent=2 pruned=0  [fcm.googleapis.com HTTP 201 ok=True | fcm.googleapis.com HTTP 201 ok=True]
+      body="you watched something just now \u2014 1 new item(s)"
+
+## GET /api/state?limit=25  — snap timeline (time-ordered); headId + totalCount + watching
+  2026-08-05T10:48:14Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T10:49:15Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T10:50:16Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T10:51:17Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T10:52:17Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T10:53:18Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T10:54:19Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T10:55:20Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T10:56:21Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T10:57:22Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T10:58:23Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T10:59:24Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T11:00:25Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T11:01:26Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T11:02:27Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T11:03:28Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T11:04:29Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T11:05:30Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T11:06:31Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T11:07:32Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T11:08:33Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T11:09:34Z  headId=7LP8WvIxPg8  totalCount=199  watching=False
+  2026-08-05T11:10:35Z  headId=UWP9hQu8oZc  totalCount=199  watching=False  <<< HEAD CHANGED  (headWatchDelta=1  =>  watch_detected fires this poll)
+  2026-08-05T11:11:37Z  headId=UWP9hQu8oZc  totalCount=199  watching=False
+  2026-08-05T11:12:37Z  headId=P8Mjz1M6fww  totalCount=199  watching=False  <<< HEAD CHANGED  (headWatchDelta=1  =>  watch_detected fires this poll)
+
+## Correlation / verdict — ACCEPTANCE MET (Tier-2 alternative clause: `[push] trigger=watch_detected sent>0`)
+  - watch_detected fired at 2026-08-05T11:10:35Z (sent=2, BOTH FCM endpoints HTTP 201, body
+    "you watched something just now \u2014 1 new item(s)"). This IS the acceptance line.
+  - headId changed 7LP8WvIxPg8 -> UWP9hQu8oZc in the snap taken at 2026-08-05T11:10:35Z (SAME
+    second) => headWatchDelta(prev,snap)=1 drove the fire, exactly as designed.
+  - totalCount held at 199 across that change (render-window defect, LIVE) => the old
+    totalDelta signal in origin/staging would have read 0 and NOT fired; only this PR's
+    headWatchDelta/headId signal did. Merging delivers working detection.
+  - 22 idle polls 10:48:14Z-11:09:34Z kept headId flat at 7LP8WvIxPg8 => no false positive while idle.
+  - once-per-session guard PROVEN: a SECOND head change followed at 11:12:37Z
+    (UWP9hQu8oZc -> P8Mjz1M6fww) but NO new watch_detected fired (still exactly 1 this session).
+    The watch_detected -> pendingWatchDetected -> armed-once-per-session path is correct.
+  - the only OTHER watch_detected in the log (2026-08-05T05:17:21Z) is the pre-guard migration
+    false positive already documented in flow.md (fired before commit 297f013); NOT counted here.
+
+## Operator action that produced this
+  Per the rework-worker lane, the operator (the only party who can watch YouTube on the connected
+  account) watched ONE regular video; the head item moved and the verbose poller fired within one
+  ~60s poll interval. No worker fabricated anything: headId movement and the push record are both
+  server-side state read over HTTP after the fact.
