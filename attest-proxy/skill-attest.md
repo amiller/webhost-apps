@@ -56,6 +56,24 @@ If you cannot reach the invite URL, every field is `NONE`.
 **If `QUOTE AVAILABLE` is `NONE`, stop.** Tell the user you could not establish
 what the service is, and do not run the task through it.
 
+**If `QUOTE AVAILABLE` is `yes`,** do not stop there. A service claiming to be
+attested is still just a claim until someone checks the quote. After the session
+closes, run:
+
+```
+attest.py verify-quote <bundle>.json
+```
+
+That confirms the quote commits to *this* session, and compares the platform
+measurements and the deployment's source hash against the pin on this machine.
+On a first run it pins them and tells you plainly that nothing is verified yet —
+the pin is only worth what the audit behind it was worth. On later runs a change
+in either is a hard stop: the code or platform is not the one that was audited.
+
+It does **not** verify the quote's signature chain, so a quote from an untrusted
+source would still parse. Say that when you report the result, and use a DCAP
+verifier when the chain itself matters.
+
 **If `QUOTE AVAILABLE` is `no`,** you may still proceed, but you must say this to
 the user before you start, in your own words:
 

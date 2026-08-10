@@ -178,6 +178,85 @@ def cmd_check(a):
     print("\nall recomputations green")
 
 
+# --- TDX v4 quote, structural parse ------------------------------------------
+#
+# Offsets from the Intel TDX DCAP v4 spec, matching tools/dcap/dcap_parse.py in
+# teleport-computer/feedling-mcp so both readers agree. This extracts what the
+# TEE measured; it does NOT verify the signature chain, so a quote from an
+# untrusted source would still parse. See verify-quote's closing note.
+_FIELDS = {"mrtd": (184, 48), "rtmr0": (376, 48), "rtmr1": (424, 48),
+           "rtmr2": (472, 48), "rtmr3": (520, 48), "report_data": (568, 64)}
+
+
+def parse_quote(raw: bytes) -> dict:
+    if len(raw) < 48 + 584 + 4:
+        raise SystemExit(f"quote too short: {len(raw)} bytes")
+    version = int.from_bytes(raw[0:2], "little")
+    tee_type = int.from_bytes(raw[4:8], "little")
+    if version != 4:
+        raise SystemExit(f"unexpected quote version {version}, expected 4")
+    if tee_type != 0x81:
+        raise SystemExit(f"not a TDX quote (tee_type 0x{tee_type:02x})")
+    return {k: raw[o:o + n].hex() for k, (o, n) in _FIELDS.items()}
+
+
+def cmd_verify_quote(a):
+    b = json.loads(Path(a.bundle).read_text())
+    q = b.get("quote")
+    if not q:
+        raise SystemExit(f"no quote in this bundle ({b.get('quote_error')}) "
+                         "-- nothing here is attested")
+    hexq = q.get("quote") if isinstance(q, dict) else None
+    if not isinstance(hexq, str):
+        raise SystemExit("quote field is not hex; cannot parse")
+    m = parse_quote(bytes.fromhex(hexq))
+
+    expect = report_data(bytes.fromhex(b["session_root"]), b.get("beacon"))
+    got = m["report_data"][:64]
+    if got != expect.hex():
+        raise SystemExit(f"quote commits to {got}, not this session's {expect.hex()}")
+    print("report_data binds this session: yes")
+
+    pin = Path(a.pin) if a.pin else Path.home() / ".claude/attest-proxy-pin.json"
+    current = {k: m[k] for k in ("mrtd", "rtmr0", "rtmr1", "rtmr2", "rtmr3")}
+    try:
+        with urllib.request.urlopen(f"{a.cvm}/_api/projects/attest-proxy", timeout=30) as r:
+            current["tree_hash"] = json.loads(r.read()).get("tree_hash", "")
+    except Exception as e:
+        print(f"could not read the source hash: {e}")
+
+    if not pin.exists():
+        pin.parent.mkdir(parents=True, exist_ok=True)
+        pin.write_text(json.dumps(current, indent=2))
+        print(f"FIRST RUN -- pinned these measurements to {pin}")
+        for k, v in current.items():
+            print(f"  {k:10s} {v[:48]}")
+        print()
+        print("Nothing is verified yet. You have recorded what this deployment")
+        print("measured today. Audit the source, then later runs are compared")
+        print("against this pin and any change becomes visible.")
+        return
+
+    pinned = json.loads(pin.read_text())
+    drift = {k: (pinned.get(k), v) for k, v in current.items() if pinned.get(k) != v}
+    for k, v in current.items():
+        print(f"  {k:10s} {'CHANGED' if k in drift else 'ok':8s} {v[:32]}")
+    if drift:
+        print()
+        print("MEASUREMENTS CHANGED since you pinned them:")
+        for k, (was, now) in drift.items():
+            print(f"  {k}")
+            print(f"    was {was}")
+            print(f"    now {now}")
+        raise SystemExit("this is not the code or platform you audited -- stop")
+    print()
+    print("matches your pin")
+    print()
+    print("Establishes: the quote commits to this session, and the measurements")
+    print("match what you pinned. Does NOT establish: the signature chain is")
+    print("unverified here. For chain verification use a DCAP verifier.")
+
+
 def cmd_show(a):
     """Produce what a counterparty sees: chosen calls plus inclusion proofs."""
     b = json.loads(Path(a.bundle).read_text())
@@ -215,6 +294,10 @@ def main():
     r.set_defaults(fn=cmd_run)
 
     c = sub.add_parser("check"); c.add_argument("bundle"); c.set_defaults(fn=cmd_check)
+
+    q = sub.add_parser("verify-quote"); q.add_argument("bundle")
+    q.add_argument("--pin", help="measurement pin file (default ~/.claude/attest-proxy-pin.json)")
+    q.set_defaults(fn=cmd_verify_quote)
 
     s = sub.add_parser("show"); s.add_argument("bundle")
     g = s.add_mutually_exclusive_group(required=True)
