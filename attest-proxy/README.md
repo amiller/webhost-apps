@@ -1,95 +1,21 @@
-# attest-proxy
+# attest-proxy — moved
 
-Witnessed agent sessions. Your agent runs with no credential; this service holds
-the key, relays every call, commits to the exact bytes, and signs a Merkle root
-over the session — so you can prove what you spent and on what, without showing
-the transcript.
+This app graduated to its own repo:
 
-Live: https://pod.dstack.soc1024.com/attest-proxy/
+**<https://github.com/amiller/attest-proxy>**
 
-## Why
+It earned an independent release lifecycle: it has a client (`attest.py`), an
+agent-facing skill that outside agents fetch by URL, and a deploy that is
+promoted to attested — none of which want to be versioned alongside the rest of
+the monorepo.
 
-The claim "I spent 5M tokens of model X reviewing your contract" splits in two.
-The metered half — token counts, model name, call count, a lower bound on when —
-is attestable with no LLM in the loop: those figures come back inside Anthropic's
-own response, over a TLS session this service terminated against a pinned root.
-They are Anthropic's statement, not the holder's.
-
-The characterisation half — *what the work was about* — needs a checker run over
-the private transcript, and attestation would show the checker ran, not that its
-verdict was right. Keep the two apart when presenting a receipt.
-
-## Use
+Deploy it from source instead of a tarball:
 
 ```bash
-export ATTEST_CVM=https://pod.dstack.soc1024.com
-export ATTEST_INVITE=$(cat ~/.claude/attest-proxy-invite-token)
-
-./attest.py run --purpose "[research-router] Acme — contract review" \
-  -- claude -p "what should I ask about the IP clause?"
-
-./attest.py check attest-<id>.json          # recompute everything offline
-./attest.py show  attest-<id>.json --calls 2 -o partial.json
-./attest.py show  attest-<id>.json --none   -o stub.json    # proof, zero content
+curl -X POST $CVM/_api/projects \
+  -H "Authorization: Bearer $TEE_DAEMON_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"attest-proxy","source":"https://github.com/amiller/attest-proxy","ref":"main"}'
 ```
 
-`attest.py` needs only the standard library and talks to the hosted service, so
-it works with no hardware. The same bundles verify against the SiLabs board
-build in `edge-tee/silabs-secure-vault/zktls` — the commitment and Merkle
-constructions are byte-identical, and only the signature over the root differs
-(a TDX quote here, a PSA IAT there).
-
-Do not publish full bundles. A single agent turn's request carries the whole
-session context, including local config files the agent read. `--none` is the
-form that is safe to hand out.
-
-## Deploy
-
-```bash
-TEE_DAEMON_TOKEN=... CVM=https://pod.dstack.soc1024.com \
-  ANTHROPIC_API_KEY=sk-... bash deploy.sh
-```
-
-The key and the invite token travel only in the deploy POST's manifest, never in
-committed source. Env values are redacted on the daemon's public verifier path,
-so promoting the project does not expose them.
-
-**The session endpoint is reachable from the internet and spends a real key**, so
-the app refuses to open sessions at all unless `SESSION_TOKEN` is set, and caps
-calls per session (`MAX_CALLS`, default 50). `deploy.sh` generates the invite
-token once into `~/.claude/attest-proxy-invite-token`.
-
-## Modes
-
-Two independent axes on this daemon:
-
-| `mode` | `public` | in the public listing | quote |
-|---|---|---|---|
-| `dev` | `false` | no | no |
-| `dev` | `true` | yes | no |
-| `attested` | either | yes | yes |
-
-A project appears in the unauthenticated listing if it is `attested`, or `dev`
-with `public: true`. **`public` controls listing, not reachability** — an
-unlisted project is still served at its path to anyone who knows the name, which
-is why session creation is gated by its own invite token rather than relying on
-being unlisted.
-
-This app is deployed `dev` + `public: true`, alongside `goodpoint-box`,
-`interleave` and `screenshare-debug`.
-
-## Status
-
-`mode: dev`, so `GetQuote` is unavailable — the broker socket is only mounted for
-attested projects, and bundles carry `quote: null` with `quote_error` rather than
-anything that looks attested. Promote to turn that on:
-
-```bash
-curl -X POST $CVM/_api/projects/attest-proxy/promote -H "Authorization: Bearer $TEE_DAEMON_TOKEN"
-```
-
-Promotion binds the source hash into the quote and opens the public verifier
-endpoints. A counterparty should check the quote binds a CVM measurement they
-accept *and* this app's source hash, then pin that hash — the operator holds
-deploy rights, so pinning and re-checking is what makes a swap visible rather
-than silent.
+Note that a redeploy resets the project to `dev` and must be re-promoted.

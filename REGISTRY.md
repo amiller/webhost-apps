@@ -6,7 +6,7 @@
 | redteam-channel | — | — | — | **empty stub** (scanner/ + victim/ scaffolding, never built) |
 | otterscope | deno | tarball → `POST /_api/projects` | [✓ live](https://pod.dstack.soc1024.com/otterscope/) | Otter.ai transcript viewer via oauth3 `otter` plugin. **Extension-dependent** (`window.oauth3`) — needs the SDK extension-optional work to run on mobile/same-pod. |
 | feedling-web | deno | tarball → `POST /_api/projects` (Bearer `TEE_DAEMON_TOKEN`) | [✓ live](https://pod.dstack.soc1024.com/feedling-web/) | Doomscroll notifier; reads YouTube via oauth3 `youtube` plugin (user-approved token, NOT owner). Set `TZ`. Today-filtering blocked on per-item dates (oauth3-server). |
-| attest-proxy | deno | prod | `deploy.sh` (needs `TEE_DAEMON_TOKEN`, `CVM`) | [✓ live](https://pod.dstack.soc1024.com/attest-proxy/) | https://pod.dstack.soc1024.com/attest-proxy/ | `title "attest-proxy — witnessed agent sessions"` | Witnessed agent sessions: holds the API key, commits to every call, signs a Merkle root. Client `attest.py` + agent skill `skill-attest.md`. **dev mode** — promote for TDX quotes. Session creation gated by an invite token. |
+| attest-proxy | deno | prod | from source: [amiller/attest-proxy](https://github.com/amiller/attest-proxy) | [✓ live](https://pod.dstack.soc1024.com/attest-proxy/) | https://pod.dstack.soc1024.com/attest-proxy/ | `title "attest-proxy — witnessed agent sessions"` | Witnessed agent sessions: holds the API key, commits to every call, signs a Merkle root. Client `attest.py` + agent skill `skill-attest.md`. **dev mode** — promote for TDX quotes. Session creation gated by an invite token. |
 
 ## hermes-staging CVM (where these deploy)
 
