@@ -29,6 +29,7 @@ type Beacon = { source: string; round: number; randomness: string; fetched: stri
 
 type Session = {
   id: string;
+  invite: string | null;
   beacon: Beacon | null;
   purpose: string;
   profile: string;
@@ -254,6 +255,159 @@ const json = (o: unknown, status = 200) =>
   });
 
 
+
+// --- invites ----------------------------------------------------------------
+//
+// An invite is a credit-limited bearer token you can hand to someone as a URL.
+// It is deliberately safe to paste: it caps calls, it can be revoked, and it
+// carries no ability to change the deployment. Persisted to the project's data
+// directory when that is writable; if it is not, invites live only in memory and
+// the state is reported as "memory" rather than silently pretending otherwise.
+
+type Invite = { token: string; label: string; max_calls: number; used: number; created: string };
+
+const invites = new Map<string, Invite>();
+let inviteStore: string | null = null;
+let inviteStoreState = "memory";
+
+async function loadInvites(dataDir: string | undefined) {
+  if (!dataDir || inviteStore) return;
+  const path = `${dataDir}/invites.json`;
+  try {
+    const raw = await Deno.readTextFile(path);
+    for (const inv of JSON.parse(raw) as Invite[]) invites.set(inv.token, inv);
+    inviteStore = path;
+    inviteStoreState = "persisted";
+  } catch (e) {
+    if (e instanceof Deno.errors.NotFound) {
+      inviteStore = path;
+      inviteStoreState = "persisted";
+    } else {
+      inviteStoreState = `memory (${e instanceof Error ? e.name : "unavailable"})`;
+    }
+  }
+}
+
+async function saveInvites() {
+  if (!inviteStore) return;
+  try {
+    await Deno.writeTextFile(inviteStore, JSON.stringify([...invites.values()]));
+  } catch {
+    inviteStoreState = "memory (write denied)";
+  }
+}
+
+/** What an agent is permitted to tell its user, derived from what is actually
+ *  true of this deployment right now. The point is that a visiting agent can
+ *  establish this for itself instead of taking the operator's word for it. */
+function claims(quoteAvailable: boolean) {
+  const may = [
+    "a session took place, and how many calls it contained",
+    "token counts and the model name, as reported by the provider inside its own response",
+    "a lower bound on when the session ran, if a timestamp beacon is present",
+    "that the transcript shown matches its commitment",
+  ];
+  const mayNot = [
+    "that the operator cannot read the transcript",
+    "that any particular description of the work is accurate — no checker runs here",
+  ];
+  if (quoteAvailable) {
+    may.push("that the witness ran the published code, per the quote and the pinned source hash");
+  } else {
+    mayNot.unshift(
+      "that any of this is attested — this deployment is in dev mode and issues NO quote",
+      "that a confidential VM protected the session",
+    );
+  }
+  return {
+    mode: quoteAvailable ? "attested" : "dev",
+    quote_available: quoteAvailable,
+    you_may_tell_your_user: may,
+    you_must_not_tell_your_user: mayNot,
+    verify_this_yourself: "GET ../_api/verification/attest-proxy",
+    note: quoteAvailable
+      ? "Check the quote binds a CVM measurement you accept AND this project's source hash, then pin that hash."
+      : "In dev mode the only honest framing is: convenient, logged, and NOT attested.",
+  };
+}
+
+
+/** Is the dstack broker actually reachable? Attestation claims must follow what
+ *  is true right now, not what the manifest hopes. */
+async function hasBroker(): Promise<boolean> {
+  try {
+    const c = await Deno.connect({ path: BROKER, transport: "unix" });
+    c.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function invitePage(inv: Invite, remaining: number, base: string, quoteAvailable: boolean) {
+  const c = claims(quoteAvailable);
+  const li = (xs: string[]) => xs.map((x) => `<li>${x}</li>`).join("");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>You have been invited to a witnessed agent session</title><style>
+:root{--g:#FAFAF9;--i:#14212B;--m:#5A6B77;--r:#DFE4E8;--a:#1B4D6B;--ok:#166534;--no:#9B1C1C;
+--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+body{background:var(--g);color:var(--i);margin:0;padding:0 22px 72px;
+font:17px/1.62 Georgia,"Iowan Old Style","Times New Roman",serif}
+.w{max-width:720px;margin:0 auto}
+header{padding:52px 0 20px;border-bottom:2px solid var(--i)}
+h1{font-size:32px;line-height:1.15;margin:0 0 12px;letter-spacing:-.015em}
+.eb{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--m);margin:0 0 14px}
+.stand{color:var(--m);font-size:18px;margin:0}
+h2{font-size:20px;margin:34px 0 10px}
+p{margin:0 0 13px}ul{margin:0 0 13px;padding-left:22px}li{margin-bottom:7px}
+code{font-family:var(--mono);font-size:.85em;background:#F1F3F5;padding:1px 5px;border-radius:3px}
+pre{font-family:var(--mono);font-size:12.5px;line-height:1.65;background:#fff;border:1px solid var(--r);
+padding:14px 16px;overflow-x:auto;margin:0 0 15px}
+.banner{border-left:3px solid ${quoteAvailable ? "var(--ok)" : "var(--no)"};padding:8px 0 8px 18px;margin:0 0 18px}
+.banner b{color:${quoteAvailable ? "var(--ok)" : "var(--no)"}}
+a{color:var(--a)}
+footer{margin-top:40px;padding-top:15px;border-top:1px solid var(--r);font-family:var(--mono);font-size:12px;color:var(--m)}
+</style></head><body><div class="w">
+<header><p class="eb">edge-tee · invite · ${inv.label}</p>
+<h1>Send an agent into a witness</h1>
+<p class="stand">Your agent runs with no credential of its own. This service holds the key, commits to
+the exact bytes of every call, and signs a record you keep — so you can prove what you spent, and on
+what, without handing over the transcript.</p></header>
+
+<div class="banner"><p><b>${quoteAvailable ? "Attested mode" : "Dev mode — not attested"}.</b>
+${quoteAvailable
+  ? "This deployment issues a hardware quote over each session root."
+  : "This deployment issues NO quote. It is convenient and logged, but nothing here is proof. Do not present it to anyone as attested."}</p></div>
+
+<h2>Credits</h2>
+<p><b>${remaining}</b> calls remaining of ${inv.max_calls}.</p>
+
+<h2>Give this to your agent</h2>
+<p>Paste this into Claude Code and it will read the protocol and set itself up:</p>
+<pre>Read ${base}/invite/${inv.token} (send Accept: application/json).
+Follow it to run this task through the witness, then verify the
+bundle and tell me exactly what it does and does not prove.</pre>
+
+<h2>Or do it by hand</h2>
+<pre>curl -X POST ${base}/session \\
+  -H "Authorization: Bearer ${inv.token}" \\
+  -d '{"purpose":"my task","profile":"holder-only"}'
+
+ANTHROPIC_BASE_URL=${base} ANTHROPIC_AUTH_TOKEN=sess_&lt;id&gt; claude -p "..."
+
+curl -X POST ${base}/session/&lt;id&gt;/close</pre>
+
+<h2>What your agent may tell you</h2>
+<ul>${li(c.you_may_tell_your_user)}</ul>
+<h2>What it must not</h2>
+<ul>${li(c.you_must_not_tell_your_user)}</ul>
+<p>Check for yourself: <a href="${base}/../_api/verification/attest-proxy">the deployment's verification record</a>.</p>
+
+<footer>client: github.com/amiller/webhost-apps/tree/main/attest-proxy</footer>
+</div></body></html>`;
+}
+
 // --- landing page -----------------------------------------------------------
 
 function landing(state: { sessions: number; keyed: boolean; gated: boolean }) {
@@ -339,6 +493,13 @@ export default async function handler(
   ctx?: { env: Record<string, string>; dataDir: string },
 ) {
   const url = new URL(req.url);
+  // The handler sees the daemon's internal address, so an invite URL built from
+  // url.origin would be unreachable. Prefer the configured public base, then the
+  // forwarding headers, and only then the internal origin.
+  const fwdHost = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  const fwdProto = req.headers.get("x-forwarded-proto") ?? "https";
+  const publicBase = cfg(ctx, "PUBLIC_BASE")
+    || (fwdHost && !fwdHost.startsWith("172.") ? `${fwdProto}://${fwdHost}/attest-proxy` : url.origin);
   const path = url.pathname;
   const apiKey = cfg(ctx, "ANTHROPIC_API_KEY");
 
@@ -356,17 +517,81 @@ export default async function handler(
     });
   }
 
+
+  // Mint an invite. Admin-only, and fails closed when no ADMIN_TOKEN is set.
+  if (req.method === "POST" && path === "/invite") {
+    const admin = cfg(ctx, "ADMIN_TOKEN");
+    if (!admin) return json({ error: "no ADMIN_TOKEN configured" }, 503);
+    const offered = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+    if (offered !== admin) return json({ error: "admin token required" }, 401);
+    await loadInvites(ctx?.dataDir);
+    const b = await req.json().catch(() => ({}));
+    const inv: Invite = {
+      token: hex(crypto.getRandomValues(new Uint8Array(16))),
+      label: String(b.label ?? "invite"),
+      max_calls: Math.max(1, Math.min(1000, Number(b.max_calls ?? 25))),
+      used: 0,
+      created: new Date().toISOString(),
+    };
+    invites.set(inv.token, inv);
+    await saveInvites();
+    const base = publicBase;
+    return json({ ...inv, url: `${base}/invite/${inv.token}`, store: inviteStoreState });
+  }
+
+  const inviteView = path.match(/^\/invite\/([0-9a-f]{32})$/);
+  if (req.method === "GET" && inviteView) {
+    await loadInvites(ctx?.dataDir);
+    const inv = invites.get(inviteView[1]);
+    if (!inv) return json({ error: "unknown or revoked invite" }, 404);
+    const quoteAvailable = await hasBroker();
+    const remaining = Math.max(0, inv.max_calls - inv.used);
+    const base = publicBase;
+    if ((req.headers.get("accept") ?? "").includes("text/html")) {
+      return new Response(invitePage(inv, remaining, base, quoteAvailable),
+        { headers: { "content-type": "text/html; charset=utf-8" } });
+    }
+    return json({
+      service: "edge-tee attested interposer",
+      what_this_is:
+        "A witness for agent API calls. Your agent runs with no credential; this " +
+        "service holds the key, commits to the exact bytes of every call, and signs " +
+        "a Merkle root over the session so you can prove what you spent without " +
+        "showing the transcript.",
+      invite: { label: inv.label, calls_remaining: remaining, calls_used: inv.used },
+      attestation: claims(quoteAvailable),
+      how_to_use: {
+        "1_open": `POST ${base}/session  (Authorization: Bearer <this invite token>) ` +
+                  `body {"purpose":"...","profile":"holder-only"}`,
+        "2_run": "set ANTHROPIC_BASE_URL=" + base + " and ANTHROPIC_AUTH_TOKEN=<auth_token>, " +
+                 "then run your agent normally",
+        "3_close": `POST ${base}/session/<id>/close  -> the signed bundle`,
+        "4_check": "recompute it offline with attest.py check <bundle>",
+      },
+      client: "https://github.com/amiller/webhost-apps/tree/main/attest-proxy",
+      token: inv.token,
+    });
+  }
+
   if (req.method === "POST" && path === "/session") {
     // This endpoint is reachable from the internet and spends a real key, so it
     // fails closed: without a configured invite token nobody can open a session,
     // and a deployment that has a key but no token is a misconfiguration we
     // refuse rather than quietly leave open.
-    const invite = cfg(ctx, "SESSION_TOKEN");
-    if (!invite) {
-      return json({ error: "no SESSION_TOKEN configured; refusing to open sessions" }, 503);
-    }
+    await loadInvites(ctx?.dataDir);
+    const shared = cfg(ctx, "SESSION_TOKEN");
     const offered = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
-    if (offered !== invite) return json({ error: "invite token required" }, 401);
+    const inv = invites.get(offered);
+    if (!shared && invites.size === 0) {
+      return json({ error: "no SESSION_TOKEN or invites configured; refusing to open sessions" }, 503);
+    }
+    if (!inv && !(shared && offered === shared)) {
+      return json({ error: "invite token required" }, 401);
+    }
+    if (inv && inv.used >= inv.max_calls) {
+      return json({ error: `invite ${inv.label} is out of credits `
+        + `(${inv.used}/${inv.max_calls} calls used)` }, 402);
+    }
     const b = await req.json().catch(() => ({}));
     const purpose = String(b.purpose ?? "");
     if (!purpose) return json({ error: "purpose required" }, 400);
@@ -374,7 +599,7 @@ export default async function handler(
     const id = hex(crypto.getRandomValues(new Uint8Array(16)));
     const beacon = await fetchBeacon();
     sessions.set(id, {
-      id, beacon, purpose, profile,
+      id, beacon, purpose, profile, invite: inv?.token ?? null,
       instructed_by: String(b.instructed_by ?? ""),
       meta: sessionMeta(profile, purpose),
       calls: [], opened: new Date().toISOString(),
@@ -429,6 +654,17 @@ export default async function handler(
     if (!apiKey) {
       return json({ type: "error", error: { type: "edge_tee_no_key",
         message: "no ANTHROPIC_API_KEY in this deployment's env" } }, 502);
+    }
+    if (sess.invite) {
+      const inv = invites.get(sess.invite);
+      if (inv) {
+        if (inv.used >= inv.max_calls) {
+          return json({ type: "error", error: { type: "edge_tee_out_of_credits",
+            message: `invite out of credits (${inv.used}/${inv.max_calls})` } }, 402);
+        }
+        inv.used++;
+        await saveInvites();
+      }
     }
     try {
       return await relay(sess, path + url.search, req, apiKey);
