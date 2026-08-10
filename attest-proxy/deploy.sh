@@ -32,7 +32,12 @@ TGZ=$(mktemp --suffix=.tgz); MF=$(mktemp)
 tar czf "$TGZ" -C "$DIR" server.ts project.json
 SESSION_TOKEN="$SESSION_TOKEN" KEY="$KEY" MAX_CALLS="$MAX_CALLS" python3 -c "
 import json, os
-print(json.dumps({'name':'attest-proxy','runtime':'deno','env':{
+print(json.dumps({'name':'attest-proxy','runtime':'deno',
+  # 'public' controls whether the project shows in the daemon's unauthenticated
+  # listing. It does NOT control reachability — an unlisted project is still
+  # served at its path, which is why session creation is gated separately.
+  'public': os.environ.get('PUBLIC','1') == '1',
+  'env':{
   'ANTHROPIC_API_KEY': os.environ['KEY'],
   'SESSION_TOKEN':     os.environ['SESSION_TOKEN'],
   'MAX_CALLS':         os.environ['MAX_CALLS']}}))" > "$MF"
