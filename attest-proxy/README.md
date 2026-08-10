@@ -59,6 +59,25 @@ the app refuses to open sessions at all unless `SESSION_TOKEN` is set, and caps
 calls per session (`MAX_CALLS`, default 50). `deploy.sh` generates the invite
 token once into `~/.claude/attest-proxy-invite-token`.
 
+## Modes
+
+Two independent axes on this daemon:
+
+| `mode` | `public` | in the public listing | quote |
+|---|---|---|---|
+| `dev` | `false` | no | no |
+| `dev` | `true` | yes | no |
+| `attested` | either | yes | yes |
+
+A project appears in the unauthenticated listing if it is `attested`, or `dev`
+with `public: true`. **`public` controls listing, not reachability** — an
+unlisted project is still served at its path to anyone who knows the name, which
+is why session creation is gated by its own invite token rather than relying on
+being unlisted.
+
+This app is deployed `dev` + `public: true`, alongside `goodpoint-box`,
+`interleave` and `screenshare-debug`.
+
 ## Status
 
 `mode: dev`, so `GetQuote` is unavailable — the broker socket is only mounted for
