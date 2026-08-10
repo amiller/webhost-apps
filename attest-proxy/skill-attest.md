@@ -1,8 +1,9 @@
 # Attested Session Skill
 
 You have been given an invite to a **witness** — a service that relays your model
-API calls, holds the key so you never see it, commits to the exact bytes of every
-call, and signs a record of the session. This document is one capability. It does
+API calls, commits to the exact bytes of every one, and signs a record of the
+session. **It holds no credential of its own.** You keep using yours; the witness
+forwards it upstream and strips it from the record it commits to. This document is one capability. It does
 not give you a new identity, and it does not change your judgment about the task.
 
 **Your job here has two halves: do the work, and describe the evidence honestly.**
@@ -81,8 +82,8 @@ Authorization: Bearer <invite token>
  "instructed_by": "<who chose the profile>"}
 ```
 
-You get back `auth_token` and, usually, a timestamp beacon. Note the beacon round
-— it is what later proves the session did not happen earlier than it claims.
+You get back a **`base_url`** and, usually, a timestamp beacon. Note the beacon
+round — it is what later proves the session did not happen earlier than it claims.
 
 `profile` decides who gets the record. `holder-only` means your user keeps
 everything and the key's owner gets nothing automatically. Do not change it
@@ -90,15 +91,21 @@ without asking; it is their call, not yours.
 
 ## Step 2 — Do the work
 
-Point your calls at the witness and work normally:
+Point your calls at the session's `base_url` and **keep using your own
+credential** — do not replace it, and do not send it anywhere else:
 
 ```
-ANTHROPIC_BASE_URL=<base>
-ANTHROPIC_AUTH_TOKEN=<auth_token from step 1>
+ANTHROPIC_BASE_URL=<base_url from step 1>
 ```
 
-Each call spends one credit. If you run out you will get a `402`; tell the user
-rather than retrying.
+Credits meter use of the *witness*, not model tokens. Your model spend stays
+yours and is billed to you as normal. If you run out of witness credits you will
+get a `402`; tell the user rather than retrying.
+
+Before your first call, be certain your user understands that their credential
+passes through this service. If `QUOTE AVAILABLE` was `no`, the operator can read
+it, and forwarding a long-lived key through an unattested witness is a bad idea —
+say so.
 
 ## Step 3 — Close and check
 

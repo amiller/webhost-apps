@@ -182,21 +182,26 @@ function cfg(ctx: { env?: Record<string, string> } | undefined, key: string): st
 
 // --- the interposer ---------------------------------------------------------
 
-function sessionFrom(req: Request): Session | null {
-  const auth = req.headers.get("authorization") ?? "";
-  const key = req.headers.get("x-api-key") ?? "";
-  const tok = (auth.replace(/^Bearer\s+/i, "") || key).trim();
-  return tok.startsWith("sess_") ? sessions.get(tok.slice(5)) ?? null : null;
+/** The caller's own credential, taken from whichever header their client uses.
+ *  It is forwarded upstream and never stored — the redacted transcript keeps the
+ *  $APIKEY marker in its place, so no commitment contains it. */
+function callerCredential(req: Request): { header: string; value: string } | null {
+  const x = req.headers.get("x-api-key");
+  if (x) return { header: "x-api-key", value: x };
+  const a = req.headers.get("authorization");
+  if (a) return { header: "authorization", value: a };
+  return null;
 }
 
 const PASS = ["content-type", "accept", "anthropic-version", "anthropic-beta"];
 
-async function relay(sess: Session, path: string, req: Request, apiKey: string) {
+async function relay(sess: Session, path: string, req: Request,
+                     cred: { header: string; value: string }) {
   const bodyBytes = new Uint8Array(await req.arrayBuffer());
   const declared = declare(bodyBytes, sess.purpose);
 
   // The redacted form keeps $APIKEY literal, exactly as the chip commits to it.
-  const headers: Record<string, string> = { host: UPSTREAM, "x-api-key": "$APIKEY" };
+  const headers: Record<string, string> = { host: UPSTREAM, [cred.header]: "$APIKEY" };
   for (const h of PASS) {
     const v = req.headers.get(h);
     if (v) headers[h] = v;
@@ -207,10 +212,13 @@ async function relay(sess: Session, path: string, req: Request, apiKey: string) 
   const redacted = concat(enc.encode(head), declared);
 
   const t0 = Date.now();
+  // `host` is a forbidden header for fetch and makes it throw; it belongs only in
+  // the transcript string we commit to, which is a record of the request line and
+  // headers as sent on the wire.
+  const outHeaders = { ...headers, [cred.header]: cred.value } as Record<string, string>;
+  delete outHeaders.host;
   const upstream = await fetch(`https://${UPSTREAM}${path}`, {
-    method: "POST",
-    headers: { ...headers, host: UPSTREAM, "x-api-key": apiKey },
-    body: declared,
+    method: "POST", headers: outHeaders, body: declared,
   });
   const respBody = new Uint8Array(await upstream.arrayBuffer());
 
@@ -308,9 +316,10 @@ function claims(quoteAvailable: boolean) {
     "token counts and the model name, as reported by the provider inside its own response",
     "a lower bound on when the session ran, if a timestamp beacon is present",
     "that the transcript shown matches its commitment",
+    "that the witness held no spending credential of its own — you supplied yours",
   ];
   const mayNot = [
-    "that the operator cannot read the transcript",
+    "that the operator cannot read the transcript, or the credential you send it",
     "that any particular description of the work is accurate — no checker runs here",
   ];
   if (quoteAvailable) {
@@ -319,6 +328,8 @@ function claims(quoteAvailable: boolean) {
     mayNot.unshift(
       "that any of this is attested — this deployment is in dev mode and issues NO quote",
       "that a confidential VM protected the session",
+      "that the credential you forward through it is safe from the operator — in dev "
+        + "mode it is not, and sending a long-lived key here is unwise",
     );
   }
   return {
@@ -468,7 +479,7 @@ what you spent and on what, without showing the transcript.</p>
 <h2>Status</h2>
 <table><tbody>
 <tr><th>open sessions</th><td>${state.sessions}</td></tr>
-<tr><th>api key</th><td>${badge(state.keyed, "configured", "not configured")}</td></tr>
+<tr><th>credential</th><td><span class="ok">none held — you bring your own</span></td></tr>
 <tr><th>session gate</th><td>${badge(state.gated, "invite token required", "closed — no SESSION_TOKEN set")}</td></tr>
 <tr><th>attestation</th><td><a href="../_api/verification/attest-proxy">/_api/verification/attest-proxy</a></td></tr>
 </tbody></table>
@@ -519,18 +530,17 @@ export default async function handler(
   const publicBase = cfg(ctx, "PUBLIC_BASE")
     || (fwdHost && !fwdHost.startsWith("172.") ? `${fwdProto}://${fwdHost}/attest-proxy` : url.origin);
   const path = url.pathname;
-  const apiKey = cfg(ctx, "ANTHROPIC_API_KEY");
 
   if (path === "/" || path === "/health") {
     const gated = cfg(ctx, "SESSION_TOKEN").length > 0;
     if (path === "/" && (req.headers.get("accept") ?? "").includes("text/html")) {
-      return new Response(landing({ sessions: sessions.size, keyed: apiKey.length > 0, gated }),
+      return new Response(landing({ sessions: sessions.size, keyed: false, gated }),
         { headers: { "content-type": "text/html; charset=utf-8" } });
     }
     return json({
       service: "edge-tee attested interposer",
       sessions: sessions.size,
-      key_present: apiKey.length > 0, gated,
+      holds_no_credential: true, gated,
       commitment: "zktls-v1", root: "zktls-root-v2 over an RFC 6962 tree",
     });
   }
@@ -584,12 +594,13 @@ export default async function handler(
       attestation: claims(quoteAvailable),
       how_to_use: {
         "1_open": `POST ${base}/session  (Authorization: Bearer <this invite token>) ` +
-                  `body {"purpose":"...","profile":"holder-only"}`,
-        "2_run": "set ANTHROPIC_BASE_URL=" + base + " and ANTHROPIC_AUTH_TOKEN=<auth_token>, " +
-                 "then run your agent normally",
+                  `body {"purpose":"...","profile":"holder-only"}  -> returns base_url`,
+        "2_run": "set ANTHROPIC_BASE_URL to the returned base_url and keep using YOUR OWN "
+               + "model credential — this witness holds none and forwards yours upstream",
         "3_close": `POST ${base}/session/<id>/close  -> the signed bundle`,
         "4_check": "recompute it offline with attest.py check <bundle>",
       },
+      credits_meter: "use of the witness, not model tokens. Your model spend is yours.",
       skill: "https://raw.githubusercontent.com/amiller/webhost-apps/main/attest-proxy/skill-attest.md",
       read_the_skill_first:
         "Fetch `skill` and follow it. It contains a Step 0 you must run before " +
@@ -630,8 +641,11 @@ export default async function handler(
       meta: sessionMeta(profile, purpose),
       calls: [], opened: new Date().toISOString(),
     });
-    return json({ session_id: id, auth_token: `sess_${id}`, purpose, profile,
-                  beacon, not_before: beacon ? `drand round ${beacon.round}` : null });
+    return json({ session_id: id, purpose, profile, beacon,
+                  base_url: `${publicBase}/s/${id}`,
+                  how: "set ANTHROPIC_BASE_URL to base_url and keep using your own "
+                     + "credential; this witness holds none and forwards yours upstream",
+                  not_before: beacon ? `drand round ${beacon.round}` : null });
   }
 
   const closing = path.match(/^\/session\/([0-9a-f]{32})\/close$/);
@@ -666,8 +680,10 @@ export default async function handler(
     });
   }
 
-  if (req.method === "POST" && path.startsWith("/v1/")) {
-    const sess = sessionFrom(req);
+  const relayPath = path.match(/^\/s\/([0-9a-f]{32})(\/v1\/.*)$/);
+  if (req.method === "POST" && relayPath) {
+    const sess = sessions.get(relayPath[1]) ?? null;
+    const cred = callerCredential(req);
     const maxCalls = Number(cfg(ctx, "MAX_CALLS") || 50);
     if (sess && sess.calls.length >= maxCalls) {
       return json({ type: "error", error: { type: "edge_tee_budget",
@@ -675,11 +691,11 @@ export default async function handler(
     }
     if (!sess) {
       return json({ type: "error", error: { type: "edge_tee_no_session",
-        message: "open a session first and pass ANTHROPIC_AUTH_TOKEN=sess_<id>" } }, 401);
+        message: "unknown session; open one and use its base_url" } }, 404);
     }
-    if (!apiKey) {
-      return json({ type: "error", error: { type: "edge_tee_no_key",
-        message: "no ANTHROPIC_API_KEY in this deployment's env" } }, 502);
+    if (!cred) {
+      return json({ type: "error", error: { type: "edge_tee_no_credential",
+        message: "send your own model credential; this witness holds none" } }, 401);
     }
     if (sess.invite) {
       const inv = invites.get(sess.invite);
@@ -693,7 +709,7 @@ export default async function handler(
       }
     }
     try {
-      return await relay(sess, path + url.search, req, apiKey);
+      return await relay(sess, relayPath[2] + url.search, req, cred);
     } catch (e) {
       return json({ type: "error", error: { type: "edge_tee_relay_failed",
         message: String(e) } }, 502);
