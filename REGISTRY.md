@@ -39,6 +39,7 @@ Both forms end with a double-quoted expected string. The leading token selects w
 |---|---|
 | `` title "<text>" `` | PASS iff `document.title.trim() === "<text>"` |
 | `` <css-selector> "<text>" `` | PASS iff `document.querySelector("<css-selector>")?.textContent.trim() === "<text>"` |
+| attest-proxy | deno | prod | `deploy.sh` (needs `TEE_DAEMON_TOKEN`, `CVM`) | [✓ live](https://pod.dstack.soc1024.com/attest-proxy/) | https://pod.dstack.soc1024.com/attest-proxy/ | `title "attest-proxy — witnessed agent sessions"` | Witnessed agent sessions: holds the API key, commits to every call, signs a Merkle root. Client is `attest.py` (stdlib only). **dev mode** — promote for real TDX quotes. Session creation is gated by an invite token; refuses to open sessions if unset. |
 
 `title` is the default and matches what the gate has always asserted (an exact document.title). The
 selector form lets a row pin a signal deeper than the title when a title is generic or shared. Any
