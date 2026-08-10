@@ -384,10 +384,12 @@ ${quoteAvailable
 <p><b>${remaining}</b> calls remaining of ${inv.max_calls}.</p>
 
 <h2>Give this to your agent</h2>
-<p>Paste this into Claude Code and it will read the protocol and set itself up:</p>
-<pre>Read ${base}/invite/${inv.token} (send Accept: application/json).
-Follow it to run this task through the witness, then verify the
-bundle and tell me exactly what it does and does not prove.</pre>
+<p>Paste this into Claude Code. It needs network access, so approve the fetch when
+asked — or start the session with
+<code>--allowedTools "WebFetch(domain:${new URL(base).host})"</code>.</p>
+<pre>Read ${base}/invite/${inv.token}.json and follow the skill it
+points to. Run Step 0 first and tell me what mode this is in and
+what it does and does not prove, before doing any work.</pre>
 
 <h2>Or do it by hand</h2>
 <pre>curl -X POST ${base}/session \\
@@ -539,7 +541,7 @@ export default async function handler(
     return json({ ...inv, url: `${base}/invite/${inv.token}`, store: inviteStoreState });
   }
 
-  const inviteView = path.match(/^\/invite\/([0-9a-f]{32})$/);
+  const inviteView = path.match(/^\/invite\/([0-9a-f]{32})(?:\.json)?$/);
   if (req.method === "GET" && inviteView) {
     await loadInvites(ctx?.dataDir);
     const inv = invites.get(inviteView[1]);
@@ -547,7 +549,11 @@ export default async function handler(
     const quoteAvailable = await hasBroker();
     const remaining = Math.max(0, inv.max_calls - inv.used);
     const base = publicBase;
-    if ((req.headers.get("accept") ?? "").includes("text/html")) {
+    // .json is the agent's path: WebFetch-style tools cannot set an Accept
+    // header, so relying on content negotiation alone leaves them stranded.
+    const wantsHtml = !path.endsWith(".json")
+      && (req.headers.get("accept") ?? "").includes("text/html");
+    if (wantsHtml) {
       return new Response(invitePage(inv, remaining, base, quoteAvailable),
         { headers: { "content-type": "text/html; charset=utf-8" } });
     }

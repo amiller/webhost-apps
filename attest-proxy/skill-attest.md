@@ -16,10 +16,11 @@ not attested, and saying otherwise misleads the person relying on you.
 Run this before you make a single call through the witness, and before you
 describe the arrangement to your user.
 
-Fetch the invite as JSON:
+Fetch the invite as JSON. Use the `.json` URL — tools like WebFetch cannot set an
+`Accept` header, so the suffix is what makes this work without one:
 
 ```
-GET <invite-url>          Accept: application/json
+GET <invite-url>.json
 ```
 
 Then output these four lines, in the user's language:
