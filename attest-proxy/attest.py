@@ -118,23 +118,42 @@ def cmd_run(a):
 
 
 def _usage_of(bundle):
-    """Token counts as Anthropic reported them, inside responses this service
-    received over TLS against a pinned root."""
-    tin = tout = 0
+    """Token counts and model as the provider reported them, inside responses
+    this witness received over TLS against a pinned root — the provider's own
+    figures, not the holder's.
+
+    Handles both shapes: a single JSON body, and the SSE stream agents actually
+    use, where usage arrives split across message_start and message_delta.
+    """
+    tin = tout = tcache = 0
     models = set()
     for c in bundle.get("calls", []):
-        try:
-            body = base64.b64decode(c["response_b64"])
-            body = body.split(b"\r\n\r\n", 1)[-1]
-            d = json.loads(body)
-        except Exception:
-            continue
-        u = d.get("usage") or {}
-        tin += u.get("input_tokens", 0) or 0
-        tout += u.get("output_tokens", 0) or 0
-        if d.get("model"):
-            models.add(d["model"])
-    return tin, tout, sorted(models)
+        body = base64.b64decode(c["response_b64"]).split(b"\r\n\r\n", 1)[-1]
+        text = body.decode("utf-8", "replace")
+        events = []
+        if text.lstrip().startswith("{"):
+            try:
+                events = [json.loads(text)]
+            except Exception:
+                events = []
+        else:
+            for line in text.splitlines():
+                if line.startswith("data: "):
+                    try:
+                        events.append(json.loads(line[6:]))
+                    except Exception:
+                        pass
+        for e in events:
+            msg = e.get("message") if isinstance(e.get("message"), dict) else e
+            if isinstance(msg, dict) and msg.get("model"):
+                models.add(msg["model"])
+            u = (msg.get("usage") if isinstance(msg, dict) else None) or e.get("usage") or {}
+            if isinstance(u, dict):
+                tin += u.get("input_tokens", 0) or 0
+                tout += u.get("output_tokens", 0) or 0
+                tcache += (u.get("cache_creation_input_tokens", 0) or 0) \
+                    + (u.get("cache_read_input_tokens", 0) or 0)
+    return tin, tout, tcache, sorted(models)
 
 
 def cmd_check(a):
@@ -160,15 +179,17 @@ def cmd_check(a):
     if b.get("report_data") and rd.hex() != b["report_data"]:
         raise SystemExit("report_data does not bind this root and beacon")
 
-    tin, tout, models = _usage_of(b)
+    tin, tout, tcache, models = _usage_of(b)
     print(f"purpose  {b['purpose']!r}")
     print(f"release  {b['release']['profile']}"
           + (f" (instructed by {b['release']['instructed_by']})"
              if b["release"].get("instructed_by") else ""))
     if b.get("beacon"):
         print(f"not before  drand round {b['beacon']['round']}")
-    print(f"usage    {tin} in / {tout} out tokens, model(s): {', '.join(models) or 'n/a'}"
-          "   [Anthropic's own figures, from responses received over pinned TLS]")
+    print(f"usage    {tin} in / {tout} out / {tcache} cached tokens"
+          f"   model(s): {', '.join(models) or 'n/a'}")
+    print("         [the provider's own figures, read out of responses this witness")
+    print("          received over TLS against a pinned root]")
     if b.get("quote"):
         print(f"quote    present, binds report_data {b['report_data'][:16]}…")
         print(f"         verify the CVM and app measurements at "
