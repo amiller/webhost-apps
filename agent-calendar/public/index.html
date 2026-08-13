@@ -1,0 +1,47 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agent Calendar</title>
+<style>
+:root{--ink1:#00838a;--ink2:#ff48b0;--paper:#f8f7f3;--deep:#123f43;--bg:var(--paper);--text:var(--deep);--faint:color-mix(in srgb,var(--deep) 55%,var(--paper));--rule:color-mix(in srgb,var(--deep) 16%,var(--paper));--card:#fff;--wash1:color-mix(in srgb,var(--ink1) 15%,var(--paper));--wash2:color-mix(in srgb,var(--ink2) 17%,var(--paper));--i1-text:#00676d;--i2-text:#c2187a;--warn:#a8780c;--sans:"Helvetica Neue",Arial,sans-serif;--cond:"Arial Narrow","Helvetica Neue",sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+@media(prefers-color-scheme:dark){:root{--ink1:#2fbdc4;--ink2:#ff5fbb;--paper:#0e1f21;--deep:#081517;--bg:#0e1f21;--text:#e9f0ee;--faint:color-mix(in srgb,#e9f0ee 55%,#0e1f21);--rule:color-mix(in srgb,#e9f0ee 14%,#0e1f21);--card:#142829;--wash1:color-mix(in srgb,#2fbdc4 20%,#0e1f21);--wash2:color-mix(in srgb,#ff5fbb 20%,#0e1f21);--i1-text:#5fd3d9;--i2-text:#ff8ccb}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 var(--sans)}a{color:var(--i1-text)}:focus-visible{outline:2px solid var(--ink2);outline-offset:2px}.wrap{max-width:720px;margin:auto;padding:28px 16px 72px}h1{font:800 clamp(32px,7vw,58px)/.94 var(--cond);text-transform:uppercase;color:var(--ink1);text-shadow:1px 1px 0 var(--ink2);margin:0}.label{font:500 11px/1 var(--mono);letter-spacing:.16em;text-transform:lowercase;color:var(--faint)}.sub{color:var(--faint);font:13px var(--mono)}.card{background:var(--card);border:2.5px solid var(--ink1);padding:18px;margin:18px 0}.title{font:800 16px var(--cond);text-transform:uppercase;letter-spacing:.08em}.btn{display:inline-flex;align-items:center;font:800 14px var(--cond);text-transform:uppercase;letter-spacing:.12em;border:0;padding:11px 18px;cursor:pointer;background:var(--ink1);color:#fff;box-shadow:3px 3px 0 var(--ink2)}.btn.ghost{background:transparent;color:var(--i1-text);border:3px solid var(--ink1);box-shadow:none}.btn:disabled{opacity:.5;cursor:wait}.pill{display:inline-flex;padding:4px 10px;border-radius:999px;font:12px var(--mono);background:var(--wash1);color:var(--i1-text)}.pill.bad{background:var(--wash2);color:var(--i2-text)}.note{background:var(--wash1);border-left:6px solid var(--ink1);padding:12px 14px;margin:16px 0}.note.bad{background:var(--wash2);border-color:var(--ink2);color:var(--i2-text)}.block{background:var(--deep);color:var(--paper);border-left:12px solid var(--ink2);padding:14px 18px;font:13px/1.7 var(--mono);overflow:auto}.row{display:flex;justify-content:space-between;gap:14px;padding:13px 0;border-bottom:1px solid var(--rule)}.row:last-child{border-bottom:0}.meta{font:12px var(--mono);color:var(--faint)}label{display:block;margin:12px 0 0;font:11px var(--mono);letter-spacing:.12em;text-transform:lowercase;color:var(--faint)}input{display:block;width:100%;margin-top:5px;padding:10px;border:1px solid var(--rule);border-radius:0;background:var(--paper);color:var(--text);font:15px var(--sans)}.acts{display:flex;gap:10px;flex-wrap:wrap;margin-top:15px}.empty{color:var(--faint);font:13px var(--mono)}
+</style>
+<main class="wrap">
+  <p class="label">server-to-server · google calendar v3</p>
+  <h1>Agent Calendar</h1>
+  <p class="sub">The swarm’s non-human identity owns the calendar.</p>
+  <p><span class="pill" id="status">connecting to live calendar…</span></p>
+  <div id="message" class="note" hidden></div>
+
+  <section class="card">
+    <div class="title">Upcoming work</div>
+    <div id="events" class="empty" style="margin-top:10px">Loading live events…</div>
+    <div class="acts"><button class="btn ghost" id="reload">Reload events</button></div>
+  </section>
+
+  <section class="card">
+    <div class="title">Book the next scheduled work</div>
+    <label>summary<input id="summary" value="Swarm scheduled work"></label>
+    <label>start (ISO 8601)<input id="start" type="datetime-local"></label>
+    <label>end (ISO 8601)<input id="end" type="datetime-local"></label>
+    <div class="acts"><button class="btn" id="create">Create event in the real calendar</button></div>
+  </section>
+
+  <section class="card">
+    <div class="title">Teammate read capability</div>
+    <p>Mint a Google token with <code>calendar.readonly</code>. It can read this service account’s calendar but cannot create events.</p>
+    <button class="btn ghost" id="mint">Mint read-only token</button>
+    <div id="token" style="margin-top:12px"></div>
+  </section>
+</main>
+<script>
+const $=id=>document.getElementById(id);const esc=s=>String(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function note(text,bad=false){$('message').hidden=!text;$('message').className='note'+(bad?' bad':'');$('message').textContent=text||''}
+function when(event){const x=event.start?.dateTime||event.start?.date;try{return new Date(x).toLocaleString()}catch{return x||'unscheduled'}}
+async function api(path,init){const r=await fetch(path,init);const b=await r.json().catch(()=>({}));if(!r.ok)throw Error(b.error||`request failed (${r.status})`);return b}
+async function load(){ $('status').textContent='reading live events…';try{const b=await api('/api/events');const list=b.events||[];$('events').className=list.length?'':'empty';$('events').innerHTML=list.length?list.map(e=>`<div class="row"><div><b>${esc(e.summary||'(untitled)')}</b><div class="meta">${esc(when(e))}</div></div><span class="meta">${esc(e.id)}</span></div>`).join(''):'No upcoming events returned by Google Calendar.';$('status').textContent=`live · ${list.length} event${list.length===1?'':'s'}`}catch(e){$('status').textContent='live read failed';note(e.message,true);$('events').textContent='The Google response is shown as an error; no sample data is used.'}}
+$('reload').onclick=load;$('create').onclick=async()=>{const b=$('create');b.disabled=true;note('Creating the event in Google Calendar…');try{const v=await api('/api/events',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({summary:$('summary').value,start:$('start').value,end:$('end').value})});note(`Created ${v.event?.summary||'the event'} in the real calendar.`);await load()}catch(e){note(e.message,true)}finally{b.disabled=false}};
+$('mint').onclick=async()=>{const b=$('mint');b.disabled=true;try{const v=await api('/api/readonly-token',{method:'POST'});$('token').innerHTML=`<div class="block"><div>scope&nbsp;&nbsp;${esc(v.scope)}</div><div>calendar&nbsp;${esc(v.calendar_id)}</div><div style="word-break:break-all;margin-top:8px">${esc(v.access_token)}</div></div>`;note('Read-only capability minted. Treat this bearer token as a secret.')}catch(e){note(e.message,true)}finally{b.disabled=false}};
+const now=new Date(Date.now()+3600000),later=new Date(now.getTime()+3600000);$('start').value=now.toISOString().slice(0,16);$('end').value=later.toISOString().slice(0,16);load();
+</script>
