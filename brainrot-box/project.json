@@ -6,6 +6,10 @@
   "listen": { "port": 8080 },
   "env": {
     "TOOLSMITH_MODEL": "deepseek-ai/DeepSeek-V4-Flash",
-    "COMPOSITOR_MODEL": "unsloth/Mistral-Nemo-Instruct-2407-TEE"
+    "COMPOSITOR_MODEL": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+    "JUDGE_MODEL": "deepseek-ai/DeepSeek-V4-Flash",
+    "DISTILL_MODEL": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+    "DECODER_MODEL": "deepseek-ai/DeepSeek-V4-Flash",
+    "STATE_MODEL": "deepseek-ai/DeepSeek-V4-Flash"
   }
 }

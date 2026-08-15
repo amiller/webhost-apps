@@ -1,8 +1,10 @@
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import handler, {
   GoodpointRuntime,
+  HEARING_LANES,
   TraceStore,
   isBanger,
+  leaksVerbatim,
   mergeOtterSegments,
   newSessionId,
   normalizeSegments,
@@ -11,6 +13,8 @@ import handler, {
   parseRecap,
   parseShift,
   parseFlow,
+  sanitizeBrief,
+  sanitizeDistilled,
   SNAP_CAP_FILES,
   SNAP_MAX_BYTES,
   STARTER_TOOLS,
@@ -505,8 +509,13 @@ Deno.test("#92 /diag surfaces the self-eval fields after a nudge", async () => {
   assertEquals(body.self_eval.stale_threshold, 8);
   assertEquals(body.self_eval.nudge_count, 1);
   assert(body.self_eval.last_nudge_action.length > 0);
-  assertEquals(typeof body.e2ee.critic_model, "string");
-  assertEquals(body.e2ee.critic_enabled, false);
+  // #94: the flat e2ee block became the per-lane routing block; the critic entry carries its model
+  // and enabled flag there.
+  const byLane = Object.fromEntries(body.routing.map((r: { lane: string }) => [r.lane, r]));
+  assertEquals(typeof byLane.critic.model, "string");
+  assertEquals(byLane.critic.enabled, false);
+  assertEquals(byLane.critic.hears_room, false);
+  assertEquals(byLane.judge.hears_room, true);
 });
 
 Deno.test("#92 optional critic (via override) feeds the brief, only when configured", async () => {
@@ -640,4 +649,153 @@ Deno.test("#125 snapshots: path traversal in /snapshots/<s>/<f> is rejected (404
   const res = await handler(new Request("https://x/snapshots/..%2F..%2Fevil.txt/foo.jpg"), { runtime: rt });
   // the route regex splits on the last `/`, and safeSeg rejects `..`; never reads outside the dir
   assert([404, 400].includes(res.status));
+});
+
+// #94 privacy cleave -----------------------------------------------------------
+// The paint crew (toolsmith/compositor/critic) sees a sanitized brief; the verbatim quote flows
+// ONLY to the client. Hearing lanes (judge/distill/decoder/state/convtype) are e2ee by construction;
+// paint lanes optionally go hosted when BASE_URL is set.
+function trigrams(s: string): Set<string> {
+  const words = s.toLowerCase().replace(/\s+/g, " ").trim().split(" ");
+  const g = new Set<string>();
+  for (let i = 0; i + 3 <= words.length; i++) g.add(words.slice(i, i + 3).join(" "));
+  return g;
+}
+
+Deno.test("#94 sanitizeBrief carries no verbatim trigram of the quote", () => {
+  const quote = "Ship the verifiable subset before chasing the long tail of work.";
+  const brief = sanitizeBrief({ t: Date.now(), quote, why: "scope clarity", score: 9 });
+  const briefStr = JSON.stringify(brief).toLowerCase();
+  for (const g of trigrams(quote)) {
+    assert(!briefStr.includes(g), `brief leaks trigram of the quote: "${g}"`);
+  }
+  assert(!briefStr.includes("verifiable"), "no quote word leaks into the brief");
+  assert(!briefStr.includes("subset"), "no quote word leaks into the brief");
+  assert(!briefStr.includes("scope clarity"), "the judge why must not flow into the brief");
+  assert(/\bword\b/.test(brief.emphasis), "emphasis is a structural descriptor, not content");
+  assertEquals(brief.mood, "good point");
+});
+
+Deno.test("#94 judge event keeps the verbatim quote for the client, sanitized brief for the crew", async () => {
+  const quote = "Ship the verifiable subset before chasing the long tail of work.";
+  const rt = new GoodpointRuntime(
+    env,
+    async () => ({ good_point: true, quote, why: "scope clarity", score: 9 }),
+    undefined,
+    null,
+  );
+  rt.transcript.push({ order: 1, text: "filler ".repeat(20), t: Date.now() });
+  const point = await rt.judgeRecent(true);
+  assertEquals(point?.quote, quote, "verbatim quote preserved in the ledger point");
+  const found = rt.events.find((e) => (e.ev as { type?: string }).type === "goodpoint");
+  assert(found, "a goodpoint event was emitted");
+  const ev = found!.ev as { point: { quote: string }; brief: Record<string, string> };
+  assertEquals(ev.point.quote, quote, "client receives the verbatim quote for local canvas render");
+  const briefStr = JSON.stringify(ev.brief).toLowerCase();
+  assert(!briefStr.includes("verifiable"), "no verbatim leak to the brief the crew sees");
+  assert(!briefStr.includes("subset"), "no verbatim leak to the brief the crew sees");
+});
+
+Deno.test("#94 with hosted paint endpoints configured, hearing lanes stay e2ee (rebase ruling)", () => {
+  const hosted: Record<string, string> = {
+    ...env,
+    TOOLSMITH_BASE_URL: "https://fast.example/v1",
+    TOOLSMITH_API_KEY: "k-fast",
+    TOOLSMITH_MODEL: "gpt-fast",
+    COMPOSITOR_BASE_URL: "https://fast2.example/v1",
+    COMPOSITOR_API_KEY: "k-fast2",
+  };
+  const rt = new GoodpointRuntime(hosted);
+  assertEquals(rt.route("toolsmith").transport, "hosted");
+  assertEquals(rt.route("compositor").transport, "hosted");
+  assertEquals(rt.route("critic").transport, "hosted", "critic is compositor-class paint (signatures only)");
+  // every hearing lane ignores the hosted config entirely — no hosted branch exists for them
+  for (const lane of HEARING_LANES) {
+    const r = rt.route(lane);
+    assert(r.transport !== "hosted", `${lane} hears the room and must never go hosted`);
+    assert(!r.baseUrl, `${lane} must not carry a hosted baseUrl`);
+  }
+  assertEquals(rt.route("judge").model, "deepseek-ai/DeepSeek-V4-Flash", "judge ignores TOOLSMITH_MODEL");
+  assertEquals(rt.route("distill").model, "unsloth/Mistral-Nemo-Instruct-2407-TEE", "distill keeps the old compositor default, e2ee");
+  assertEquals(rt.route("distill").transport, "chutes-e2ee");
+  // without hosted config, paint lanes stay e2ee too (defaults preserve pre-cleave behavior)
+  const rt2 = new GoodpointRuntime(env);
+  assertEquals(rt2.route("toolsmith").transport, "near-e2ee");
+  assertEquals(rt2.route("compositor").transport, "chutes-e2ee");
+  assertEquals(rt2.route("judge").transport, "near-e2ee");
+});
+
+Deno.test("#94 with hosted TOOLSMITH configured, tools still forge while judge stays e2ee (mocked)", async () => {
+  const toolJson = '{"name":"x","desc":"d","params":[],"draw":"(ctx,p,t,w,h,txt)=>{}"}';
+  const hosted: Record<string, string> = {
+    ...env,
+    TOOLSMITH_BASE_URL: "https://fast.example/v1",
+    TOOLSMITH_API_KEY: "k-fast",
+  };
+  const rt = new GoodpointRuntime(hosted, undefined, { complete: async () => toolJson }, null);
+  assertEquals(rt.route("toolsmith").transport, "hosted");
+  assertEquals(rt.route("judge").transport, "near-e2ee");
+  await rt.toolsmithTurn(new AbortController().signal);
+  assertEquals(rt.registry.size > 0, true, "toolsmith forged a tool via the mocked hosted transport");
+});
+
+Deno.test("#94 /diag reports per-lane routing (no secrets)", async () => {
+  const hosted: Record<string, string> = {
+    ...env,
+    TOOLSMITH_BASE_URL: "https://fast.example/v1",
+    TOOLSMITH_API_KEY: "secret-never-leak",
+  };
+  const rt = new GoodpointRuntime(hosted, undefined, { complete: async () => '{"layers":[]}' }, null);
+  rt.start();
+  const res = await handler(new Request("https://app.example/diag"), { runtime: rt });
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  const byLane = Object.fromEntries(body.routing.map((r: { lane: string }) => [r.lane, r]));
+  assertEquals(byLane.toolsmith.transport, "hosted");
+  for (const lane of HEARING_LANES) {
+    assert(byLane[lane].transport !== "hosted", `${lane} must never report hosted`);
+    assertEquals(byLane[lane].hears_room, true);
+  }
+  const diagText = JSON.stringify(body);
+  assert(!diagText.includes("secret-never-leak"), "/diag must never disclose api keys");
+  assert(!diagText.includes("fast.example"), "/diag must not disclose the hosted baseUrl either");
+  rt.stop();
+});
+
+Deno.test("#94 distill output is sanitized before the paint crew sees it (verbatim key phrase dropped)", async () => {
+  const recent = "I really think we should ship the tabs before demo day and then celebrate properly tonight";
+  const distillJson = JSON.stringify({
+    mood: "we should ship the tabs before demo day", // verbatim run — must be scrubbed
+    emphasis: "ship the tabs", // #93's key-phrase extract — must become a structural descriptor
+    tone: "rising, electric", // original phrasing — kept
+    direction: "quickening pulse with an upward surge at the turn", // original phrasing — kept
+  });
+  const rt = new GoodpointRuntime(
+    env,
+    undefined,
+    { complete: async (_lane: string, system: string) => system.includes("VISUAL BRIEF") ? distillJson : '{"layers":[]}' },
+    null,
+  );
+  rt.transcript.push({ order: 1, text: recent, t: Date.now() });
+  rt.lastDistill = 0;
+  await rt.distill();
+  const briefStr = JSON.stringify(rt.brief).toLowerCase();
+  for (const g of trigrams(recent)) {
+    assert(!briefStr.includes(g), `distill brief leaks trigram of the transcript: "${g}"`);
+  }
+  assert(!briefStr.includes("ship the tabs"), "the #93 key phrase must not reach the crew verbatim");
+  assertEquals(rt.brief.emphasis, "3-word declarative", "emphasis is structural: word count + register");
+  assertEquals(rt.brief.tone, "rising, electric", "original phrasing survives");
+  assertEquals(rt.brief.direction.includes("quickening pulse"), true, "original phrasing survives");
+  assertEquals(rt.brief.mood, "", "a verbatim mood is blanked, never masked");
+  const status = rt.events.find((e) => (e.ev as { type?: string }).type === "status");
+  assert(status, "the scrub is announced as a status event (honest, visible)");
+  assert(String((status!.ev as { text?: string }).text).includes("mood"), "the status names the scrubbed field");
+});
+
+Deno.test("#94 trigram leak detector: 3 consecutive transcript words trip it, paraphrase does not", () => {
+  const transcript = "ship the verifiable subset before chasing anything else";
+  assert(leaksVerbatim("we will ship the verifiable subset now", transcript), "3-gram overlap detected");
+  assert(!leaksVerbatim("deliver the provable part first, defer the rest", transcript), "paraphrase passes");
+  assert(!leaksVerbatim("", transcript), "empty field is trivially clean");
 });

@@ -2,6 +2,7 @@ import vm from "node:vm";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { nearStream } from "./near_e2ee.ts";
 import { chutesStream } from "./chutes_e2ee.ts";
+import { hostedStream } from "./hosted_stream.ts";
 
 type Env = Record<string, string | undefined>;
 
@@ -12,6 +13,18 @@ interface Cfg {
   chutesKey: string;
   toolsmithModel: string;
   compositorModel: string;
+  // #94 privacy cleave: HEARING lanes (judge/distill/decoder/state/convtype) consume the verbatim
+  // transcript, so each has its OWN e2ee model — they never inherit a possibly-hosted
+  // TOOLSMITH/COMPOSITOR model. Paint lanes (toolsmith/compositor/critic) see only sanitized
+  // input and MAY optionally route to a plaintext hosted endpoint when BASE_URL is set.
+  judgeModel: string;
+  distillModel: string;
+  decoderModel: string;
+  stateModel: string;
+  toolsmithBaseUrl: string;
+  toolsmithApiKey: string;
+  compositorBaseUrl: string;
+  compositorApiKey: string;
   weaveIdleMs: number;
   otterIdleMs: number;
   sttBase: string;
@@ -109,10 +122,10 @@ export interface ConversationState {
 export type StateKind = "recap" | "shift" | "flow";
 
 /** Optional model-stream injection (tests): when set, `streamComplete` calls this instead of
- *  the real NEAR/Chutes e2ee paths, so loops can be exercised with no network egress. */
+ *  the real NEAR/Chutes/hosted paths, so loops can be exercised with no network egress. */
 export interface StreamProvider {
   complete(
-    model: string,
+    lane: Lane,
     system: string,
     user: string,
     maxTokens: number,
@@ -191,7 +204,7 @@ Return STRICT JSON only: {"nodes":[{"seg":<segment number>,"kind":"point","label
 
 // Ported verbatim from interleave — the artistic brief between bangers. Without it (PR #84
 // dropped it) the compositor only ever saw the formulaic banger brief, and output flattened.
-const DISTILL_SYSTEM = `From a live-room transcript (may have fragments/mis-hears), design a VISUAL BRIEF. First pick the few highlights that actually matter (the key phrases, the turn of the discussion) and read the tone (emotional register + energy). Then translate that into a concrete plan for abstract visuals. Output STRICT JSON: {"mood":"one evocative line (<=14 words) to steer visuals by","emphasis":"the single most important short phrase to show on screen (<=6 words)","tone":"emotional register + energy (<=8 words, e.g. 'hushed, reflective' or 'rising, electric')","direction":"a thoughtful effect plan grounded in the highlights + tone: what should move, how, what to emphasize (<=24 words)"}. Ignore filler and noise.`;
+const DISTILL_SYSTEM = `From a live-room transcript (may have fragments/mis-hears), design a VISUAL BRIEF. First pick the few highlights that actually matter (the key phrases, the turn of the discussion) and read the tone (emotional register + energy). Then translate that into a concrete plan for abstract visuals. Output STRICT JSON: {"mood":"one evocative line (<=14 words) to steer visuals by","emphasis":"a STRUCTURAL descriptor of the single most important phrase — word count and sentence register only (e.g. '6-word question'), NEVER the words themselves","tone":"emotional register + energy (<=8 words, e.g. 'hushed, reflective' or 'rising, electric')","direction":"a thoughtful effect plan grounded in the highlights + tone: what should move, how, what to emphasize (<=24 words)"}. Ignore filler and noise. PRIVACY: every field must be your own original phrasing — never copy transcript words verbatim (#94: this brief feeds models that must not read the room).`;
 
 const JUDGE_SYSTEM = `You judge a live meeting transcript for genuinely useful "good points".
 Return STRICT JSON only:
@@ -458,6 +471,110 @@ export function isBanger(j: JudgeResult | null): j is JudgeResult {
   return !!j && j.good_point && j.score >= 7 && j.quote.length > 0;
 }
 
+// --- #94 privacy cleave: lanes, routing, and the sanitized brief -----------------------------
+
+/** A lane is WHO is calling inference, not which model. Hearing lanes (judge, distill, decoder,
+ *  state, convtype) consume the verbatim transcript and are e2ee BY CONSTRUCTION — `route()` gives
+ *  them no hosted branch at all. Paint lanes (toolsmith, compositor, critic) see only sanitized
+ *  input (a scrubbed brief / composition signatures) and may route to a plaintext hosted endpoint
+ *  when configured. This is the operator's boundary ruling from #94: "models that HEAR THE ROOM
+ *  (judge, any transcript→brief distillation incl. #93's) stay on e2ee confidential inference.
+ *  Models that only do AESTHETICS may run on any fast hosted model — IF the brief they receive is
+ *  sanitized." */
+export type Lane = "judge" | "distill" | "decoder" | "state" | "convtype" | "critic" | "toolsmith" | "compositor";
+
+/** Lanes that see verbatim room text. Everything else is the paint crew. */
+export const HEARING_LANES: readonly Lane[] = ["judge", "distill", "decoder", "state", "convtype"];
+
+export interface Route {
+  lane: Lane;
+  model: string;
+  transport: "hosted" | "near-e2ee" | "chutes-e2ee";
+  baseUrl?: string;
+  apiKey?: string;
+}
+
+/** The sanitized brief the paint crew (toolsmith/compositor) is allowed to see. Every field is an
+ *  abstract descriptor — mood label, tone/energy, a STRUCTURAL emphasis descriptor (word-count +
+ *  register), and a motion direction. The verbatim quote and the judge's free-text `why` are
+ *  deliberately ABSENT: they flow to the client alone (SSE `goodpoint.point`) for local canvas
+ *  text, so no LLM downstream of the judge can read the room's words. (#94) */
+export interface Brief {
+  mood: string;
+  emphasis: string;
+  tone: string;
+  direction: string;
+  avoid?: string[];
+}
+
+/** Word 3-grams of a text, lowercased — the verbatim-overlap unit the #94 acceptance uses. */
+export function trigramsOf(s: string): Set<string> {
+  const words = s.toLowerCase().replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  const g = new Set<string>();
+  for (let i = 0; i + 3 <= words.length; i++) g.add(words.slice(i, i + 3).join(" "));
+  return g;
+}
+
+/** True if `field` carries any 3-gram of `transcript` (a verbatim run of room words). */
+export function leaksVerbatim(field: string, transcript: string): boolean {
+  const f = field.toLowerCase();
+  for (const g of trigramsOf(transcript)) {
+    if (f.includes(g)) return true;
+  }
+  return false;
+}
+
+/** Structural description of a phrase: word count + sentence register — NEVER the words. */
+export function describePhrase(p: string): string {
+  const q = p.trim();
+  const words = q.split(/\s+/).filter(Boolean);
+  const register = q.endsWith("?") ? "question" : q.endsWith("!") ? "exclamatory" : "declarative";
+  return `${words.length}-word ${register}`;
+}
+
+/** Banger path: the brief built from a judged point. All fields are constants or structural
+ *  descriptors — no verbatim quote, no judge `why`. */
+export function sanitizeBrief(point: GoodPoint): Brief {
+  const tone = point.score >= 9 ? "triumphant" : point.score >= 8 ? "bright" : "warm";
+  return {
+    mood: "good point",
+    emphasis: describePhrase(point.quote),
+    tone,
+    direction: "make the good point legible; surge motion to emphasize the insight",
+  };
+}
+
+/** Distill path (#93 output, #94 bound): the distill lane ran E2EE and read the transcript, but
+ *  its OUTPUT brief must still carry no verbatim room words downstream — the operator's ruling:
+ *  "its output brief must contain no verbatim n-grams beyond the emphasis descriptor." Emphasis is
+ *  ALWAYS replaced by a structural descriptor of the key phrase; mood/tone/direction are the
+ *  model's own paraphrase and are kept UNLESS they trip the transcript 3-gram check, in which case
+ *  the field is blanked (an absent field reads "—" on the client — honest, never masked) and its
+ *  name is reported so the scrub is visible in the event stream. */
+export function sanitizeDistilled(
+  j: { mood?: unknown; emphasis?: unknown; tone?: unknown; direction?: unknown },
+  transcript: string,
+): { brief: Brief; scrubbed: string[] } {
+  const scrubbed: string[] = [];
+  const keep = (name: string, v: string): string => {
+    const s = v.replace(/\s+/g, " ").trim();
+    if (s && leaksVerbatim(s, transcript)) {
+      scrubbed.push(name);
+      return "";
+    }
+    return s;
+  };
+  return {
+    brief: {
+      mood: keep("mood", String(j.mood ?? "")),
+      emphasis: describePhrase(String(j.emphasis ?? "")),
+      tone: keep("tone", String(j.tone ?? "")),
+      direction: keep("direction", String(j.direction ?? "")),
+    },
+    scrubbed,
+  };
+}
+
 // #88: parse the conversation-type verdict. Defensively clamps both fields; lowercases the type.
 // An unknown type is kept verbatim (honest) rather than forced into the enum — the enum is the
 // target vocabulary, not a mask. Returns null only on non-JSON or a missing type.
@@ -555,6 +672,17 @@ function requireCfg(env: Env): Cfg {
     chutesKey: get("CHUTES_API_KEY"),
     toolsmithModel: get("TOOLSMITH_MODEL") || "deepseek-ai/DeepSeek-V4-Flash",
     compositorModel: get("COMPOSITOR_MODEL") || "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+    // #94 hearing-lane models: defaults preserve pre-cleave behavior (judge/decoder/state/convtype
+    // rode the toolsmith default, distill rode the compositor default) but they no longer INHERIT
+    // TOOLSMITH/COMPOSITOR_MODEL — those may point at hosted models now.
+    judgeModel: get("JUDGE_MODEL") || "deepseek-ai/DeepSeek-V4-Flash",
+    distillModel: get("DISTILL_MODEL") || "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+    decoderModel: get("DECODER_MODEL") || "deepseek-ai/DeepSeek-V4-Flash",
+    stateModel: get("STATE_MODEL") || "deepseek-ai/DeepSeek-V4-Flash",
+    toolsmithBaseUrl: get("TOOLSMITH_BASE_URL"),
+    toolsmithApiKey: get("TOOLSMITH_API_KEY"),
+    compositorBaseUrl: get("COMPOSITOR_BASE_URL"),
+    compositorApiKey: get("COMPOSITOR_API_KEY"),
     weaveIdleMs: Number(get("WEAVE_IDLE_MS")) || 3 * 60_000,
     otterIdleMs: Number(get("OTTER_IDLE_MS")) || 10 * 60_000,
     sttBase: (get("TRANSCRIBE_BASE_URL") || get("NEAR_BASE") || "https://cloud-api.near.ai/v1").replace(/\/+$/, ""),
@@ -898,7 +1026,7 @@ export class GoodpointRuntime {
   lastNudgeAt = 0;
   lastNudgeAction = "";
   toolUseCount = new Map<string, number>();
-  brief: { mood: string; emphasis: string; tone: string; direction: string; avoid?: string[] } = { mood: "", emphasis: "", tone: "", direction: "" };
+  brief: Brief = { mood: "", emphasis: "", tone: "", direction: "" };
   events: { seq: number; ev: unknown }[] = [];
   seq = 0;
   // #124: per-session JSONL trace of every pushed event. null only when explicitly disabled.
@@ -1200,7 +1328,7 @@ export class GoodpointRuntime {
     if (recent.length < 20) return;
     this.lastDistill = Date.now();
     const raw = await this.streamComplete(
-      this.cfg.compositorModel,
+      "distill",
       DISTILL_SYSTEM,
       `Transcript:\n${recent}\n\nJSON:`,
       220,
@@ -1209,13 +1337,13 @@ export class GoodpointRuntime {
     );
     const j = extractJson(raw) as any;
     if (!j || typeof j.mood !== "string") return;
-    this.brief = {
-      mood: j.mood.trim(),
-      emphasis: String(j.emphasis ?? "").trim(),
-      tone: String(j.tone ?? "").trim(),
-      direction: String(j.direction ?? "").trim(),
-      avoid: this.brief.avoid, // #92: keep a pending self-nudge steer alive across a distill rewrite
-    };
+    // #94: the distill lane ran E2EE, but its OUTPUT brief must carry no verbatim room words
+    // downstream — sanitize before it reaches the paint crew (possibly hosted).
+    const { brief, scrubbed } = sanitizeDistilled(j, recent);
+    this.brief = { ...brief, avoid: this.brief.avoid }; // #92: keep a pending self-nudge steer alive
+    if (scrubbed.length) {
+      this.push({ type: "status", text: `distill brief sanitized (verbatim dropped): ${scrubbed.join(", ")}` });
+    }
     this.push({ type: "brief", brief: this.brief });
   }
 
@@ -1228,7 +1356,7 @@ export class GoodpointRuntime {
     const open = this.graphTopics.slice(-8).join(", ") || "(none yet)";
     const lines = batch.map((s) => `${s.order}: ${s.text}`).join("\n");
     const raw = await this.streamComplete(
-      this.cfg.toolsmithModel,
+      "decoder",
       DECODER_SYSTEM,
       `Open topics: ${open}\nSegments:\n${lines}\n\nJSON:`,
       600,
@@ -1266,16 +1394,49 @@ export class GoodpointRuntime {
     return this.transcript.filter((s) => s.t >= since).map((s) => s.text).join(" ").replace(/\s+/g, " ").trim();
   }
 
-  async streamComplete(model: string, system: string, user: string, maxTokens: number, onDelta = (_: string) => {}, signal?: AbortSignal): Promise<string> {
-    if (this.streams) return await this.streams.complete(model, system, user, maxTokens, onDelta, signal);
+  /** Resolve how a lane reaches its model. Hearing lanes ALWAYS take an e2ee path (they read the
+   *  room); paint lanes may optionally route to a plaintext hosted endpoint when their BASE_URL is
+   *  configured — permitted only because their input is sanitized (#94). The critic is
+   *  compositor-class: it reads only composition signatures, so it shares the compositor's hosted
+   *  transport when that is configured. */
+  route(lane: Lane): Route {
+    const e2ee = (model: string): Route["transport"] => model.endsWith("-TEE") ? "chutes-e2ee" : "near-e2ee";
+    if (lane === "judge") return { lane, model: this.cfg.judgeModel, transport: e2ee(this.cfg.judgeModel) };
+    if (lane === "distill") return { lane, model: this.cfg.distillModel, transport: e2ee(this.cfg.distillModel) };
+    if (lane === "decoder") return { lane, model: this.cfg.decoderModel, transport: e2ee(this.cfg.decoderModel) };
+    if (lane === "state" || lane === "convtype") {
+      return { lane, model: this.cfg.stateModel, transport: e2ee(this.cfg.stateModel) };
+    }
+    if (lane === "critic") {
+      if (this.cfg.compositorBaseUrl) {
+        return { lane, model: this.cfg.criticModel, transport: "hosted", baseUrl: this.cfg.compositorBaseUrl, apiKey: this.cfg.compositorApiKey };
+      }
+      return { lane, model: this.cfg.criticModel, transport: e2ee(this.cfg.criticModel) };
+    }
+    if (lane === "toolsmith") {
+      if (this.cfg.toolsmithBaseUrl) {
+        return { lane, model: this.cfg.toolsmithModel, transport: "hosted", baseUrl: this.cfg.toolsmithBaseUrl, apiKey: this.cfg.toolsmithApiKey };
+      }
+      return { lane, model: this.cfg.toolsmithModel, transport: e2ee(this.cfg.toolsmithModel) };
+    }
+    if (this.cfg.compositorBaseUrl) {
+      return { lane, model: this.cfg.compositorModel, transport: "hosted", baseUrl: this.cfg.compositorBaseUrl, apiKey: this.cfg.compositorApiKey };
+    }
+    return { lane, model: this.cfg.compositorModel, transport: e2ee(this.cfg.compositorModel) };
+  }
+
+  async streamComplete(lane: Lane, system: string, user: string, maxTokens: number, onDelta = (_: string) => {}, signal?: AbortSignal): Promise<string> {
+    if (this.streams) return await this.streams.complete(lane, system, user, maxTokens, onDelta, signal);
+    const r = this.route(lane);
     const body = { max_tokens: maxTokens, temperature: 0.25, messages: [{ role: "system", content: system }, { role: "user", content: user }] };
     let content = "";
     const cb = (t: string) => {
       content += t;
       onDelta(t);
     };
-    if (model.endsWith("-TEE")) await chutesStream(this.cfg.chutesKey, model, body, cb, signal);
-    else await nearStream(this.cfg.nearKey, model, body, cb, signal);
+    if (r.transport === "hosted") await hostedStream(r.apiKey!, r.baseUrl!, r.model, body, cb, signal);
+    else if (r.transport === "chutes-e2ee") await chutesStream(this.cfg.chutesKey, r.model, body, cb, signal);
+    else await nearStream(this.cfg.nearKey, r.model, body, cb, signal);
     return content;
   }
 
@@ -1286,18 +1447,15 @@ export class GoodpointRuntime {
     this.lastJudgeAt = Date.now();
     const judge = this.judgeOverride
       ? await this.judgeOverride(text)
-      : parseJudge(await this.streamComplete(this.cfg.toolsmithModel, JUDGE_SYSTEM, `Transcript:\n${text}\n\nJSON:`, 180));
+      : parseJudge(await this.streamComplete("judge", JUDGE_SYSTEM, `Transcript:\n${text}\n\nJSON:`, 180));
     if (!isBanger(judge)) return null;
     const point = { t: Date.now(), quote: judge.quote, why: judge.why, score: judge.score };
     this.ledger.push(point);
     if (this.ledger.length > 80) this.ledger.splice(0, this.ledger.length - 80);
-    this.brief = {
-      mood: `good point: ${point.quote}`,
-      emphasis: point.quote,
-      tone: point.why || "sharp, useful",
-      direction: `Make the banger legible and steer the motion around: ${point.quote}`,
-      avoid: this.brief.avoid, // #92: keep a pending self-nudge steer alive across a banger rewrite
-    };
+    // #94 privacy cleave: the brief carries ONLY abstract descriptors (sanitizeBrief) — the
+    // verbatim quote and the judge's `why` flow to the client alone (goodpoint.point), so no LLM
+    // downstream of the judge (toolsmith/compositor, possibly hosted) can read the room's words.
+    this.brief = { ...sanitizeBrief(point), avoid: this.brief.avoid }; // #92 nudge steer survives
     this.push({ type: "goodpoint", point, brief: this.brief });
     return point;
   }
@@ -1312,7 +1470,7 @@ export class GoodpointRuntime {
     const prior = this.lastTopic ? `Prior topic: ${this.lastTopic}\n` : "";
     const call = async (kind: StateKind, system: string): Promise<string> => {
       if (this.stateOverride) return (await this.stateOverride(kind, text)) ?? "";
-      return await this.streamComplete(this.cfg.toolsmithModel, system, `Transcript:\n${text}\n${prior}JSON:`, 160);
+      return await this.streamComplete("state", system, `Transcript:\n${text}\n${prior}JSON:`, 160);
     };
     const recap = parseRecap(await call("recap", RECAP_SYSTEM));
     if (recap) this.recap = recap.recap;
@@ -1350,7 +1508,7 @@ export class GoodpointRuntime {
     const verdict = this.typeOverride
       ? await this.typeOverride(text)
       : parseConvType(
-        await this.streamComplete(this.cfg.toolsmithModel, TYPE_SYSTEM, `Transcript:\n${text}\n\nJSON:`, 160),
+        await this.streamComplete("convtype", TYPE_SYSTEM, `Transcript:\n${text}\n\nJSON:`, 160),
       );
     if (!verdict || !verdict.type) return null;
     this.convType = verdict;
@@ -1401,7 +1559,7 @@ export class GoodpointRuntime {
       lastFlush = Date.now();
     };
     const raw = await this.streamComplete(
-      this.cfg.toolsmithModel,
+      "toolsmith",
       TOOLSMITH_SYSTEM,
       `Existing tools: ${existing}\nBrief: ${JSON.stringify(this.brief)}${avoid}\nBuild one distinct compact layer tool. JSON only:`,
       1600,
@@ -1439,7 +1597,7 @@ export class GoodpointRuntime {
     this.push({ type: "activity", who: "compositor", state: "composing" });
     const palette = [...this.registry.values()].map((t) => `${t.name}(${t.params.map((p) => p.name).join(",")}) - ${t.desc}`).join("\n");
     const raw = await this.streamComplete(
-      this.cfg.compositorModel,
+      "compositor",
       COMPOSITOR_SYSTEM,
       `Palette:\n${palette}\n\nBrief:\n${JSON.stringify(this.brief)}\n\nCurrent: ${JSON.stringify(this.composition)}\n\nJSON:`,
       400,
@@ -1561,7 +1719,7 @@ export class GoodpointRuntime {
     const verdict = this.criticOverride
       ? await this.criticOverride(recent)
       : await this.streamComplete(
-        this.cfg.criticModel,
+        "critic",
         COMPOSITOR_SYSTEM,
         `Recent composition signatures:\n${recent.join("\n")}\n\nAre the last 5 visually distinct? If not, name ONE concrete change (mood/motion). One short line:`,
         60,
@@ -1896,13 +2054,18 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
       tools: { count: app.registry.size, max: app.cfg.maxTools },
       graph: { nodes: app.graphNodes.length, topics: app.graphTopics.length, undecoded: app.decodeQueue.length - app.decodedCount },
       mic_segments: app.micSeq,
-      e2ee: {
-        toolsmith_model: app.cfg.toolsmithModel,
-        compositor_model: app.cfg.compositorModel,
-        critic_model: app.cfg.criticModel,
-        critic_enabled: app.cfg.enableCritic,
-        ready: true,
-      },
+      // #94: per-lane routing replaces the flat e2ee block. Hearing lanes are e2ee by construction;
+      // paint lanes report "hosted" only when BASE_URL is configured. Never emits keys or URLs.
+      routing: (["judge", "distill", "decoder", "state", "convtype", "critic", "toolsmith", "compositor"] as Lane[]).map((lane) => {
+        const r = app.route(lane);
+        return {
+          lane,
+          model: r.model,
+          transport: r.transport,
+          hears_room: HEARING_LANES.includes(lane),
+          ...(lane === "critic" ? { enabled: app.cfg.enableCritic } : {}),
+        };
+      }),
       self_eval: {
         staleness: app.staleness,
         stale_window: app.STALE_WINDOW,
