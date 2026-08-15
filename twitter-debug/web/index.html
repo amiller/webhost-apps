@@ -122,6 +122,27 @@ table.diff td.f{color:var(--tx);white-space:nowrap;font-weight:600;font-family:v
 table.diff th.bad{color:var(--bad)}table.diff th.acc{color:var(--acc)}
 .verdict{margin-top:14px;padding:13px 14px;border:2px solid var(--ink1);background:var(--tee-bg);color:var(--i1-text);font-size:13.5px;line-height:1.5}
 .verdict::before{content:"✓ ";font-weight:700}
+/* feed (#6) — tweet cards with inline media, all media via the same-origin relay */
+.feed{margin-top:6px}
+.tw{display:grid;grid-template-columns:44px 1fr;gap:10px;padding:12px 4px;border-bottom:1px solid var(--line2)}
+.tw:last-of-type{border-bottom:none}
+.tw .av{width:40px;height:40px;border-radius:999px;border:2px solid var(--ink1);object-fit:cover;background:var(--block)}
+.tw .avdef{display:flex;align-items:center;justify-content:center;font:800 16px var(--cond);color:var(--block-text);background:var(--block);border-radius:999px;width:40px;height:40px}
+.tw .hd{display:flex;gap:7px;align-items:baseline;flex-wrap:wrap}
+.tw .nm{font-weight:700}
+.tw .un{color:var(--dim);font:12px var(--mono)}
+.tw .tx{margin:3px 0 2px;white-space:pre-wrap}
+.mgrid{display:grid;gap:6px;margin-top:8px}
+.mgrid.c1{grid-template-columns:1fr}.mgrid.c1 .mc{max-height:420px}
+.mgrid.c2{grid-template-columns:1fr 1fr}.mgrid.c2 .mc{min-height:150px}
+.mgrid.c3{grid-template-columns:1fr 1fr}.mgrid.c3 .mc:first-child{grid-row:span 2;min-height:150px}
+.mgrid.c4{grid-template-columns:1fr 1fr}.mgrid.c4 .mc{min-height:150px}
+.mc{position:relative;border:2px solid var(--rule);background:var(--block);min-height:120px;overflow:hidden}
+.mc img{width:100%;height:100%;min-height:120px;object-fit:cover;display:block}
+.mc video{width:100%;max-height:420px;display:block;background:var(--block)}
+.mc .play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.mc .play svg{width:54px;height:54px;filter:drop-shadow(0 1px 3px rgba(0,0,0,.5))}
+.feedend{color:var(--dim);font:12px var(--mono);padding:10px 2px 0}
 </style></head><body><div class=wrap>
 
 <header>
@@ -181,6 +202,14 @@ table.diff th.bad{color:var(--bad)}table.diff th.acc{color:var(--acc)}
   <pre id=out-engine>—</pre>
 </div>
 
+<div class="card full">
+  <h2><span class=badge>⑧</span> Timeline — the feed, rendered <span class="pill tee">media via the pod · zero direct twimg.com</span></h2>
+  <p class=muted>The reify payoff: the browser-observed <code>HomeTimeline</code> replayed headlessly and mapped to tweets carrying their <code>media[]</code>. Photos, video thumbnails and playback all load through the same-origin <code>/twitter/media</code> relay — the page itself never contacts <code>twimg.com</code>. Click a video thumbnail to play it (through the relay).</p>
+  <div class=row><button class="go big" onclick="feed()">read timeline (feed) ▸</button><span class=muted>replays the last browser capture; drives the browser once if it's stale (~20–40s)</span></div>
+  <div id=feed-out class=feed></div>
+  <pre id=out-feed style="max-height:220px">—</pre>
+</div>
+
 <script>
 const live = document.getElementById('live')
 function tick(){const i=new Image();i.onload=()=>{live.src=i.src;setTimeout(tick,800)};i.onerror=()=>setTimeout(tick,1600);i.src='twitter/shot?'+Date.now()}tick()
@@ -236,6 +265,59 @@ refreshLock()
 refreshActAs()
 getJSON('twitter/health').then(h=>{const p=document.getElementById('jarpill');p.textContent='jar: '+(h.jarLoaded?'loaded ✓':'not loaded');p.className='pill'+(h.jarLoaded?' tee':'')}).catch(()=>{})
 const busy=document.getElementById('busy')
+// ---- ⑧ timeline feed (#6) -------------------------------------------------------------------
+// All media (avatars included) renders through the same-origin relay: twitter/media?u=<b64url>.
+// The page never fetches twimg.com directly — that is the acceptance, checked via the browser's
+// own performance resource entries in the evidence walk.
+const b64u=(s)=>btoa(unescape(encodeURIComponent(s))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')
+const px=(u)=>u?('twitter/media?u='+b64u(u)):''
+const avHTML=(t)=>t.avatar
+  ?`<img class="av" src="${px(t.avatar)}" alt="" loading="lazy" onerror="this.outerHTML='<div class=avdef>${esc(((t.name||t.by||'?')[0]||'?').toUpperCase())}</div>'">`
+  :`<div class="avdef">${esc(((t.name||t.by||'?')[0]||'?').toUpperCase())}</div>`
+const mediaCell=(m)=>{
+  if(m.type==='video'){
+    const mp4=m.url&&m.url!==m.poster?` data-mp4="${esc(px(m.url))}"`:''   // poster-only when there is no playable variant
+    return `<div class="mc"${mp4}><img src="${px(m.poster||m.url)}" alt="${esc(m.alt||'video thumbnail')}" loading="lazy"><div class="play"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="rgba(0,0,0,.45)"/><path d="M8 5v14l11-7z" fill="#fff"/></svg></div></div>`
+  }
+  return `<div class="mc"><img src="${px(m.url)}" alt="${esc(m.alt||'')}" loading="lazy"></div>`
+}
+const twCard=(t)=>{
+  const grid=(t.media&&t.media.length)?`<div class="mgrid c${Math.min(4,t.media.length)}">${t.media.map(mediaCell).join('')}</div>`:''
+  return `<article class="tw">${avHTML(t)}<div><div class="hd"><span class="nm">${esc(t.name||'')}</span><span class="un">@${esc(t.by||'')}</span></div><div class="tx">${esc(t.text)}</div>${grid}</div></article>`
+}
+function renderFeed(tweets,endnote){
+  const el=document.getElementById('feed-out')
+  el.innerHTML=(tweets&&tweets.length)?tweets.map(twCard).join(''):'<p class=muted>no tweets in this window</p>'
+  el.insertAdjacentHTML('beforeend',`<div class=feedend>${esc(endnote||'')}</div>`)
+  el.querySelectorAll('.mc[data-mp4]').forEach(c=>c.addEventListener('click',()=>{  // poster → real playback, still through the relay
+    const v=document.createElement('video');v.controls=true;v.autoplay=true;v.src=c.dataset.mp4;c.replaceChildren(v);v.play().catch(()=>{})
+  },{once:true}))
+}
+async function feed(){
+  const j=document.getElementById('out-feed');j.textContent='… replaying the browser-observed HomeTimeline …'
+  document.getElementById('feed-out').innerHTML='<p class=muted>… reading the timeline (may drive the browser once to recapture) …</p>'
+  try{
+    const d=await postJSON('twitter/feed',{})
+    if(d.error){j.textContent='ERROR: '+d.error;document.getElementById('feed-out').innerHTML='<p class=muted>'+esc(d.error)+'</p>';return}
+    show('out-feed',d)
+    renderFeed(d.tweets,`via ${d.via} · HTTP ${d.status} · ${d.counts.tweets} tweets · ${d.counts.with_media} with media (${d.counts.photos} photos, ${d.counts.videos} videos) — media relayed same-origin through /twitter/media`)
+  }catch(e){j.textContent='ERROR: '+e.message;document.getElementById('feed-out').innerHTML='<p class=muted>'+esc(e.message)+'</p>'}
+}
+// ?demo — render review with clearly-labeled SAMPLE data (public brand assets on twimg, still
+// relayed through the pod proxy so the exact media path is exercised). NOT a fallback: it only
+// renders when ?demo is explicitly opened; the button above is the real path.
+const SAMPLE_FEED=[
+  {name:'X',by:'X',avatar:'https://abs.twimg.com/emoji/v2/72x72/1f1f5-1f1ed.png',
+   text:'Demo · sample data (not live). Photo card — a public twimg asset, loaded through the pod relay. Run “read timeline (feed)” for the real thing.',
+   media:[{type:'photo',url:'https://abs.twimg.com/emoji/v2/72x72/1f680.png',alt:'sample photo'}]},
+  {name:'Sample',by:'demo',
+   text:'Demo · sample data (not live). A photo grid + a video-thumbnail card, all through the relay — zero direct twimg.com requests from this page.',
+   media:[
+    {type:'photo',url:'https://abs.twimg.com/emoji/v2/72x72/1f4c8.png',alt:'sample photo'},
+    {type:'video',url:'',poster:'https://abs.twimg.com/emoji/v2/72x72/1f3ac.png',alt:'sample video thumbnail (demo has no playable stream)'}]},
+]
+const _params=new URLSearchParams(location.search)
+if(_params.has('demo'))renderFeed(SAMPLE_FEED,'Demo · sample data — not live. The “read timeline (feed)” button reads the real timeline; every image above still went through /twitter/media.')
 function pollStatus(){getJSON('twitter/status').then(s=>{
   if(s.busy&&s.activity){const a=s.activity;busy.textContent=a.task+' · '+a.step+(a.attempt?' ('+a.attempt+')':'')+' · '+a.elapsed+'s';busy.className='pill warn dot'}
   else{busy.textContent='idle';busy.className='pill'}

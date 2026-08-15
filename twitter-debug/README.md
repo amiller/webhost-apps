@@ -43,7 +43,9 @@ Reads/observation are **public**. Writes (post/like/unlike) and the mouse-probe 
 | `POST /twitter/api {op}` | timeline public; post/like/unlike consent | blind `rettiwt-api` path |
 | `POST /twitter/browser {task}` | trace public (lock+cooldown); post consent | drive the real browser (vision + xdotool), verified against the CDP trace |
 | `POST /twitter/reify` | public (lock+cooldown) | rung 1 vs 2 vs 3 side-by-side + diff + verdict |
-| `POST /twitter/engine {op}` | timeline public; post/like/unlike consent | **rung 4 — fully headless, no browser, no xctid** |
+| `POST /twitter/engine {op}` | timeline public; post/like/unlike consent | **rung 4 — fully headless, no browser, no xctid**; `timeline` maps tweets with `media[]` |
+| `POST /twitter/feed` | public (lock+cooldown) | #6 — the reify payoff as a feed: browser-observed HomeTimeline replayed headlessly, mapped to tweets each carrying `media[]` `{type:'photo'\|'video', url}` (videos: best-bitrate mp4 + poster) |
+| `GET /twitter/media?u=<b64url>` | public | #6 — same-origin media relay (the otter `/frame` pattern): `*.twimg.com` only, https only, Range pass-through. The dashboard renders ALL media (avatars included) through it, so the page makes zero direct twimg.com requests |
 | `POST /twitter/probe` | consent | xdotool diagnostics (geometry, mouse) |
 
 ## Security model

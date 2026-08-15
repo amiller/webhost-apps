@@ -183,6 +183,64 @@ function cacheTrace(log: any[]) {
   }
 }
 
+// ---- timeline → tweets + media (#6) ---------------------------------------------------------
+// The feed payoff: map a HomeTimeline GraphQL response to plain tweets, each carrying its media
+// entities ({type:'photo'|'video', url}) — photo urls point at pbs.twimg.com, video urls at the
+// best-bitrate mp4 on video.twimg.com (poster = the still frame). The dashboard never loads
+// those hosts directly: it renders them through the same-origin /twitter/media relay below
+// (the otter /frame pattern), so the page itself makes zero twimg.com requests.
+type MediaEnt = { type: 'photo' | 'video'; url: string; poster?: string; alt?: string }
+// X nests tweets under wrappers (TweetWithVisibilityResults) and tucks media under
+// legacy.extended_entities; videos come as several bitrate variants.
+function unwrapTweet(res: any): any | null {
+  if (!res || typeof res !== 'object') return null
+  if (res.__typename === 'TweetWithVisibilityResults') return unwrapTweet(res.tweet?.result)
+  return res.__typename === 'Tweet' ? res : null
+}
+function mapMediaEntity(m: any): MediaEnt | null {
+  if (!m || !m.media_url_https) return null
+  if (m.type === 'photo') return { type: 'photo', url: m.media_url_https, alt: m.ext_alt_text || undefined }
+  if (m.type === 'video' || m.type === 'animated_gif') {
+    const mp4 = (m.video_info?.variants || []).filter((v: any) => v.content_type === 'video/mp4')
+      .sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0))
+    return { type: 'video', url: mp4[0]?.url || m.media_url_https, poster: m.media_url_https, alt: m.ext_alt_text || undefined }
+  }
+  return null
+}
+function mapTweet(res: any) {
+  const t = unwrapTweet(res); if (!t) return null
+  const legacy = t.legacy || {}
+  // full_text carries a trailing https://t.co/… stub per media entity — cut those ranges back out.
+  let text: string = legacy.full_text || ''
+  const cuts = ((legacy.entities?.media) || []).map((m: any) => m.indices as [number, number]).filter(Boolean)
+    .sort((a, b) => b[0] - a[0])
+  for (const [s, e] of cuts) text = text.slice(0, s) + text.slice(e)
+  const u = t.core?.user_results?.result
+  const media = (((legacy.extended_entities || t.extended_entities || {}).media) || [])
+    .map(mapMediaEntity).filter(Boolean) as MediaEnt[]
+  return {
+    id: t.rest_id ?? legacy.id_str ?? null,
+    text: text.trim(),
+    by: u?.core?.screen_name ?? u?.legacy?.screen_name ?? null,
+    name: u?.core?.name ?? u?.legacy?.name ?? null,
+    avatar: u?.avatar?.image_url ?? u?.legacy?.profile_image_url_https ?? null,
+    media,   // always present — [] when the tweet is text-only
+  }
+}
+function mapTimeline(json: any) {
+  const tweets: any[] = []
+  const entries = (json?.data?.home?.home_timeline_urt?.instructions || []).flatMap((i: any) => i.entries || [])
+  for (const e of entries) {
+    const c = e?.content || {}
+    const push = (ic: any) => { if (ic?.tweet_results) { const t = mapTweet(ic.tweet_results.result); if (t) tweets.push(t) } }
+    push(c.itemContent)
+    for (const it of c.items || []) push(it?.item?.itemContent)
+  }
+  const photos = tweets.reduce((n, t) => n + t.media.filter((m: MediaEnt) => m.type === 'photo').length, 0)
+  const videos = tweets.reduce((n, t) => n + t.media.filter((m: MediaEnt) => m.type === 'video').length, 0)
+  return { tweets, counts: { tweets: tweets.length, with_media: tweets.filter((t: any) => t.media.length).length, photos, videos } }
+}
+
 async function shot(): Promise<{ b64: string; w: number; h: number }> {
   const dataUrl: string = await cmd('screenshot', [], 20_000)
   const b64 = (dataUrl || '').replace(/^data:image\/\w+;base64,/, '')
@@ -326,7 +384,14 @@ async function captureRettiwt(op: string, p: any = {}) {
 }
 async function runApi(op: string, p: any, r?: any) {
   r = r || await rettiwt()
-  if (op === 'timeline') { const tl = await r.user.timeline(p.count || 10); return { path: 'api', op, tweets: (tl?.list ?? []).map((t: any) => ({ id: t.id, text: t.fullText, by: t.tweetBy?.userName })) } }
+  if (op === 'timeline') {
+    const tl = await r.user.timeline(p.count || 10)
+    // #6: surface media entities — rettiwt flattens them to {id,type,url,thumbnailUrl}.
+    const mapM = (m: any) => m?.type === 'photo' || m?.type === 'image'
+      ? { type: 'photo', url: m.url }
+      : { type: 'video', url: m.url, poster: m.thumbnailUrl }
+    return { path: 'api', op, tweets: (tl?.list ?? []).map((t: any) => ({ id: t.id, text: t.fullText, by: t.tweetBy?.userName, media: (t.media ?? []).filter(Boolean).map(mapM) })) }
+  }
   if (op === 'post') return { path: 'api', op, id: await r.tweet.post({ text: p.text }) }
   if (op === 'like') return { path: 'api', op, tweetId: p.tweetId, ok: await r.tweet.like(p.tweetId) }
   if (op === 'unlike') return { path: 'api', op, tweetId: p.tweetId, ok: await r.tweet.unlike(p.tweetId) }
@@ -344,9 +409,9 @@ async function replayHeadless(req: any) {
   }
   const r = await fetch(req.url, { method: req.method, headers: h, body: req.method === 'POST' ? req.post_data : undefined, signal: AbortSignal.timeout(20_000) })
   const txt = await r.text()
-  let entries: number | null = null
-  try { const j = JSON.parse(txt); const ins = j?.data?.home?.home_timeline_urt?.instructions || []; const en = ins.find((x: any) => x.entries); entries = en ? en.entries.length : 0 } catch {}
-  return { via: 'headless fetch — no browser, pod egress', status: r.status, entries, body_head: txt.slice(0, 160) }
+  let entries: number | null = null, json: any = null
+  try { json = JSON.parse(txt); const ins = json?.data?.home?.home_timeline_urt?.instructions || []; const en = ins.find((x: any) => x.entries); entries = en ? en.entries.length : 0 } catch {}
+  return { via: 'headless fetch — no browser, pod egress', status: r.status, entries, json, body_head: txt.slice(0, 160) }
 }
 
 // The whole story in one call: blind API vs browser-observed truth vs headless replay of it.
@@ -355,7 +420,7 @@ async function reifyDiff() {
   if (!truth || Date.now() - truth.ts > 180_000) { await runBrowser('trace'); truth = lastTrace['HomeTimeline'] }
   if (!truth) throw new Error('could not observe HomeTimeline from the browser')
   const api = await captureRettiwt('timeline', { count: 10 })
-  const replay = await replayHeadless(truth.req)
+  const { json: _replayJson, ...replay } = await replayHeadless(truth.req)   // json only feeds /twitter/feed — keep panel ④ light
   const b = truth.req
   const reached = !!api.op   // did rettiwt get past X's edge to a GraphQL op at all?
   const diff = [
@@ -372,6 +437,19 @@ async function reifyDiff() {
     ? `Reification wins: the browser observed the real HomeTimeline request ONCE; that capture replays headlessly (${replay.status}, ${replay.entries} entries) and cheaply — same sealed jar, same egress, no browser. The blind API ${api.ok ? 'reaches only a thinner surface' : 'is rejected before it even reaches the API'}.`
     : `Browser observed HomeTimeline (${b.status}); headless replay returned ${replay.status} — re-observe (the signing window may have rolled).`
   return { intent: 'read home timeline', browser: { op: b.op, queryId: b.queryId, method: b.method, status: b.status, xctid: 'observed' }, api, reify: replay, diff, verdict }
+}
+
+// #6: the feed — the reify path's payoff. The browser-observed HomeTimeline capture replays
+// headlessly (cheap, same sealed jar, no browser) and maps to tweets WITH their media entities;
+// the dashboard renders it. Recaptures through the browser only when the trace is stale.
+async function feed() {
+  let truth = lastTrace['HomeTimeline']
+  if (!truth || Date.now() - truth.ts > 180_000) await runBrowser('trace')
+  truth = lastTrace['HomeTimeline']
+  if (!truth) throw new Error('could not observe HomeTimeline from the browser')
+  const { via, status, json } = await replayHeadless(truth.req)
+  const mapped = mapTimeline(json)
+  return { via, status, counts: mapped.counts, tweets: mapped.tweets }
 }
 
 // ---- HEADLESS ENGINE: the fully-reified path. No browser, no x-client-transaction-id.
@@ -403,16 +481,21 @@ function engineHeaders() {
 async function engine(op: string, p: any) {
   const { ids, bundle } = await operationIds()
   const call = async (name: string, variables: any, features?: any) => {
-    const qid = ids[name]; if (!qid) throw new Error(`queryId for ${name} not in bundle`)
+    let qid = ids[name]
+    // X moved some queryIds out of main.js into lazy chunks (2026-08: HomeTimeline is gone from
+    // it) — fall back to the qid the browser actually used for this op (lastTrace), the same
+    // source of truth the reify replay rides. No guessing, no stale hardcoded id.
+    if (!qid && lastTrace[name]) qid = qidOf(lastTrace[name].req.url) || undefined
+    if (!qid) throw new Error(`queryId for ${name} not in bundle`)
     const body: any = { variables, queryId: qid }; if (features) body.features = features
     const r = await fetch(`https://x.com/i/api/graphql/${qid}/${name}`, { method: 'POST', headers: engineHeaders(), body: JSON.stringify(body), signal: AbortSignal.timeout(20_000) })
     return { qid, status: r.status, json: await r.json().catch(() => ({})) }
   }
   const proof = { engine: 'headless fetch — no browser, no x-client-transaction-id', queryId_source: bundle }
   if (op === 'timeline') {
-    const c = await call('HomeTimeline', { count: p.count || 20, includePromotedContent: false, latestControlAvailable: true, requestContext: 'launch' }, HOME_FEATURES)
-    const s = JSON.stringify(c.json); const ids2 = [...s.matchAll(/"entryId":"tweet-(\d+)"/g)].map(m => m[1])
-    return { ...proof, op, queryId: c.qid, status: c.status, tweet_count: ids2.length, sample_ids: ids2.slice(0, 5) }
+    const c = await call('HomeTimeline', { count: p.count || 50, includePromotedContent: false, latestControlAvailable: true, requestContext: 'launch' }, HOME_FEATURES)
+    const mapped = mapTimeline(c.json)
+    return { ...proof, op, queryId: c.qid, status: c.status, counts: mapped.counts, tweets: mapped.tweets }
   }
   if (op === 'like' || op === 'unlike') {
     const name = op === 'like' ? 'FavoriteTweet' : 'UnfavoriteTweet'
@@ -503,6 +586,32 @@ http.createServer(async (req, res) => {
       const cool = BROWSER_COOLDOWN - (Date.now() - lastBrowserRun)
       if (cool > 0) return send(429, { error: `cooling down — retry in ${Math.ceil(cool / 1000)}s` }), false
       return true
+    }
+    // #6: the rendered feed — replay of the browser-observed HomeTimeline, mapped to tweets+media.
+    // May drive the browser to (re)capture → same single-flight lock + cooldown as reify.
+    if (post && url === '/twitter/feed') {
+      if (!guardBrowser()) return
+      browserLock = true
+      try { return send(200, await feed()) } finally { browserLock = false; lastBrowserRun = Date.now() }
+    }
+    // #6: same-origin media relay (the otter /frame pattern): the page never contacts twimg.com —
+    // the pod fetches and streams the bytes. twimg hosts only, https only — never an open proxy.
+    // Range requests pass through so <video> playback works through the relay too.
+    if (url === '/twitter/media') {
+      const q = new URL(req.url || '/', 'http://localhost').searchParams.get('u') || ''
+      let target: URL | null = null
+      try { target = new URL(Buffer.from(q, 'base64url').toString('utf8')) } catch {}
+      if (!target || target.protocol !== 'https:' || !/(^|\.)twimg\.com$/.test(target.hostname))
+        return send(400, { error: 'media relay: https *.twimg.com urls only' })
+      const range = req.headers.range
+      const r = await fetch(target, { headers: { 'user-agent': UA, referer: 'https://x.com/', ...(range ? { range } : {}) }, signal: AbortSignal.timeout(20_000) })
+      const h: Record<string, string> = {
+        'Content-Type': r.headers.get('content-type') || 'application/octet-stream',
+        'Cache-Control': 'public, max-age=3600',
+      }
+      for (const k of ['content-length', 'content-range', 'accept-ranges']) { const v = r.headers.get(k); if (v) h[k] = v }
+      res.writeHead(r.status, h)
+      return res.end(Buffer.from(await r.arrayBuffer()))
     }
     if (post && url === '/twitter/browser') {
       const b = await readBody(req)
