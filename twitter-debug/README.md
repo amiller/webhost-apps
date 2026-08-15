@@ -91,3 +91,11 @@ ZAI_API_KEY=… ./deploy-attested.sh          # posts the image manifest to the 
 - Browser **posting** works via `Ctrl+Enter` (X's shortcut): in this container XTEST *clicks* focus inputs but don't fire X's React Post button, while keyboard input does. Coordinates/vision/typing are all correct — see `server.ts` `runBrowser` and the git history for the diagnosis.
 - The **engine** is the reliable write path (rung 4); the browser path is the ground-truth observer and the tool for sites that *do* enforce signing.
 - One image (~1.85 GB, neko/brave). The jar and all secrets are read from env / external files — none are baked into the image.
+
+## Sharing the feed
+
+When the owner is signed in with the OAuth3 extension, **Share my feed** mints a
+read-only `twitter` token and renders a revocable link to `/timeline-peek/?token=…`.
+The recipient reads the feed through timeline-peek without the owner's session or
+cookies; revocation is performed against the OAuth3 node and the receipt reports
+the real error if it cannot be confirmed.
