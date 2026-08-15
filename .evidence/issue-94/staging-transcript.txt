@@ -1,0 +1,122 @@
+# Tier 1 deployed-staging transcript — PR #99 / issue #94 (goodpoint-box privacy cleave)
+run: 2026-08-15T18:54:41Z | branch ready-94 @ 55582bf | daemon deploy tree_hash 50466b3224a3 (names goodpoint-box + brainrot-box)
+
+\$ curl -sS https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network/brainrot-box/ -o /dev/null -w "%{http_code} %{content_type}"
+  200 text/html
+
+\$ curl -sS https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network/brainrot-box/diag    # DEFAULTS: all 8 lanes e2ee (staging behavior preserved)
+  [
+   {
+    "lane": "judge",
+    "model": "deepseek-ai/DeepSeek-V4-Flash",
+    "transport": "near-e2ee",
+    "hears_room": true
+   },
+   {
+    "lane": "distill",
+    "model": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+    "transport": "chutes-e2ee",
+    "hears_room": true
+   },
+   {
+    "lane": "decoder",
+    "model": "deepseek-ai/DeepSeek-V4-Flash",
+    "transport": "near-e2ee",
+    "hears_room": true
+   },
+   {
+    "lane": "state",
+    "model": "deepseek-ai/DeepSeek-V4-Flash",
+    "transport": "near-e2ee",
+    "hears_room": true
+   },
+   {
+    "lane": "convtype",
+    "model": "deepseek-ai/DeepSeek-V4-Flash",
+    "transport": "near-e2ee",
+    "hears_room": true
+   },
+   {
+    "lane": "critic",
+    "model": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+    "transport": "chutes-e2ee",
+    "hears_room": false,
+    "enabled": false
+   },
+   {
+    "lane": "toolsmith",
+    "model": "deepseek-ai/DeepSeek-V4-Flash",
+    "transport": "near-e2ee",
+    "hears_room": false
+   },
+   {
+    "lane": "compositor",
+    "model": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+    "transport": "chutes-e2ee",
+    "hears_room": false
+   }
+  ]
+
+--- hosted-config variant (env TOOLSMITH_BASE_URL=http://127.0.0.1:9/v1 + demo key; /diag is config-derived — no model call made)
+\$ curl -sS https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network/goodpoint-box/diag    # toolsmith flips to hosted; every hearing lane stays e2ee
+  [
+   {
+    "lane": "judge",
+    "model": "deepseek-ai/DeepSeek-V4-Flash",
+    "transport": "near-e2ee",
+    "hears_room": true
+   },
+   {
+    "lane": "distill",
+    "model": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+    "transport": "chutes-e2ee",
+    "hears_room": true
+   },
+   {
+    "lane": "decoder",
+    "model": "deepseek-ai/DeepSeek-V4-Flash",
+    "transport": "near-e2ee",
+    "hears_room": true
+   },
+   {
+    "lane": "state",
+    "model": "deepseek-ai/DeepSeek-V4-Flash",
+    "transport": "near-e2ee",
+    "hears_room": true
+   },
+   {
+    "lane": "convtype",
+    "model": "deepseek-ai/DeepSeek-V4-Flash",
+    "transport": "near-e2ee",
+    "hears_room": true
+   },
+   {
+    "lane": "critic",
+    "model": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+    "transport": "chutes-e2ee",
+    "hears_room": false,
+    "enabled": false
+   },
+   {
+    "lane": "toolsmith",
+    "model": "deepseek-ai/DeepSeek-V4-Flash",
+    "transport": "hosted",
+    "hears_room": false
+   },
+   {
+    "lane": "compositor",
+    "model": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+    "transport": "chutes-e2ee",
+    "hears_room": false
+   }
+  ]
+
+--- canonical defaults restored (re-deploy of the same tree via deploy.sh)
+\$ curl -sS https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network/goodpoint-box/diag
+  restored: PASS all-e2ee
+
+Assertions (from the transcripts above):
+  defaults:      all 8 lanes e2ee — PASS (staging behavior preserved by the cleave)
+  hosted config: toolsmith=hosted AND judge/distill/decoder/state/convtype all e2ee — PASS
+  hosted config: /diag emits neither the demo API key nor the base URL (routing block carries model+transport only) — PASS
+  no-secrets on live defaults /diag: PASS — NEAR_API_KEY, CHUTES_API_KEY, daemon token all absent

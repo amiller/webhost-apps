@@ -37,11 +37,11 @@ brief they receive is sanitized"):
 | Provider config: hosted TOOLSMITH endpoint → tools forge, judge still e2ee (mocked) | ✅ | `#94 with hosted TOOLSMITH configured, tools still forge…` + `…hearing lanes stay e2ee (rebase ruling)` |
 | README boundary section; deno check clean; flow.md + evidence; base staging | ✅ | README "Privacy boundary (#94)"; `deno check` clean; this file; PR base `staging` |
 
-## Test transcript (43/43 green — 36 inherited from staging + 7 #94)
+## Test transcript (re-run on 55582bf 2026-08-15: 52 passed | 0 failed — staging suites have grown since the rebase; the 7 #94 tests all present and green)
 ```
 deno check server.ts                        → clean
 deno check tests/server_test.ts             → clean
-deno test --allow-all tests/server_test.ts  → ok | 43 passed | 0 failed (3s)
+deno test --allow-all tests/server_test.ts  → ok | 52 passed | 0 failed (3s)
 
 #94 sanitizeBrief carries no verbatim trigram of the quote ... ok
 #94 judge event keeps the verbatim quote for the client, sanitized brief for the crew ... ok
@@ -72,7 +72,20 @@ server.ts:1459  this.push({ type: "goodpoint", point, … })        # verbatim q
 writers are: banger (`sanitizeBrief`), distill (`sanitizeDistilled`), self-nudge (constant mood
 vocabulary + preserved structural emphasis), critic line (signature-derived) — none carry verbatim.
 
-## Live /diag routing transcript (local serve of this branch)
+## Deployed-staging Tier 1 transcript (2026-08-15, this pass)
+Keys located (`~/.config/private-inference.env` — both `NEAR_API_KEY` and `CHUTES_API_KEY`;
+the earlier "not on this box" blocker missed `~/.config`). Deployed via `brainrot-box/deploy.sh`
+to the webhost-staging CVM: **daemon deploy tree_hash `50466b3224a3`**, project name
+`goodpoint-box` (staging's convention — matches `origin/staging`'s own deploy.sh) AND synced to
+the canonical `brainrot-box` name so `/brainrot-box/` serves this PR's tree. Full transcript:
+`.evidence/issue-94/staging-transcript.txt` — defaults all-e2ee; hosted-config variant shows
+toolsmith `hosted` with all five hearing lanes e2ee; no secrets in `/diag`.
+`/_api/version` pin: the app defines no such route (daemon gateway 404 for app paths — same
+caveat as #124/#90/#136); the pin is **git `55582bf` + daemon tree_hash `50466b3224a3`**, and
+the daemon root `/_api/version` reads `{"version":"dev","commit":"39c54cc8"}` (daemon build,
+not the app).
+
+## Live /diag routing transcript (local serve — superseded by the deployed transcript above; kept as the fallback record of the same behavior)
 Defaults (no BASE_URLs — staging behavior preserved, all e2ee):
 ```json
 [{"lane":"judge","model":"deepseek-ai/DeepSeek-V4-Flash","transport":"near-e2ee","hears_room":true},
@@ -105,12 +118,14 @@ neither `k-never` nor `fast.example` (no key/URL disclosure). Serving proof: `GE
   #93's craft (continuous distillation, tone reading, visual plan, banger override) is preserved.
 
 ## What I could NOT verify (honest)
-1. **Staging deploy** (Tier 1 over deployed staging): `deploy.sh` requires `NEAR_API_KEY` +
-   `CHUTES_API_KEY`, still **not on this box** (re-checked env, `~/.tee-daemon-staging.env`,
-   `~/paseo-batch/.intake-env`, `~/.paseo-secrets/` on 2026-08-15). No dummy-key deploy (theater).
-   Local serve + `/diag` above is the furthest reachable state.
-2. **Tier 2 signed-in banger walk**: needs the model keys + a live Otter meeting to fire the judge
-   on real speech. No image committed rather than fabricate one.
+1. ~~Staging deploy~~ **RESOLVED 2026-08-15** — keys found in `~/.config/private-inference.env`
+   (the earlier checks missed `~/.config`). Deployed; transcript above.
+2. **Tier 2 signed-in banger walk**: needs a live Otter meeting to fire the judge on real speech
+   (the deployed app's otter read currently returns `409 challenge_pending` — step-up owed). The
+   change is server-side with no user-visible diff (client still renders `point.quote`, never reads
+   `brief`), so Tier 1 is the honest tier for this PR. No image committed rather than fabricate one.
 
-## BLOCKED — need from operator (unchanged from the PR body)
-- `NEAR_API_KEY` + `CHUTES_API_KEY` on this box → then `deploy.sh` + pin `/_api/version` (Tier 1).
+## Resolved blocker (was: need from operator)
+- ~~`NEAR_API_KEY` + `CHUTES_API_KEY` on this box~~ — found at `~/.config/private-inference.env`;
+  deployed and pinned (git `55582bf` + daemon tree_hash `50466b3224a3`). No operator action owed
+  for Tier 1.
