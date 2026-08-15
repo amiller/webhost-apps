@@ -1,0 +1,28 @@
+# issue-6 local evidence walk — 2026-08-15, envoy bridge (real Brave, no CDP)
+# Page served from branch ready-6 (twitter-debug/web via prefix-shim -> local agent :8940, bun run server.ts)
+
+## Render path (?demo — clearly-labeled sample; the real feed needs the pod's jar+browser)
+location.pathname                       = /twitter-debug/           (asserted before trusting frame)
+document.title                          = OAuth3 debug console · Twitter
+#feed-out .tw cards                     = 2
+#feed-out img[src^="twitter/media?u="]  = 4        (every media/avatar src goes through the relay)
+imgs complete && naturalWidth>0         = 4/4      (all relay images decoded)
+
+## Acceptance bullet 3 — measured by the browser itself
+performance resource entries matching "twimg.com"   = 0     <- ZERO direct twimg requests from the page
+performance resource entries matching "/twitter/media?" = 4  <- media flows through the pod relay
+
+## Real op on the local (non-pod) instance — honest error, no masking
+POST /twitter/feed -> {"error":"no jar loaded — connect X via OAuth3"}
+(the jar lives in the pod TEE; the value-state walk runs on the deployed pod — operator step)
+
+## Media relay (real twimg bytes, curl against the local agent running branch code)
+GET /twitter/media?u=<b64 real pbs.twimg.com photo>  -> HTTP 200 image/jpeg 2415B (JPEG magic verified)
+GET /twitter/media?u=<b64 real video.twimg.com mp4> Range:0-2047 -> HTTP 206 video/mp4 2048B (MP4 magic verified)
+GET /twitter/media?u=<b64 https://example.com/x.png> -> HTTP 400 {"error":"media relay: https *.twimg.com urls only"}
+
+## mapTimeline against the REAL HomeTimeline capture (engine recipe, box jar; capture stays uncommitted)
+counts = {"tweets":35,"with_media":11,"photos":11,"videos":2}
+every tweet has media[]: true ; trailing t.co stubs stripped: true
+video entity shape: {type:"video", url:"https://video.twimg.com/amplify_video/<id>/vid/avc1/1280x720/<tk>.mp4",
+                     poster:"https://pbs.twimg.com/amplify_video_thumb/<id>/img/<tk>.jpg"}   (ids/tokens redacted)
