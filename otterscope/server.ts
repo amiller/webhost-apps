@@ -163,7 +163,7 @@ const HTML = `<!doctype html><html lang=en><head>
  }
  function approveLink(u){
    $("approve").style.display="";
-   $("approve").innerHTML="<a href=\""+esc(u)+"\" target=_blank rel=noopener>Open your pod room to approve Otter access →</a>"+
+   $("approve").innerHTML="<a href='"+esc(u)+"' target=_blank rel=noopener>Open your pod room to approve Otter access →</a>"+
      "<span class=hint>no extension needed — approve there; this page continues on its own.</span>";
  }
  function clearApprove(){ $("approve").style.display="none"; $("approve").innerHTML=""; }
