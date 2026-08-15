@@ -1,0 +1,17 @@
+D2.freshRequest: req-b7cc9159891f4ec7b2444fe49b40e924
+D2.before: {"status":"pending","approveBtn":"APPROVE (DEV-MODE)","signIn":false}
+D2.after: {"status":"approved","msg":"unknown or already-decided request"}
+D2.shot04.bytes: 60064
+E2.request: {"linkHref":"https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network/oauth3/approve/req-9fe69ffd6aaa428f8c5fcb1b4be3bacd","status":"waiting for approval — open the pod-room link and approve; this page continues automatically…"}
+E2.serverApprove: {"ok":true,"status":"approved"}
+E2.after: {"status":"connected — click ‘Load conversations’ when you’re ready","connected":"✓ connected (saved)","token":"tok-otter-","tokenLen":34,"approveCleared":true}
+E2.shot05.bytes: 54250
+E2.afterReload: {"connected":"✓ connected (saved)","token":"tok-otter-"}
+F.state: {"status":"loading your conversation list from otter.ai…"}
+F.shot06.bytes: 50537
+G.before: {"provider":"object","diag":"build b8 · instance: reachable (otter, youtube, reddit, nytimes, twitter, google-calendar, amazon, zai, hackernews) · extension: present (provider-preferred)","token":"none"}
+G.afterClick: {"webFallbackFired":false,"status":"connecting through the oauth3-sdk handshake…","extDialog":true}
+G.shot07.bytes: 59641
+G.dialogVisible: true
+G.after: {"status":"connected — click ‘Load conversations’ when you’re ready","connected":"✓ connected (saved)","token":"tok-otter-"}
+G.shot08.bytes: 51527
