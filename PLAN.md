@@ -1,26 +1,38 @@
-# PLAN — feedling #49: test-mode (ping on ANY watch)
+# PLAN — otterscope #2: SDK connect() instead of window.oauth3 directly (mobile/same-pod)
 
-Prior worker already implemented the change on `ready-49` (commit d83bf86). Verified the diff is
-complete and correct vs. acceptance; base is an ancestor of staging (PR merges as 1 commit).
-This iteration: verify by tier and ship.
+Issue: amiller/webhost-apps#2 · base `staging` · **Tier 2** (user-visible flow).
 
-> **Rework pass (2026-08-01):** PR was `CONFLICTING` + `needs-e2e`. Rebased onto staging (impl
-> was already in staging → impl commit dropped as empty; branch now = tests + evidence + PLAN).
-> Captured the pixel screenshot (bridge healthy this run). Push delivery stays operator-run.
+## Acceptance (from issue #2, verbatim)
+> - [ ] In a browser profile with no extension (or on a phone), `/otterscope/` no longer shows
+>   "OAuth3 extension not found" on Connect. It renders the SDK's `approveUrl` as a clickable
+>   link, and after approving in the signed-in pod room the page lists the owner's real Otter
+>   transcript titles.
+> - [ ] With the extension installed the behaviour is unchanged — the SDK's provider-preferred
+>   branch is taken and the token still persists in localStorage.
+> - [ ] `otterscope/server.ts` no longer references `window.oauth3` directly (currently lines 88 and 93).
 
-## Acceptance (from issue #49)
-> With verbose mode on and a push subscription active: watch ONE regular (non-short) YouTube
-> video briefly, and within one poll interval receive a push naming that you just watched.
-> Screenshot the received notification (or the [push] server log line `trigger=watch_detected
-> sent>0`) in the PR.
+## Implementation shape
+Port `oauth3-sdk connect()` (canonical: `feedling-web/sdk/index.ts`, RFC 0008) into the page —
+otterscope is a single self-contained file (no build, no imports), same as feedling-web's
+`oauth3-client.ts` hand-drives the identical handshake. share-kit's `oauth3Connect` is NOT used:
+its no-extension path is wallet self-provision (fresh did:key identity), which would mint a token
+with no Otter jar; #2's acceptance demands the SDK's web fallback (`approveUrl` → approve in the
+signed-in pod room → poll), which is what a phone user and the owner's synced jar need.
 
 ## Tasks
-- [x] Confirm #49 open, no PR, has `## Acceptance` (merge-gate grep) — PASS
-- [x] Reuse prior worker's complete implementation on ready-49 (re-validated diff)
-- [x] Parse-check all .TS (`deno check`) — exit 0
-- [x] Unit-test the NEW decision logic (`pendingWatchDetected` + verbose-mode activity branch + per-session re-arm) against the real production functions — `deno test` → 4 passed
-- [x] Deploy feedling-web to webhost-staging — feature already present on live staging (verified `GET /api/verbose` → 200)
-- [x] Tier 1 HTTP transcript on deployed staging: `POST /api/verbose {enabled:true}` → `GET /api/verbose` == `{"verbose":true}` (new endpoint = version pin)
-- [x] Tier 2 walked flow: envoy-bridge screenshot of UI `TEST MODE: ON` captured (navigation-verified) — `.evidence/issue-49/01-test-mode-on.png`
-- [x] Commit test + evidence; PR open (base staging); issue labelled `in-review`
-- [ ] STILL NOT ready-to-merge: the watch→push delivery needs the operator's live YouTube watch + a real push sub (feedling must be approved on the pod first). `needs-e2e` stays ON for this step — see flow.md §4.
+- [x] Pre-flight: #2 open, `ready`, no open PR, `## Acceptance` present (merge-gate grep) — PASS
+- [x] Port SDK `connect()`: provider-preferred branch (wallet carries flow) + web fallback
+      (POST /api/connect → `onApproveUrl` → poll `/api/connect/:id`)
+- [x] Render `approveUrl` as a clickable link (target=_blank) + waiting status; clear on connect/logout
+- [x] Remove the extension dead-end: diag() line honest for both paths (no more "NOT FOUND" framing)
+- [x] 409 read message names the faucet honestly (RFC 0008: legible, never a dead end)
+- [x] README/REGISTRY: drop "extension-dependent" notes; document both paths
+- [x] `deno check otterscope/server.ts` — exit 0
+- [x] Deploy to webhost-staging (staging project was a stale 2026-06-26 deploy 404ing — refreshed)
+- [x] Tier 2 walk on the deployed staging URL (envoy bridge, flock-serialized, real pointer clicks):
+      01 no-extension Connect enabled (no dead-end) · 02 approve link rendered · 03 pod-room approve
+      page signed in (u-swarm) · 04 connected + token in localStorage + honest 409 on Load conversations
+- [x] Evidence committed to `.evidence/issue-2/` + `flow.md`; PR body embeds the step screenshots
+- [ ] PROD-only remainder (operator-run — no prod creds on this box, per box-inventory):
+      deploy to pod.dstack.soc1024.com and read the owner's real Otter transcript titles (needs the
+      prod otter jar; staging has `jars:[]`). Commented back to issue #2.
