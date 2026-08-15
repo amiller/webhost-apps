@@ -855,7 +855,19 @@ function renderOwnerShare(){
 }
 
 async function revokeSharedToken(tok){
-  const r=await fetch(location.origin+'/oauth3/api/tokens/'+encodeURIComponent(tok),{method:'DELETE'})
+  // The node authorizes DELETE /api/tokens/:id by owner secret or a wallet session —
+  // the daemon proxy strips cookies, so a bare same-origin DELETE is a 401 (verified
+  // against deployed staging). Ask the wallet for its session for THIS node (the
+  // extension only grants signIn to the node's own origin — same-pod topology) and
+  // revoke as the signed-in wallet. Without a wallet we still attempt the bare
+  // DELETE so the receipt shows the node's real error, never a silent success.
+  const node=location.origin+'/oauth3'
+  let auth={}
+  try{
+    const s=await window.oauth3.signIn({node})
+    if(s&&s.session) auth={headers:{Authorization:'Bearer '+s.session}}
+  }catch(_){/* no wallet / refused — fall through to the honest error path */}
+  const r=await fetch(node+'/api/tokens/'+encodeURIComponent(tok),{method:'DELETE',...auth})
   const body=await r.json().catch(()=>({}))
   if(!r.ok) throw new Error(body.error||('revoke '+r.status))
 }
