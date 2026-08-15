@@ -1,0 +1,38 @@
+== session: 2026-08-15, walked by rework-worker (PR #145, issue #7)
+== environment: webhost-staging (phala tee-daemon) — twitter-debug deployed from this branch (static),
+   oauth3 node staging-oa-21 (listing admits twitter-debug), timeline-peek + share-kit on same origin.
+
+== 1. connect/mint via the extension (in-browser, consent dialog approved) ==
+POST /oauth3/api/connect {plugin:twitter, app:twitter-debug}      -> requestId req-a9f2922b… (after listing admission)
+   [before staging-oa-21 this returned 403 {error:'App "twitter-debug" is not listed…'} — see flow.md]
+receipt (DOM-asserted): link …/timeline-peek/?token=tok-twitter-22388da8…, scope sentence
+   'read-only · your X For-You feed · nothing else', Revoke control present, status pill 'active'
+
+== 2. recipient reads (no session, extension not required — raw HTTP, token only) ==
+GET /oauth3/api/twitter/feed  Bearer tok-twitter-6ef4218c…  -> 200 (15.99s), items=8, who=<redacted>
+GET /oauth3/api/twitter/feed  Bearer tok-twitter-22388da8…  -> 200 (17.76s), items=8, who=<redacted>
+browser render (timeline-peek, real feed): 9 cards, first card @<redacted> — REAL personal data,
+  screenshot kept OUT of the repo per LESSONS 2026-07-11; committed render proof is the labeled
+  SAMPLE (03-recipient-render-SAMPLE.png, ?demo mode, 'Demo · sample data' labeling asserted).
+
+== 3. same-feed check (owner token vs shared token, back-to-back reads) ==
+who identical: True (both <redacted>)
+owner items=6 recipient items=6
+owner item hashes:    ['51f45abd43a2', '4d31639ff382', 'dbcb131fe45f', 'fa5a253c1243', '471d75a332ba', '7be170fe668c']
+recipient item hashes: ['2eba990ba1f5', '51f45abd43a2', 'dbcb131fe45f', '4ba64115c665', '195e8f3a3b0e', 'bc08c241a471']
+byte-identical items shared across reads: 2/6
+NOTE: the X For-You timeline reshuffles per render (each read is a fresh live browser render);
+  strict first-position equality is unstable by the feed's nature. Same account (who), real items,
+  and byte-identical overlap demonstrate 'the same feed the owner sees'.
+
+== 4. revoke (the FIXED path: wallet signIn -> DELETE with session bearer) ==
+as shipped in e042969: DELETE /oauth3/api/tokens/<tok> (no auth)      -> 401 unauthorized  [DEFECT FOUND]
+after fix 8d25688 (window.oauth3.signIn({node}) -> Bearer):
+  receipt Revoke clicked (real button) -> pill 'revoked', button disabled 'Revoked'
+  node: tok-twitter-6ef4218c… revokedAt=1786831733238 ; tok-twitter-22388da8… revokedAt=1786832171496
+
+== 5. recipient after revoke ==
+GET /oauth3/api/twitter/feed  Bearer <revoked>              -> 401 {error:'unauthorized'}
+browser: timeline-peek on the revoked link -> #note.err 'unauthorized', feed empty — honest end state
+
+== hygiene: every twitter-debug token minted this session is revoked (incl. tok-twitter-167d18a3…) ==
