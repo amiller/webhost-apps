@@ -1,0 +1,15 @@
+A.href: https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network/otterscope/
+A.providerSuppressed: undefined
+A.state: {"deadEnd":false,"connectEnabled":true,"diag":"build b8 · instance: reachable (otter, youtube, reddit, nytimes, twitter, google-calendar, amazon, zai, hackernews) · extension: not loaded — web approve via your pod room (mobile/same-pod OK)"}
+A.shot01.bytes: 45744
+B.state: {"status":"waiting for approval — open the pod-room link and approve; this page continues automatically…","approveVisible":true,"linkHref":"https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network/oauth3/approve/req-f974f503f3a3412c9339db536de22ad6","linkText":"Open your pod room to approve Otter access →","clickable":true}
+B.shot02.bytes: 61379
+C.href: https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network/oauth3/approve/req-f974f503f3a3412c9339db536de22ad6
+C.state: {"title":"Approve access — OAuth3","status":"pending","signIn":false,"approveBtn":"APPROVE (DEV-MODE)"}
+C.shot03.bytes: 60204
+D.state: {"status":"approved","msg":"unknown or already-decided request"}
+D.shot04.bytes: 60064
+E.state: {"linkHref":"https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network/oauth3/approve/req-87d989dc3ffe40a587e636f5c5f7eb4e","status":"waiting for approval — open the pod-room link and approve; this page continues automatically…"}
+E.serverApprove: {"ok":true,"status":"approved"}
+E.after: {"status":"connected — click ‘Load conversations’ when you’re ready","connected":"✓ connected (saved)","tokenPrefix":"tok-otte","tokenLen":34,"approveCleared":true}
+FAIL: token did not land in-page

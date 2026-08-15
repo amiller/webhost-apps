@@ -1,8 +1,9 @@
-// otterscope — Otter via OAuth3. Reads your Otter through a scoped token from your
-// extension (window.oauth3.connect), never a cookie. Token persists in localStorage
-// until you log out; conversations load a page at a time.
+// otterscope — Otter via OAuth3. Reads your Otter through a scoped token from the oauth3-sdk
+// connect() handshake (extension provider-preferred; web approve in the signed-in pod room
+// otherwise — RFC 0008), never a cookie. Token persists in localStorage until you log out;
+// conversations load a page at a time.
 
-const BUILD = "b7";
+const BUILD = "b8";
 
 const HTML = `<!doctype html><html lang=en><head>
 <meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
@@ -71,6 +72,8 @@ const HTML = `<!doctype html><html lang=en><head>
  .diag{font:12px/1.7 var(--mono);color:var(--faint);margin:10px 0}
  .diag b.ok{color:var(--i1-text);font-weight:700} .diag b.bad{color:var(--i2-text);font-weight:700}
  #status{font:13px var(--mono);margin:14px 0;min-height:1.2em;color:var(--i2-text)}
+ .approve{margin:2px 0 12px;padding:12px 16px;border:2px solid var(--ink1);background:var(--wash1);font:13px/1.6 var(--mono)}
+ .approve a{font-weight:700} .approve .hint{display:block;color:var(--faint);margin-top:2px}
  .row{padding:12px 4px;border-bottom:1px solid var(--rule);display:flex;justify-content:space-between;align-items:baseline;gap:14px;cursor:pointer}
  .row:hover{color:var(--ink1)} .row .d{font:12px var(--mono);color:var(--faint);white-space:nowrap}
  pre{background:var(--block);color:var(--block-text);border-left:12px solid var(--ink2);padding:16px 20px;white-space:pre-wrap;font:13px/1.7 var(--mono);max-height:60vh;overflow:auto}
@@ -87,11 +90,12 @@ const HTML = `<!doctype html><html lang=en><head>
    <button id=logout class=ghost style=display:none>Log out</button>
  </div>
  <div id=status></div>
+ <div id=approve class=approve style=display:none></div>
  <div id=list></div>
  <div><button id=more class=ghost style=display:none></button></div>
  <div id=convo></div>
 <script>
- const NODE="/oauth3/api", TK="o3_otter_token", PAGE=15, BUILD=${JSON.stringify(BUILD)};
+ const NODE="/oauth3/api", O3=location.origin+"/oauth3", TK="o3_otter_token", PAGE=15, BUILD=${JSON.stringify(BUILD)};
  const $=id=>document.getElementById(id);
  const status=t=>{$("status").textContent=t};
  let token=localStorage.getItem(TK)||null, items=[], shown=0;
@@ -101,7 +105,7 @@ const HTML = `<!doctype html><html lang=en><head>
    try{ r=await fetch(NODE+path,{headers:{Authorization:"Bearer "+token}}); }
    catch(e){ throw new Error("network error reaching "+NODE+path+" after "+((Date.now()-t0)/1000).toFixed(1)+"s ("+(e&&e.message||e)+")"); }
    if(r.status===401){ logout(); throw new Error("token rejected — please connect again"); }
-   if(r.status===409) throw new Error("your Otter isn't synced to this instance yet — log into otter.ai in this browser, then reconnect");
+   if(r.status===409) throw new Error("your Otter isn't synced to this instance yet — add it from a device with the OAuth3 extension (log into otter.ai there), then reconnect");
    if(!r.ok) throw new Error("GET "+path+" → "+r.status+" "+(await r.text().catch(()=>"")).slice(0,140));
    return (await r.json()).data;
  }
@@ -132,24 +136,55 @@ const HTML = `<!doctype html><html lang=en><head>
      $("convo").scrollIntoView({behavior:"smooth"});
    }catch(e){ status(String(e.message||e)) }
  }
+ // oauth3-sdk connect() — ported verbatim from feedling-web/sdk/index.ts (this page is one
+ // self-contained file: no build, no imports; feedling-web/oauth3-client.ts hand-drives the
+ // same handshake for the same reason). Provider-preferred: if the OAuth3 wallet (extension)
+ // is present, it carries the whole flow — copy the jar if needed, approve, hand back a token.
+ // Web fallback (no extension — phone, same-pod): POST /api/connect, surface the approveUrl
+ // for the user's signed-in pod room, poll until the token comes back. RFC 0008.
+ async function oauth3Connect(opts){
+   const prov=globalThis.oauth3 ?? globalThis.window?.oauth3;
+   if(prov && typeof prov.connect==="function"){
+     const t=await prov.connect({node:opts.node,plugin:opts.plugin,subject:opts.subject,app:opts.app});
+     return t;
+   }
+   const cr=await fetch(opts.node+"/api/connect",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({plugin:opts.plugin,subject:opts.subject,app:opts.app})});
+   const cb=await cr.json().catch(()=>({}));
+   if(!cr.ok) throw new Error(cb.error||("connect "+cr.status));
+   await opts.onApproveUrl?.(cb.approveUrl);
+   const interval=opts.intervalMs??2000, deadline=Date.now()+(opts.timeoutMs??300000);
+   while(Date.now()<deadline){
+     await new Promise(r=>setTimeout(r,interval));
+     const s=await (await fetch(opts.node+"/api/connect/"+cb.requestId)).json().catch(()=>({}));
+     if(s.status==="approved") return s.token;
+     if(s.status==="denied") throw new Error("connect denied by user");
+   }
+   throw new Error("connect timed out");
+ }
+ function approveLink(u){
+   $("approve").style.display="";
+   $("approve").innerHTML="<a href='"+esc(u)+"' target=_blank rel=noopener>Open your pod room to approve Otter access →</a>"+
+     "<span class=hint>no extension needed — approve there; this page continues on its own.</span>";
+ }
+ function clearApprove(){ $("approve").style.display="none"; $("approve").innerHTML=""; }
  async function connect(){
-   if(!window.oauth3){ status("OAuth3 extension not found — load it at chrome://extensions, then reload."); return; }
-   $("connect").disabled=true;
-   const node=location.origin+"/oauth3";
+   $("connect").disabled=true; clearApprove();
    try{
-     status("approve the request in your OAuth3 extension…");
-     try{ token=await window.oauth3.connect({node,plugin:"otter",app:"otterscope"}); }
-     catch(e){ console.error(e); throw new Error("connect step failed: "+(e&&e.message||e)+" — is the extension up to date? (reload it)"); }
+     status("connecting through the oauth3-sdk handshake…");
+     token=await oauth3Connect({node:O3,plugin:"otter",app:"otterscope",onApproveUrl:u=>{
+       approveLink(u);
+       status("waiting for approval — open the pod-room link and approve; this page continues automatically…");
+     }});
      if(!token) throw new Error("connect returned no token (approval denied/cancelled)");
-     localStorage.setItem(TK,token); setConnected(true);
+     localStorage.setItem(TK,token); setConnected(true); clearApprove();
      status("connected — click ‘Load conversations’ when you’re ready");
    }catch(e){ console.error(e); status(String(e&&e.message||e)) }
    $("connect").disabled=false;
  }
- function logout(){ localStorage.removeItem(TK); token=null; items=[]; shown=0;
+ function logout(){ localStorage.removeItem(TK); token=null; items=[]; shown=0; clearApprove();
    $("list").innerHTML=""; $("convo").innerHTML=""; $("more").style.display="none"; setConnected(false); status("logged out"); }
  async function diag(){
-   let inst="…", ext=window.oauth3?"<b class=ok>present</b>":"<b class=bad>NOT FOUND — load/reload the extension</b>";
+   let inst="…", ext=(globalThis.oauth3??globalThis.window?.oauth3)?"<b class=ok>present (provider-preferred)</b>":"<b class=ok>not loaded — web approve via your pod room (mobile/same-pod OK)</b>";
    try{ const h=await (await fetch(NODE+"/health")).json(); inst="<b class=ok>reachable</b> ("+(h.plugins||[]).join(", ")+")"; }
    catch(e){ inst="<b class=bad>unreachable: "+esc(e.message||e)+"</b>"; }
    $("diag").innerHTML="build "+BUILD+" · instance: "+inst+" · extension: "+ext;
