@@ -69,7 +69,7 @@ async function modelPubkey(model: string, pins: Record<string, string>, apiKey: 
     attestation.verified = true; attestation.note = ""; attestation.at = Date.now();
   } catch (e) {
     attestation.verified = false; attestation.at = Date.now();
-    attestation.note = `enclave key UNVERIFIED (${String((e as Error).message ?? e).slice(0, 160)}) — e2ee still on, attestation degraded`;
+    attestation.note = `enclave key UNVERIFIED (${String((e as Error).message ?? e).slice(0, 600)}) — e2ee still on, attestation degraded`;
     const r = await fetch(`${BASE}/attestation/report?model=${encodeURIComponent(model)}&signing_algo=ecdsa`, { headers: { Authorization: `Bearer ${apiKey}` } });
     if (!r.ok) throw new Error(`near attestation ${r.status}: ${(await r.text()).slice(0, 160)}`);
     const rep = await r.json();
