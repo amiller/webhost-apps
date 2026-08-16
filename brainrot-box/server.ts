@@ -37,6 +37,16 @@ interface Cfg {
   // #92 optional compositor-class critic (default off).
   criticModel: string;
   enableCritic: boolean;
+  // #126: per-call stream deadlines (ms). Generous per call site — a stalled stream aborts and
+  // surfaces a lane-named status instead of wedging the lane forever. Env-tunable (*_TIMEOUT_MS).
+  toolsmithTimeoutMs: number;
+  compositorTimeoutMs: number;
+  distillTimeoutMs: number;
+  decoderTimeoutMs: number;
+  judgeTimeoutMs: number;
+  // #126 (rebase extension): state/convtype hearing reads (#85/#88) get the same discipline —
+  // they run in the otter loop, so a hung read wedges the loop / skips sibling lanes.
+  stateTimeoutMs: number;
 }
 
 export interface GraphNode {
@@ -693,6 +703,12 @@ function requireCfg(env: Env): Cfg {
     archiveFlushMs: Number(get("ARCHIVE_FLUSH_MS")) || 60_000,
     criticModel: get("CRITIC_MODEL") || get("COMPOSITOR_MODEL") || "unsloth/Mistral-Nemo-Instruct-2407-TEE",
     enableCritic: /^(1|true|yes)$/i.test(get("ENABLE_CRITIC") || ""),
+    toolsmithTimeoutMs: Number(get("TOOLSMITH_TIMEOUT_MS")) || 60_000,
+    compositorTimeoutMs: Number(get("COMPOSITOR_TIMEOUT_MS")) || 30_000,
+    distillTimeoutMs: Number(get("DISTILL_TIMEOUT_MS")) || 30_000,
+    decoderTimeoutMs: Number(get("DECODER_TIMEOUT_MS")) || 30_000,
+    judgeTimeoutMs: Number(get("JUDGE_TIMEOUT_MS")) || 30_000,
+    stateTimeoutMs: Number(get("STATE_TIMEOUT_MS")) || 30_000,
   };
   const missing = [
     ["OAUTH3_CORE", cfg.oauth3Core],
@@ -1012,6 +1028,9 @@ export class GoodpointRuntime {
   shifts: { t: number; topic: string }[] = [];
   lastTopic = "";
   estimate: FlowEstimate = { audience: "", purpose: "", register: "" };
+  // #126: per-lane last_turn_at (ms) exposed via /diag so a wedged lane is visible remotely.
+  lastToolsmithTurnAt = 0;
+  lastCompositorTurnAt = 0;
   registry = new Map<string, ToolDef>();
   composition: unknown = { layers: [] };
   // #92 real-time self-eval: detect visual staleness and self-regulate. Cheap (no LLM) quantized
@@ -1327,14 +1346,21 @@ export class GoodpointRuntime {
     const recent = this.recentText(45_000);
     if (recent.length < 20) return;
     this.lastDistill = Date.now();
-    const raw = await this.streamComplete(
-      "distill",
-      DISTILL_SYSTEM,
-      `Transcript:\n${recent}\n\nJSON:`,
-      220,
-      () => {},
-      signal,
-    );
+    let raw: string;
+    try {
+      raw = await this.streamComplete(
+        "distill",
+        DISTILL_SYSTEM,
+        `Transcript:\n${recent}\n\nJSON:`,
+        220,
+        () => {},
+        signal,
+        this.cfg.distillTimeoutMs,
+      );
+    } catch (e) {
+      this.push({ type: "status", text: `distill ${e instanceof Error ? e.message : String(e)}` });
+      return;
+    }
     const j = extractJson(raw) as any;
     if (!j || typeof j.mood !== "string") return;
     // #94: the distill lane ran E2EE, but its OUTPUT brief must carry no verbatim room words
@@ -1355,14 +1381,21 @@ export class GoodpointRuntime {
     this.lastDecodeAt = Date.now();
     const open = this.graphTopics.slice(-8).join(", ") || "(none yet)";
     const lines = batch.map((s) => `${s.order}: ${s.text}`).join("\n");
-    const raw = await this.streamComplete(
-      "decoder",
-      DECODER_SYSTEM,
-      `Open topics: ${open}\nSegments:\n${lines}\n\nJSON:`,
-      600,
-      () => {},
-      signal,
-    );
+    let raw: string;
+    try {
+      raw = await this.streamComplete(
+        "decoder",
+        DECODER_SYSTEM,
+        `Open topics: ${open}\nSegments:\n${lines}\n\nJSON:`,
+        600,
+        () => {},
+        signal,
+        this.cfg.decoderTimeoutMs,
+      );
+    } catch (e) {
+      this.push({ type: "activity", who: "decoder", state: e instanceof Error ? e.message : String(e) });
+      return;
+    }
     const j = extractJson(raw) as any;
     if (!j || !Array.isArray(j.nodes)) {
       this.push({ type: "activity", who: "decoder", state: "parse miss" });
@@ -1425,19 +1458,43 @@ export class GoodpointRuntime {
     return { lane, model: this.cfg.compositorModel, transport: e2ee(this.cfg.compositorModel) };
   }
 
-  async streamComplete(lane: Lane, system: string, user: string, maxTokens: number, onDelta = (_: string) => {}, signal?: AbortSignal): Promise<string> {
-    if (this.streams) return await this.streams.complete(lane, system, user, maxTokens, onDelta, signal);
-    const r = this.route(lane);
-    const body = { max_tokens: maxTokens, temperature: 0.25, messages: [{ role: "system", content: system }, { role: "user", content: user }] };
-    let content = "";
-    const cb = (t: string) => {
-      content += t;
-      onDelta(t);
-    };
-    if (r.transport === "hosted") await hostedStream(r.apiKey!, r.baseUrl!, r.model, body, cb, signal);
-    else if (r.transport === "chutes-e2ee") await chutesStream(this.cfg.chutesKey, r.model, body, cb, signal);
-    else await nearStream(this.cfg.nearKey, r.model, body, cb, signal);
-    return content;
+  // #126: every call composes the lane signal with a per-call deadline, so a stalled TCP stream
+  // (nearStream/chutesStream) can't wedge a lane forever — the lane AbortController only fires on
+  // stop, so without this one hung stream freezes the while-loop. On a deadline the call throws a
+  // stable, lane-nameable error ("timeout after 60s") the caller prefixes with its lane and
+  // surfaces as a status event, then continues. No fallback, no retry.
+  async streamComplete(lane: Lane, system: string, user: string, maxTokens: number, onDelta = (_: string) => {}, signal?: AbortSignal, timeoutMs = 0): Promise<string> {
+    let deadline: AbortController | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let sig = signal;
+    if (timeoutMs > 0) {
+      deadline = new AbortController();
+      timer = setTimeout(() => deadline!.abort(), timeoutMs);
+      // The deadline must not keep a quiet process (or a fast unit test) alive on its own; it
+      // still fires while real work — the serve loop, an active test — keeps the loop up.
+      try { Deno.unrefTimer(timer as unknown as number); } catch { /* non-Deno: best effort */ }
+      sig = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
+    }
+    try {
+      if (this.streams) return await this.streams.complete(lane, system, user, maxTokens, onDelta, sig);
+      const r = this.route(lane);
+      const body = { max_tokens: maxTokens, temperature: 0.25, messages: [{ role: "system", content: system }, { role: "user", content: user }] };
+      let content = "";
+      const cb = (t: string) => {
+        content += t;
+        onDelta(t);
+      };
+      if (r.transport === "hosted") await hostedStream(r.apiKey!, r.baseUrl!, r.model, body, cb, sig);
+      else if (r.transport === "chutes-e2ee") await chutesStream(this.cfg.chutesKey, r.model, body, cb, sig);
+      else await nearStream(this.cfg.nearKey, r.model, body, cb, sig);
+      return content;
+    } catch (e) {
+      // If OUR deadline fired (not a lane stop or an upstream error), throw the stable message.
+      if (deadline?.signal.aborted) throw new Error(`timeout after ${timeoutMs / 1000}s`);
+      throw e;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   async judgeRecent(force = false): Promise<GoodPoint | null> {
@@ -1445,9 +1502,21 @@ export class GoodpointRuntime {
     const text = this.recentText(60_000);
     if (text.length < 20) return null;
     this.lastJudgeAt = Date.now();
-    const judge = this.judgeOverride
-      ? await this.judgeOverride(text)
-      : parseJudge(await this.streamComplete("judge", JUDGE_SYSTEM, `Transcript:\n${text}\n\nJSON:`, 180));
+    // #126: judge runs on demand (no lane signal) — give it its own deadline so a hung judge
+    // stream surfaces as "judge timeout after 30s" instead of wedging /listen or the otter loop.
+    let judge: JudgeResult | null;
+    if (this.judgeOverride) {
+      judge = await this.judgeOverride(text);
+    } else {
+      let raw: string;
+      try {
+        raw = await this.streamComplete("judge", JUDGE_SYSTEM, `Transcript:\n${text}\n\nJSON:`, 180, () => {}, undefined, this.cfg.judgeTimeoutMs);
+      } catch (e) {
+        this.push({ type: "status", text: `judge ${e instanceof Error ? e.message : String(e)}` });
+        return null;
+      }
+      judge = parseJudge(raw);
+    }
     if (!isBanger(judge)) return null;
     const point = { t: Date.now(), quote: judge.quote, why: judge.why, score: judge.score };
     this.ledger.push(point);
@@ -1470,7 +1539,13 @@ export class GoodpointRuntime {
     const prior = this.lastTopic ? `Prior topic: ${this.lastTopic}\n` : "";
     const call = async (kind: StateKind, system: string): Promise<string> => {
       if (this.stateOverride) return (await this.stateOverride(kind, text)) ?? "";
-      return await this.streamComplete("state", system, `Transcript:\n${text}\n${prior}JSON:`, 160);
+      try {
+        return await this.streamComplete("state", system, `Transcript:\n${text}\n${prior}JSON:`, 160, () => {}, undefined, this.cfg.stateTimeoutMs);
+      } catch (e) {
+        // #126: lane-named status; "" parses as a miss so the prior read stands (no flicker, no fallback).
+        this.push({ type: "status", text: `state ${e instanceof Error ? e.message : String(e)}` });
+        return "";
+      }
     };
     const recap = parseRecap(await call("recap", RECAP_SYSTEM));
     if (recap) this.recap = recap.recap;
@@ -1505,11 +1580,20 @@ export class GoodpointRuntime {
     const text = this.recentText(60_000);
     if (text.length < 20) return null;
     this.lastConvTypeAt = Date.now();
-    const verdict = this.typeOverride
-      ? await this.typeOverride(text)
-      : parseConvType(
-        await this.streamComplete("convtype", TYPE_SYSTEM, `Transcript:\n${text}\n\nJSON:`, 160),
-      );
+    let verdict: ConversationType | null;
+    if (this.typeOverride) {
+      verdict = await this.typeOverride(text);
+    } else {
+      let typeRaw: string;
+      try {
+        typeRaw = await this.streamComplete("convtype", TYPE_SYSTEM, `Transcript:\n${text}\n\nJSON:`, 160, () => {}, undefined, this.cfg.stateTimeoutMs);
+      } catch (e) {
+        // #126: lane-named status; the prior verdict stands (staging's parse-miss rule), no fallback.
+        this.push({ type: "status", text: `convtype ${e instanceof Error ? e.message : String(e)}` });
+        return null;
+      }
+      verdict = parseConvType(typeRaw);
+    }
     if (!verdict || !verdict.type) return null;
     this.convType = verdict;
     this.push({ type: "conv-type", convType: verdict });
@@ -1542,6 +1626,7 @@ export class GoodpointRuntime {
   }
 
   async toolsmithTurn(signal: AbortSignal): Promise<void> {
+    this.lastToolsmithTurnAt = Date.now();
     this.push({ type: "activity", who: "toolsmith", state: "thinking" });
     const existing = [...this.registry.keys()].join(", ") || "(none)";
     // #92: a self-nudge may have set a one-shot brief.avoid — steer the toolsmith off over-used
@@ -1568,6 +1653,7 @@ export class GoodpointRuntime {
         if (deltaBuf.length > 120 || Date.now() - lastFlush > 400) flush();
       },
       signal,
+      this.cfg.toolsmithTimeoutMs,
     );
     flush();
     if (avoid) this.brief.avoid = undefined; // one-shot: the nudge steered this turn
@@ -1590,6 +1676,7 @@ export class GoodpointRuntime {
   }
 
   async compositorTurn(signal: AbortSignal): Promise<void> {
+    this.lastCompositorTurnAt = Date.now();
     if (!this.registry.size) {
       this.push({ type: "activity", who: "compositor", state: "waiting for tools" });
       return;
@@ -1603,6 +1690,7 @@ export class GoodpointRuntime {
       400,
       () => {},
       signal,
+      this.cfg.compositorTimeoutMs,
     );
     const comp = extractJson(raw) as any;
     if (!comp || !Array.isArray(comp.layers)) {
@@ -1725,6 +1813,7 @@ export class GoodpointRuntime {
         60,
         () => {},
         signal,
+        this.cfg.compositorTimeoutMs,
       );
     const line = String(verdict || "").trim().slice(0, 160);
     if (line) {
@@ -1798,18 +1887,20 @@ export class GoodpointRuntime {
     const ac = new AbortController();
     this.weaveAC = ac;
     // two independent cadences, as in interleave: a slow tool build must not freeze compositions
-    const loop = async (turn: (s: AbortSignal) => Promise<void>, pause: number) => {
+    const loop = async (who: string, turn: (s: AbortSignal) => Promise<void>, pause: number) => {
       while (!ac.signal.aborted) {
         try {
           await turn(ac.signal);
         } catch (e) {
-          if (!ac.signal.aborted) this.push({ type: "status", text: e instanceof Error ? e.message : String(e) });
+          // #126: prefix the lane name so a per-call deadline reads "toolsmith timeout after 60s"
+          // (not a bare message); then continue to the next turn.
+          if (!ac.signal.aborted) this.push({ type: "status", text: `${who} ${e instanceof Error ? e.message : String(e)}` });
         }
         await delay(pause);
       }
     };
-    loop((s) => this.toolsmithTurn(s), 1200).finally(() => {});
-    loop(async (s) => { await this.compositorTurn(s); await this.observeComposition(s); }, 1400).finally(() => {});
+    loop("toolsmith", (s) => this.toolsmithTurn(s), 1200).finally(() => {});
+    loop("compositor", async (s) => { await this.compositorTurn(s); await this.observeComposition(s); }, 1400).finally(() => {});
   }
 
   private stopWeave(reason: string): void {
@@ -2047,6 +2138,14 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
         last_fetch_err: app.lastFetchErr,
         last_fetch_at: app.lastFetchAt,
         segment_count: app.transcript.length,
+      },
+      lanes: {
+        // #126: per-lane last_turn_at so a wedged lane is visible remotely. A lane claiming
+        // running with a stale last_turn_at (past its timeout_ms) is the signature of a hang.
+        toolsmith: { last_turn_at: app.lastToolsmithTurnAt, running: app.weaveRunning, timeout_ms: app.cfg.toolsmithTimeoutMs },
+        compositor: { last_turn_at: app.lastCompositorTurnAt, running: app.weaveRunning, timeout_ms: app.cfg.compositorTimeoutMs },
+        otter: { last_turn_at: app.lastFetchAt, running: app.otterRunning },
+        decoder: { last_turn_at: app.lastDecodeAt, timeout_ms: app.cfg.decoderTimeoutMs },
       },
       ledger_count: app.ledger.length,
       conv_type: { type: app.convType.type, rationale_len: app.convType.rationale.length, last_at: app.lastConvTypeAt },
