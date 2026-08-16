@@ -27,6 +27,8 @@ const env = {
   OTTER_TOKEN: "tok-otter-test",
   NEAR_API_KEY: "near-test",
   CHUTES_API_KEY: "chutes-test",
+  NEAR_KMS_ROOTS: "test-kms-root",
+  NEAR_BASE_MEASUREMENTS: "test-base-measurements",
 };
 
 Deno.test("otter cursor and dedup logic keeps only new orders", () => {

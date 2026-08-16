@@ -1,6 +1,6 @@
 import vm from "node:vm";
 import { gzipSync, gunzipSync } from "node:zlib";
-import { nearStream } from "./near_e2ee.ts";
+import { attestation, nearStream } from "./near_e2ee.ts";
 import { chutesStream } from "./chutes_e2ee.ts";
 import { hostedStream } from "./hosted_stream.ts";
 
@@ -10,6 +10,7 @@ interface Cfg {
   oauth3Core: string;
   otterToken: string;
   nearKey: string;
+  attestPins: Record<string, string>;
   chutesKey: string;
   toolsmithModel: string;
   compositorModel: string;
@@ -679,6 +680,9 @@ function requireCfg(env: Env): Cfg {
     oauth3Core: (get("OAUTH3_CORE") || get("OAUTH3_NODE")).replace(/\/+$/, ""),
     otterToken: get("OTTER_TOKEN") || get("OAUTH3_TOKEN"),
     nearKey: get("NEAR_API_KEY") || get("NEAR_KEY"),
+    attestPins: Object.fromEntries(
+      ["NEAR_WORKLOAD_IDS", "NEAR_IMAGE_DIGESTS", "NEAR_KMS_ROOTS", "NEAR_BASE_MEASUREMENTS"]
+        .map((k) => [k, get(k)]).filter(([, v]) => v)),
     chutesKey: get("CHUTES_API_KEY"),
     toolsmithModel: get("TOOLSMITH_MODEL") || "deepseek-ai/DeepSeek-V4-Flash",
     compositorModel: get("COMPOSITOR_MODEL") || "unsloth/Mistral-Nemo-Instruct-2407-TEE",
@@ -714,6 +718,8 @@ function requireCfg(env: Env): Cfg {
     ["OAUTH3_CORE", cfg.oauth3Core],
     ["OTTER_TOKEN", cfg.otterToken],
     ["NEAR_API_KEY", cfg.nearKey],
+    ["NEAR_KMS_ROOTS", cfg.attestPins.NEAR_KMS_ROOTS],
+    ["NEAR_BASE_MEASUREMENTS", cfg.attestPins.NEAR_BASE_MEASUREMENTS],
     ["CHUTES_API_KEY", cfg.chutesKey],
   ].filter(([, v]) => !v).map(([k]) => k);
   if (missing.length) throw new Error(`missing required env: ${missing.join(", ")}`);
@@ -1486,11 +1492,11 @@ export class GoodpointRuntime {
       };
       if (r.transport === "hosted") await hostedStream(r.apiKey!, r.baseUrl!, r.model, body, cb, sig);
       else if (r.transport === "chutes-e2ee") await chutesStream(this.cfg.chutesKey, r.model, body, cb, sig);
-      else await nearStream(this.cfg.nearKey, r.model, body, cb, sig);
+      else await nearStream(this.cfg.nearKey, this.cfg.attestPins, r.model, body, cb, sig);
       return content;
     } catch (e) {
       // If OUR deadline fired (not a lane stop or an upstream error), throw the stable message.
-      if (deadline?.signal.aborted) throw new Error(`timeout after ${timeoutMs / 1000}s`);
+      if (deadline?.signal.aborted) throw new Error(`timeout after ${${timeoutMs / 1000}s`);
       throw e;
     } finally {
       if (timer !== undefined) clearTimeout(timer);
@@ -2030,6 +2036,7 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
       running: app.running,
       weave_running: app.weaveRunning,
       otter_running: app.otterRunning,
+      attestation,
     });
   }
   if (req.method === "GET" && path === "/goodpoints") return json({ goodpoints: app.ledger });
@@ -2165,6 +2172,8 @@ export default async function handler(req: Request, ctx?: { env?: Env; runtime?:
           ...(lane === "critic" ? { enabled: app.cfg.enableCritic } : {}),
         };
       }),
+      // #105: NEAR key attestation state — verified, or degraded-to-unverified on pin drift.
+      attestation,
       self_eval: {
         staleness: app.staleness,
         stale_window: app.STALE_WINDOW,

@@ -252,6 +252,7 @@
     <span><i class="dot" id="otterDot"></i>otter</span>
     <span><i class="dot" id="smithDot"></i>toolsmith</span>
     <span><i class="dot" id="compDot"></i>compositor</span>
+    <span id="attNote" style="color:#f0b429" hidden>e2ee: unverified key</span>
   </div>
   <button class="ghost" id="mic">🎤 mic</button>
   <span class="meter" id="meter" hidden><i id="meterFill"></i><i id="meterMark"></i></span>
@@ -655,6 +656,8 @@ async function poll() {
       setPower(j.running);
       weaveRunning = !!j.weave_running;
       if (weaveRunning && Date.now() - lastIntervalSnap >= 60000) { lastIntervalSnap = Date.now(); captureSnapshot("interval"); }
+      const an = $("attNote");
+      if (an && j.attestation) { an.hidden = j.attestation.verified !== false; an.title = j.attestation.note || ""; }
       for (const ev of j.events || []) {
         if (ev.type === "segment") { addSegment(ev.segment); bump("pSeg"); }
         else if (ev.type === "goodpoint") { addPoint(ev.point); if (ev.brief) showBrief(ev.brief); bump("pBang"); captureSnapshot("goodpoint"); }

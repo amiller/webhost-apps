@@ -5,3 +5,4 @@ node_modules/
 # brainrot-box: runtime-generated session snapshots + traces (#125 / #124) — never commit.
 brainrot-box/snapshots/
 brainrot-box/traces/
+brainrot-box/attest-verify/target/
