@@ -62,7 +62,7 @@ async function modelPubkey(model: string, pins: Record<string, string>, apiKey: 
     const env = { ...pins, NEAR_API_KEY: apiKey, SSL_CERT_FILE: new URL("./ca-bundle.crt", import.meta.url).pathname };
     const out = await new Deno.Command(bin, { args: [model], env, stdout: "piped", stderr: "piped" }).output();
     const stdout = new TextDecoder().decode(out.stdout);
-    if (!out.success) throw new Error((stdout || new TextDecoder().decode(out.stderr)).slice(0, 200));
+    if (!out.success) throw new Error((stdout || new TextDecoder().decode(out.stderr)).slice(0, 600));
     const v = JSON.parse(stdout);
     if (!v.verified || !v.signing_public_key) throw new Error("unverified: " + JSON.stringify(v.checks));
     key = v.signing_public_key;
