@@ -40,6 +40,7 @@ struct CapturingTransport {
     http: reqwest::Client,
     auth: Option<String>,
     last: Mutex<Option<serde_json::Value>>,
+    last_err: Mutex<Option<String>>,
 }
 
 impl CapturingTransport {
@@ -51,6 +52,7 @@ impl CapturingTransport {
             // 2026-08-16); the box passes its NEAR_API_KEY through the env.
             auth: std::env::var("NEAR_API_KEY").ok().filter(|k| !k.trim().is_empty()),
             last: Mutex::new(None),
+            last_err: Mutex::new(None),
         }
     }
 }
@@ -69,7 +71,11 @@ impl ReportTransport for CapturingTransport {
             .send()
             .await
             .and_then(|r| r.error_for_status())
-            .map_err(|e| VerifyError::Transport { what: "attestation report", source: Box::new(e) })?;
+            .map_err(|e| {
+                *self.last_err.lock().unwrap() =
+                    Some(format!("GET {}/attestation/report: {e}", self.base));
+                VerifyError::Transport { what: "attestation report", source: Box::new(e) }
+            })?;
         let v: serde_json::Value = resp
             .json()
             .await
@@ -158,7 +164,25 @@ async fn main() -> Result<(), Error> {
 
     // The attested pubkey: its keccak address must be one the verdict attested
     // (report_data binds the address; the address commits to the pubkey).
-    let raw = transport.last.lock().unwrap().take().ok_or("no report captured")?;
+    // Fail-closed verdicts (fetch error) never captured a report — surface the
+    // real fetch error instead of an opaque "no report captured".
+    let raw = match transport.last.lock().unwrap().take() {
+        Some(v) => v,
+        None => {
+            let err = transport.last_err.lock().unwrap().take()
+                .unwrap_or_else(|| "report fetch failed before capture (fail-closed)".into());
+            println!("{}", serde_json::json!({
+                "verified": false,
+                "model": verdict.model,
+                "signing_public_key": null,
+                "fetch_error": err,
+                "checks": serde_json::to_value(&verdict.checks)?,
+                "nonce": verdict.nonce,
+                "verified_at_unix": verdict.verified_at_unix,
+            }));
+            std::process::exit(1);
+        }
+    };
     let mut signing_public_key = None;
     if verdict.verified {
         for m in raw["model_attestations"].as_array().into_iter().flatten() {
