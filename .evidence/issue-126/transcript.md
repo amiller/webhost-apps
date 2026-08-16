@@ -109,3 +109,54 @@ hung streamComplete aborted in 204ms (deadline 200ms) -> timeout after 0.2s
 ```
 Commit pin for the rebased head: see the PR body (this file lives inside the commit, so it cannot
 carry its own sha).
+
+## Staging deploy — Tier 1 completed (2026-08-16, rework pass)
+
+**Correction of the earlier blocker claim:** "keys are not on this box" was wrong. The prior passes
+checked the environment and `~/.paseo-secrets/` only; `NEAR_API_KEY` / `CHUTES_API_KEY` have been in
+`~/.config/private-inference.env` (mode 600, operator-held) since 2026-06-24. Same standing use as
+PR #127's deploy of this app earlier today (durable consent, no new ceremony).
+
+Deploy (from this branch's worktree at `285caac`, i.e. the exact PR head):
+
+```
+$ bash deploy.sh
+deployed: goodpoint-box | mode: dev | tree: d0a40e8fb171 | at: 2026-08-16T16:11:53.666894+00:00
+Deployed -> https://78ffc78c…8080.dstack-pha-prod7.phala.network/goodpoint-box/app
+```
+
+Daemon-side pin (GET `/_api/projects` for `goodpoint-box`):
+
+```json
+{ "name": "goodpoint-box",
+  "tree_hash": "d0a40e8fb171a777c1573c2194be00449d38f0319462f8cab10944924733376a",
+  "deployed_at": "2026-08-16T16:11:53.666894+00:00", "mode": "dev", "entry": "server.ts" }
+```
+
+`GET /_api/version` (daemon root): **HTTP 200** `{"version": "dev", "commit": "39c54cc8"}` —
+(the #127-era "500s server-side" note is stale; the daemon's `/goodpoint-box/_api/version` is a
+404 because the *app* has no such route — the app-level pin is the git SHA + tree_hash above.)
+
+**Live `GET /goodpoint-box/diag` → HTTP 200** (route mount is `/goodpoint-box/*`, not `/app/*`;
+`/app/*` mount 404s in the app's own router). The #126 `lanes` block, served by deployed staging:
+
+```json
+"lanes": {
+  "toolsmith":  { "last_turn_at": 1786896800378, "running": true, "timeout_ms": 60000 },
+  "compositor": { "last_turn_at": 1786896800735, "running": true, "timeout_ms": 30000 },
+  "otter":      { "last_turn_at": 1786896802196, "running": true },
+  "decoder":    { "last_turn_at": 0,             "timeout_ms": 30000 }
+}
+```
+
+`timeout_ms` per lane (toolsmith 60s, compositor/decoder 30s) exists only in this PR's code —
+staging's prior `streamComplete` had no per-call deadline. The same response's `routing` block
+shows all 8 lanes incl. the rebase-added `state`/`convtype`/`critic` (their deadline carriers),
+and `idle` shows the #90 watchdog armed (`weave_idle_ms` 180000) — the auto-started dev lanes
+self-stop without an `/events` consumer; none was polled from here.
+
+Honest edges:
+- The otter read on staging still returns `409 challenge_pending` (step-up approval owed) —
+  real read, shown as-is; no fixture. Timeout behavior itself is not triggerable on demand
+  against a live provider, so the offline hung-provider tests (above) remain the definitive
+  proof of the abort behavior; this transcript proves the change is LIVE on deployed staging.
