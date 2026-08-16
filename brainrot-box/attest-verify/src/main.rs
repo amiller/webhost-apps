@@ -4,6 +4,8 @@
 //! without this — no TOFU (webhost-apps#105).
 //!
 //! Env: NEAR_BASE (default https://cloud-api.near.ai/v1),
+//!      NEAR_API_KEY (required since NEAR added auth to the report endpoint —
+//!      sent as Bearer on the report fetch),
 //!      NEAR_KMS_ROOTS, NEAR_BASE_MEASUREMENTS, NEAR_IMAGE_DIGESTS and/or
 //!      NEAR_WORKLOAD_IDS (pins; required — the policy refuses to run unpinned),
 //!      NVIDIA_EAT_KEY_PEM (optional; default fetches NVIDIA's JWKS).
@@ -36,16 +38,34 @@ fn env_list(key: &str) -> Vec<String> {
 struct CapturingTransport {
     base: String,
     http: reqwest::Client,
+    auth: Option<String>,
     last: Mutex<Option<serde_json::Value>>,
+}
+
+impl CapturingTransport {
+    fn new(base: &str) -> Self {
+        Self {
+            base: base.trim_end_matches('/').to_string(),
+            http: reqwest::Client::new(),
+            // NEAR 401s the report endpoint without a Bearer key (observed
+            // 2026-08-16); the box passes its NEAR_API_KEY through the env.
+            auth: std::env::var("NEAR_API_KEY").ok().filter(|k| !k.trim().is_empty()),
+            last: Mutex::new(None),
+        }
+    }
 }
 
 #[async_trait]
 impl ReportTransport for CapturingTransport {
     async fn fetch_report(&self, model: &str, nonce: &str) -> Result<AttestationReport, VerifyError> {
-        let resp = self
+        let mut req = self
             .http
             .get(format!("{}/attestation/report", self.base))
-            .query(&[("model", model), ("signing_algo", SIGNING_ALGO), ("nonce", nonce)])
+            .query(&[("model", model), ("signing_algo", SIGNING_ALGO), ("nonce", nonce)]);
+        if let Some(key) = &self.auth {
+            req = req.bearer_auth(key);
+        }
+        let resp = req
             .send()
             .await
             .and_then(|r| r.error_for_status())
@@ -110,11 +130,7 @@ async fn main() -> Result<(), Error> {
     let base = std::env::var("NEAR_BASE").unwrap_or_else(|_| "https://cloud-api.near.ai/v1".into());
 
     if derive {
-        let transport = CapturingTransport {
-            base: base.trim_end_matches('/').to_string(),
-            http: reqwest::Client::new(),
-            last: Mutex::new(None),
-        };
+        let transport = CapturingTransport::new(&base);
         return derive_pins(&transport, &model).await;
     }
 
@@ -128,11 +144,7 @@ async fn main() -> Result<(), Error> {
         Ok(path) => NvidiaEatKey::from_ec_pem(&std::fs::read(path)?)?,
         Err(_) => NvidiaEatKey::fetch_jwks(NVIDIA_NRAS_JWKS_URL).await?,
     };
-    let transport = Arc::new(CapturingTransport {
-        base: base.trim_end_matches('/').to_string(),
-        http: reqwest::Client::new(),
-        last: Mutex::new(None),
-    });
+    let transport = Arc::new(CapturingTransport::new(&base));
     let verifier = NearVerifier::new(
         transport.clone(),
         Arc::new(DcapQuoteVerifier::default()),
