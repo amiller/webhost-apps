@@ -20,8 +20,32 @@ Deno app, deployed as a tee-daemon project on the pod. Live: https://pod.dstack.
 ## Env
 `OAUTH3_NODE`, (optional) `OAUTH3_TOKEN` — leave unset to use the handshake, `OPENROUTER_API_KEY`,
 `DIARY_MODEL`, `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/`VAPID_SUBJECT`, `TZ` (e.g. `America/New_York`
-— day-boundary + night-owl logic runs in the container clock, so set it), and (optional)
-`FEEDLING_VERBOSE=1`.
+— day-boundary + night-owl logic runs in the container clock, so set it), `FEEDLING_ADMIN_TOKEN`
+(below), and (optional) `FEEDLING_VERBOSE=1`. `GIT_SHA` is stamped by `deploy.sh`, not set by hand.
+
+## Public feed vs owner controls
+Publishing the feed is not publishing the controls, so the two are split.
+
+Public: `GET /api/state`, `/api/pushes`, `/api/diary` (cached), `/api/vapid-key`, `GET /api/verbose`,
+`/api/version`, and the page itself.
+
+Owner-only, requiring `Authorization: Bearer $FEEDLING_ADMIN_TOKEN`: `POST /api/test-push`,
+`/api/disconnect`, `/api/verbose`, `/api/poll-now`, `/api/subscribe`, `/api/unsubscribe`, plus
+`GET /api/history` and `GET /api/diary?force=1` (which bypasses the daily cache and spends
+OpenRouter credit per call).
+
+The gate **fails closed**: with `FEEDLING_ADMIN_TOKEN` unset every owner route refuses, rather
+than falling open. Public `/api/state` is title-stripped — the titles live in `snaps[].shorts[]`,
+so gating `/api/history` alone would not have made watching private; the public feed gets the
+shape of a session (counts, timing), never the content.
+
+Seed a device by opening the page once as `?admin=<token>`. It stores the token in localStorage
+and scrubs the query string; without one the page renders as the public feed.
+
+## Checking what prod is running
+`GET /api/version` returns the `GIT_SHA` stamped into the manifest at deploy time.
+`bash deploy.sh check` prints prod against `origin/staging` against local HEAD, so "did my merge
+actually reach the pod" is answerable — merging to `staging` deploys nothing on its own.
 
 ## Test / verbose mode (`FEEDLING_VERBOSE=1`)
 For testing, you want to know the next time you watch **anything** — including a regular
@@ -33,8 +57,20 @@ missed, and fires a `watch_detected` push on the **first new item of a session**
 off and normal-mode behavior is unchanged.
 
 ## Deploy
-Source-tarball deploy to the pod's tee-daemon (`POST /_api/projects`, Bearer `TEE_DAEMON_TOKEN`),
-`runtime: deno`, `entry: server.ts`, `isolation: container`, `oci_runtime: runc`.
+`bash deploy.sh` — source-tarball deploy to the pod's tee-daemon (`POST /_api/projects`, Bearer
+`TEE_DAEMON_TOKEN` from `~/.oauth3-prod-secrets.env`), `runtime: deno`, `entry: server.ts`,
+`isolation: container`, `oci_runtime: runc`. Target is prod, `pod.dstack.soc1024.com`.
+
+Env comes from the **deployed manifest**, not a local `.env`: the script reads the running
+project, keeps its env verbatim, and swaps only the tarball. This is deliberate — re-deriving env
+would mint fresh VAPID keys, and a push subscription is bound to the `applicationServerKey` it was
+created with, so every registered device would go silent. For the same reason there is no
+`--force`/DELETE path: deleting the project drops the only surviving copy of `VAPID_PRIVATE_KEY`
+and `OPENROUTER_API_KEY`. The script refuses to deploy if those are missing from the manifest, or
+if no owner token is set.
+
+The tarball is the **working tree**, not the commit, so a dirty tree stamps `<sha>-dirty` rather
+than claiming prod runs code that commit contains.
 
 ## Known gaps
 - YouTube history items carry **no per-item watch date** (the plugin's `parseHistory` discards

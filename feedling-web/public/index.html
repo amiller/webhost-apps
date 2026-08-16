@@ -81,6 +81,7 @@
   .short:last-child { border-bottom:0; }
   .short:hover { color:var(--ink1); }
   .short .idx { color:var(--faint); font:0.75rem var(--mono); margin-right:8px; }
+body.public .owner-only { display: none !important; }
 </style>
 </head>
 <body>
@@ -97,12 +98,12 @@
       <div class="stat"><b id="shortsToday">—</b><span>shorts today</span></div>
     </div>
     <div class="actions">
-      <button id="enableBtn">enable push</button>
-      <button class="ghost" id="testBtn">send test push</button>
-      <button class="ghost" id="pollBtn">poll now</button>
+      <button class="owner-only" id="enableBtn">enable push</button>
+      <button class="ghost owner-only" id="testBtn">send test push</button>
+      <button class="ghost owner-only" id="pollBtn">poll now</button>
       <button class="ghost" id="refreshBtn">refresh</button>
-      <button class="ghost" id="verboseBtn">test mode: —</button>
-      <button class="ghost" id="disconnectBtn" style="display:none">disconnect</button>
+      <button class="ghost owner-only" id="verboseBtn">test mode: —</button>
+      <button class="ghost owner-only" id="disconnectBtn" style="display:none">disconnect</button>
     </div>
     <div class="err" id="err"></div>
   </div>
@@ -111,12 +112,12 @@
     <div class="diary" id="diary">loading diary...</div>
   </div>
 
-  <div class="card">
+  <div class="card owner-only">
     <div style="font-weight:600;margin-bottom:8px;font-size:0.9rem"><span id="watchedLabel">what you watched (all history)</span> <span id="shortsCount" style="color:var(--light);font-weight:400"></span></div>
     <div id="shortsList" style="font-size:0.85rem;color:var(--text)">—</div>
   </div>
 
-  <div class="card">
+  <div class="card owner-only">
     <div style="font-weight:600;margin-bottom:8px;font-size:0.9rem;display:flex;justify-content:space-between;align-items:center">
       <span>raw history page <span id="histCount" style="color:var(--light);font-weight:400"></span></span>
       <button class="ghost" id="histBtn" style="padding:4px 10px;font-size:0.75rem">load</button>
@@ -124,7 +125,7 @@
     <div id="histList" style="font-size:0.85rem;color:var(--light)">the exact list the youtube plugin returns right now — shorts and videos, verbatim</div>
   </div>
 
-  <div class="card">
+  <div class="card owner-only">
     <div style="font-weight:600;margin-bottom:8px;font-size:0.9rem">registered devices <span id="subCount" style="color:var(--light);font-weight:400"></span></div>
     <div id="subList" style="font-size:0.8rem;color:var(--text)"></div>
   </div>
@@ -134,6 +135,22 @@
 <script>
 const catEmoji = { night_owl:'🌙', drained:'😮‍💨', hyped:'✨', chill:'😺', cozy:'😻', missing:'🥺' };
 let vapidKey = null;
+
+// Owner token: seed once by opening the page as ?admin=<token>, then it lives in
+// localStorage for this device. Without it the page is the public feed and the
+// server refuses every owner route anyway.
+const seeded = new URLSearchParams(location.search).get('admin');
+if (seeded) {
+  localStorage.setItem('feedlingAdmin', seeded);
+  history.replaceState({}, '', location.pathname);
+}
+const TOKEN = localStorage.getItem('feedlingAdmin') || '';
+const api = (p, o = {}) => fetch(p, {
+  ...o,
+  headers: { ...(o.headers || {}), ...(TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {}) },
+});
+// Hidden, not removed — the rest of the script still addresses these nodes.
+if (!TOKEN) document.body.classList.add('public');
 
 function urlBase64ToUint8Array(b64) {
   const pad = '='.repeat((4 - b64.length % 4) % 4);
@@ -168,7 +185,7 @@ async function loadHistory() {
   const cnt = document.getElementById('histCount');
   el.textContent = 'loading…';
   try {
-    const { items, error } = await (await fetch('api/history')).json();
+    const { items, error } = await (await api('api/history')).json();
     if (error) { el.innerHTML = '<span style="color:var(--i2-text)">⚠ ' + error + '</span>'; return; }
     cnt.textContent = items.length ? '(' + items.length + ')' : '';
     if (!items.length) { el.innerHTML = '<span style="color:var(--light)">empty — cookies may be expired</span>'; return; }
@@ -185,7 +202,7 @@ async function loadHistory() {
 
 async function refreshState() {
   try {
-    const res = await fetch('api/state');
+    const res = await api('api/state');
     const { state, poll, connect, snaps, todayHonest, verbose } = await res.json();
     renderShorts(snaps, todayHonest);
     document.getElementById('watchedLabel').textContent = todayHonest ? 'what you watched today' : 'what you watched (all history)';
@@ -218,7 +235,7 @@ async function refreshState() {
 
 async function refreshDiary(force = false) {
   try {
-    const res = await fetch('api/diary' + (force ? '?force=1' : ''));
+    const res = await api('api/diary' + (force ? '?force=1' : ''));
     const { diary, error } = await res.json();
     document.getElementById('diary').textContent = diary || ('(' + (error || 'no diary yet') + ')');
   } catch (e) { document.getElementById('err').textContent = e.message; }
@@ -228,7 +245,7 @@ async function enablePush() {
   try {
     if (!('serviceWorker' in navigator)) throw new Error('no service worker support');
     if (!vapidKey) {
-      const res = await fetch('api/vapid-key');
+      const res = await api('api/vapid-key');
       const d = await res.json();
       if (!d.key) throw new Error(d.error || 'no vapid key');
       vapidKey = d.key;
@@ -242,7 +259,7 @@ async function enablePush() {
       applicationServerKey: urlBase64ToUint8Array(vapidKey),
     });
     const j = sub.toJSON();
-    await fetch('api/subscribe', {
+    await api('api/subscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ endpoint: j.endpoint, keys: j.keys }),
@@ -253,7 +270,7 @@ async function enablePush() {
 
 async function testPush() {
   try {
-    const r = await fetch('api/test-push', { method: 'POST' });
+    const r = await api('api/test-push', { method: 'POST' });
     const d = await r.json();
     document.getElementById('err').textContent = 'push sent=' + d.sent + ' pruned=' + d.pruned;
   } catch (e) { document.getElementById('err').textContent = e.message; }
@@ -261,7 +278,7 @@ async function testPush() {
 
 async function pollNow() {
   try {
-    const r = await fetch('api/poll-now', { method: 'POST' });
+    const r = await api('api/poll-now', { method: 'POST' });
     const d = await r.json();
     document.getElementById('err').textContent = 'polled: watching=' + d.watching;
     refreshState();
@@ -270,8 +287,8 @@ async function pollNow() {
 
 async function toggleVerbose() {
   try {
-    const cur = await (await fetch('api/verbose')).json();
-    const r = await fetch('api/verbose', {
+    const cur = await (await api('api/verbose')).json();
+    const r = await api('api/verbose', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled: !cur.verbose }),
@@ -290,13 +307,13 @@ document.getElementById('refreshBtn').onclick = () => { refreshState(); refreshD
 document.getElementById('histBtn').onclick = loadHistory;
 document.getElementById('disconnectBtn').onclick = async () => {
   if (!confirm('Disconnect YouTube? feedling will drop its token and ask you to approve again.')) return;
-  await fetch('api/disconnect', { method: 'POST' });
+  await api('api/disconnect', { method: 'POST' });
   refreshState();
 };
 
 async function refreshSubs() {
   try {
-    const r = await fetch('api/subs');
+    const r = await api('api/subs');
     const { subs } = await r.json();
     document.getElementById('subCount').textContent = '(' + (subs?.length || 0) + ')';
     const list = document.getElementById('subList');
@@ -310,7 +327,7 @@ async function refreshSubs() {
     }).join('') || '<div style="color:var(--light)">none yet</div>';
     list.querySelectorAll('button[data-ep]').forEach(b => {
       b.onclick = async () => {
-        await fetch('api/unsubscribe', {
+        await api('api/unsubscribe', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ endpoint: b.dataset.ep }),

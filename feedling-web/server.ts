@@ -22,6 +22,8 @@ let openrouterKey = "";
 let diaryModel = "anthropic/claude-sonnet-4-5";
 let nextPollAt = 0;
 let verbose = false;
+let adminToken = "";
+let buildSha = "";
 
 async function readStatic(path: string): Promise<Uint8Array | null> {
   try {
@@ -183,6 +185,9 @@ function initOnce(env: Record<string, string>, dataDir: string) {
   })();
   openrouterKey = env.OPENROUTER_API_KEY || "";
   diaryModel = env.DIARY_MODEL || diaryModel;
+  adminToken = env.FEEDLING_ADMIN_TOKEN || "";
+  buildSha = env.GIT_SHA || "";
+  if (!adminToken) console.warn("[init] FEEDLING_ADMIN_TOKEN unset — every owner route will refuse");
 
   if (env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY) {
     configurePush({
@@ -207,6 +212,13 @@ function json(obj: unknown, init: ResponseInit = {}): Response {
   });
 }
 
+// Owner gate. No token configured means no owner routes — never open by default.
+function isAdmin(req: Request): boolean {
+  if (!adminToken) return false;
+  return (req.headers.get("authorization") || "") === `Bearer ${adminToken}`;
+}
+const DENY = () => json({ error: "owner only" }, { status: 401 });
+
 const EXT_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "application/javascript",
@@ -226,7 +238,12 @@ export default async function handler(
 
   if (path === "/_warmup") return new Response("ok");
 
+  if (req.method === "GET" && path === "/api/version") {
+    return json({ sha: buildSha, admin: isAdmin(req) });
+  }
+
   if (req.method === "GET" && path === "/api/state") {
+    const admin = isAdmin(req);
     const sess = getSession();
     const sessionMin = sess.startedAt ? Math.round((Date.now() - sess.startedAt) / 60_000) : 0;
     const limitParam = url.searchParams.get("limit");
@@ -239,7 +256,9 @@ export default async function handler(
       poll: lastPoll,
       connect: connState(),
       verbose,
-      snaps: recent.slice(-limit),
+      // Titles are what he actually watched — the public feed gets the shape of the
+      // session (counts, timing), never the content.
+      snaps: recent.slice(-limit).map((s) => admin ? s : { ...s, shorts: undefined }),
       session: {
         startedAt: sess.startedAt,
         lastActivityAt: sess.lastActivityAt,
@@ -250,12 +269,15 @@ export default async function handler(
     });
   }
   if (req.method === "GET" && path === "/api/diary") {
+    // `force` bypasses the daily cache and spends OpenRouter credit per call. Checked before
+    // anything else — an early return below must not become a way around the gate.
+    const force = url.searchParams.get("force") === "1";
+    if (force && !isAdmin(req)) return DENY();
     const s = getState();
     if (!s) return json({ diary: "" });
     try {
       const diary = await renderDiary(
-        s, recentSnapshots(), openrouterKey, diaryModel,
-        url.searchParams.get("force") === "1",
+        s, recentSnapshots(), openrouterKey, diaryModel, force,
       );
       return json({ diary });
     } catch (e) {
@@ -263,6 +285,7 @@ export default async function handler(
     }
   }
   if (req.method === "GET" && path === "/api/history") {
+    if (!isAdmin(req)) return DENY();
     try { return json({ items: await rawHistory() }); }
     catch (e) { return json({ error: (e as Error).message }, { status: 503 }); }
   }
@@ -271,6 +294,7 @@ export default async function handler(
     return json({ pushes: getPushLog(limit ? Number(limit) | 0 : undefined) });
   }
   if (req.method === "GET" && path === "/api/subs") {
+    if (!isAdmin(req)) return DENY();
     return json({
       subs: allSubs().map((s) => ({
         host: new URL(s.endpoint).host,
@@ -283,6 +307,7 @@ export default async function handler(
     });
   }
   if (req.method === "POST" && path === "/api/unsubscribe") {
+    if (!isAdmin(req)) return DENY();
     const body = await req.json().catch(() => null) as any;
     if (!body?.endpoint) return json({ error: "missing endpoint" }, { status: 400 });
     await removeSub(body.endpoint);
@@ -293,6 +318,7 @@ export default async function handler(
     catch (e) { return json({ error: (e as Error).message }, { status: 503 }); }
   }
   if (req.method === "POST" && path === "/api/subscribe") {
+    if (!isAdmin(req)) return DENY();
     const body = await req.json().catch(() => null) as any;
     if (!body?.endpoint || !body?.keys?.p256dh || !body?.keys?.auth) {
       return json({ error: "bad subscription" }, { status: 400 });
@@ -301,11 +327,13 @@ export default async function handler(
     return json({ ok: true });
   }
   if (req.method === "POST" && path === "/api/disconnect") {
+    if (!isAdmin(req)) return DENY();
     disconnect();
     kickSoon(100); // reschedule the single loop so a fresh approve URL appears at once
     return json({ ok: true });
   }
   if (req.method === "POST" && path === "/api/poll-now") {
+    if (!isAdmin(req)) return DENY();
     await loop(); // single-flight tick + reschedule (no racing with the timer)
     return json({ ok: true });
   }
@@ -313,12 +341,14 @@ export default async function handler(
     return json({ verbose });
   }
   if (req.method === "POST" && path === "/api/verbose") {
+    if (!isAdmin(req)) return DENY();
     const body = await req.json().catch(() => null) as any;
     if (body && typeof body.enabled === "boolean") verbose = body.enabled;
     kickSoon(100); // reschedule the single loop so the new idle interval applies at once
     return json({ verbose });
   }
   if (req.method === "POST" && path === "/api/test-push") {
+    if (!isAdmin(req)) return DENY();
     const body = "hello from the server 🐈";
     try {
       const r = await pushAll("feedling test", body, "");
