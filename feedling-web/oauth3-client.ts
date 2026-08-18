@@ -37,7 +37,10 @@ let conn: ConnState = { connected: false, approveUrl: "", error: "" };
 let pendingReq = "";
 let persistToken: (t: string) => void = () => {};
 let clearToken: () => void = () => {};
-let prevCount = 0, primed = false;
+// Seen short IDs, not a count: the history page is a fixed ~200-item sliding window, so a newly
+// watched short evicts an older item. Since most of the window is shorts, the COUNT stays flat
+// (or drops) even when new shorts arrive. Diff the ID set instead.
+let prevIds = new Set<string>(), primed = false;
 
 /** Local-midnight ms (the container clock — set TZ to your timezone). Only meaningful when
  *  the youtube plugin stamps each item with a watched-at, so "today" can be enforced honestly. */
@@ -72,7 +75,7 @@ export function disconnect() {
   client = oauth3({ node });
   conn = { connected: false, approveUrl: "", error: "" };
   pendingReq = "";
-  prevCount = 0;
+  prevIds = new Set();
   primed = false;
 }
 
@@ -132,8 +135,9 @@ export async function shortCheck(): Promise<ShortCheckResult> {
   }
   const shorts = items.filter((it) => it.meta?.isShort);
   const shortsCount = shorts.length;
-  const newShorts = primed ? Math.max(0, shortsCount - prevCount) : 0;
-  prevCount = shortsCount;
+  const fresh = shorts.filter((it) => !prevIds.has(it.id));
+  const newShorts = primed ? fresh.length : 0; // first poll only baselines
+  prevIds = new Set(shorts.map((it) => it.id));
   primed = true;
 
   // "today" is only honest when the plugin gives us a per-item watched-at (item.date). Without
@@ -150,7 +154,7 @@ export async function shortCheck(): Promise<ShortCheckResult> {
     headId: items[0]?.id ?? "",
     todayHonest,
     videosToday: todayHonest ? countVideosToday(items, sod) : (items.length - shortsCount),
-    shorts: shorts.map((it) => ({ id: it.id, title: it.title, date: it.date })),
+    shorts: fresh.map((it) => ({ id: it.id, title: it.title, date: it.date })),
     checked: new Date().toISOString(),
     elapsed: `${Date.now() - t0}ms`,
   };

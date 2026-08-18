@@ -33,9 +33,15 @@ export interface PushReport {
   details: { endpoint: string; ok: boolean; status?: number; body?: string; headers?: Record<string, string>; error?: string }[];
 }
 
-export async function pushAll(title: string, body: string, url = ""): Promise<PushReport> {
+export interface PushExtra {
+  image?: string;
+  actions?: { action: string; title: string }[];
+  variant?: string;
+}
+
+export async function pushAll(title: string, body: string, url = "", extra: PushExtra = {}): Promise<PushReport> {
   if (!vapid) throw new Error("push not configured");
-  const payload = JSON.stringify({ title, body, url });
+  const payload = JSON.stringify({ title, body, url, ...extra });
   let sent = 0, pruned = 0;
   const details: PushReport["details"] = [];
   for (const sub of allSubs()) {

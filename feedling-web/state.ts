@@ -19,6 +19,9 @@ export interface Snapshot {
   /** True only when the youtube plugin surfaced per-item watched-at dates, so videosToday is
    *  genuinely today-scoped. False ⇒ videosToday is the whole page; UI must relabel "history". */
   todayHonest: boolean;
+  /** Only the shorts first seen on THIS poll — notification copy quotes these, so feeding it the
+   *  whole window would quote ancient videos. */
+  shorts: { id: string; title: string; date?: string }[];
 }
 
 export interface PetState {
@@ -50,6 +53,7 @@ export function snapshotFrom(r: ShortCheckResult): Snapshot {
     headId: r.headId ?? "",
     videosToday: r.videosToday | 0,
     todayHonest: !!r.todayHonest,
+    shorts: r.shorts ?? [],
   };
 }
 

@@ -17,6 +17,7 @@ let lastActivityAt: number | null = null;
 let consecutiveActivePolls = 0;
 let cumulativeActivePolls = 0;
 let confirmedActivityFired = false;
+let sessionNewShorts = 0;
 let watchDetectedFired = false;
 
 let dataDir = "";
@@ -124,9 +125,10 @@ export interface SessionUpdate {
   startedAt: number | null;
 }
 
-// Call once per tick. `hasActivity` should be true iff this poll saw a count-delta growth
-// (i.e., a new unique short was added today). Uses the strict signal, not the noisy newShorts field.
-export function updateSession(hasActivity: boolean, now = Date.now()): SessionUpdate {
+// Call once per tick. `hasActivity` is true iff this poll saw a previously-unseen short (or, in
+// verbose mode, any new watch); `newShorts` is how many, accumulated across the session so the
+// confirmed-scrolling gate can read a total instead of a run of consecutive polls.
+export function updateSession(hasActivity: boolean, newShorts = 0, now = Date.now()): SessionUpdate {
   if (hasActivity) {
     let newSession = false;
     if (sessionStartedAt === null || (lastActivityAt !== null && now - lastActivityAt > SESSION_GAP_MS)) {
@@ -136,12 +138,16 @@ export function updateSession(hasActivity: boolean, now = Date.now()): SessionUp
       cumulativeActivePolls = 0;
       confirmedActivityFired = false;
       watchDetectedFired = false;
+      sessionNewShorts = 0;
       newSession = true;
     }
     cumulativeActivePolls += 1;
+    consecutiveActivePolls += 1;
+    sessionNewShorts += newShorts;
     lastActivityAt = now;
     return { newSession, sessionMin: Math.round((now - sessionStartedAt) / 60_000), startedAt: sessionStartedAt };
   }
+  consecutiveActivePolls = 0;
   // No activity: optionally close out a stale session
   if (sessionStartedAt !== null && lastActivityAt !== null && now - lastActivityAt > SESSION_GAP_MS) {
     sessionStartedAt = null;
@@ -153,17 +159,19 @@ export function updateSession(hasActivity: boolean, now = Date.now()): SessionUp
   };
 }
 
-// "Confirmed scrolling": fires once per session after N consecutive polls with activity.
-// Reset to 0 on any poll without activity (strict run).
-export function checkConfirmedActivity(isActive: boolean, threshold = 4): boolean {
-  if (isActive) consecutiveActivePolls += 1;
-  else consecutiveActivePolls = 0;
-  if (consecutiveActivePolls >= threshold && !confirmedActivityFired) {
-    confirmedActivityFired = true;
-    return true;
-  }
-  return false;
+// "Confirmed scrolling": once per session, when the session has both accumulated enough new
+// shorts AND lasted long enough. The old gate wanted N CONSECUTIVE active polls, which the real
+// signal can never deliver: YouTube's history page updates in clumps, so the 60s follow-up poll
+// after a burst always reads zero and reset the run. Measured on prod 2026-08-18 — 289 polls,
+// 6 of them active, longest consecutive run 1. This gate is reachable by the same traffic.
+export function checkConfirmedActivity(minShorts = 5, minMinutes = 5, now = Date.now()): boolean {
+  if (confirmedActivityFired || sessionStartedAt === null) return false;
+  if (sessionNewShorts < minShorts || now - sessionStartedAt < minMinutes * 60_000) return false;
+  confirmedActivityFired = true;
+  return true;
 }
+
+export function sessionShorts(): number { return sessionNewShorts; }
 
 export function consecutivePolls(): number { return consecutiveActivePolls; }
 export function cumulativePolls(): number { return cumulativeActivePolls; }
@@ -179,12 +187,13 @@ export function pendingWatchDetected(hasActivity: boolean, delta: number): numbe
   return null;
 }
 
-// Returns the largest milestone just crossed (in cumulative active polls) within the current session.
-// Each milestone fires once per session.
-export function pendingSessionMilestone(activePolls: number, milestones: number[]): number | null {
+// Returns the largest milestone just crossed within the current session. Callers pass ELAPSED
+// SESSION MINUTES — the copy ("30 min of confirmed scrolling") claims minutes, and the old caller
+// passed active-poll counts, which only coincided while polling ran at 60s.
+export function pendingSessionMilestone(sessionMin: number, milestones: number[]): number | null {
   let crossed: number | null = null;
   for (const m of milestones) {
-    if (activePolls >= m && !sessionMilestoneFired.has(m)) {
+    if (sessionMin >= m && !sessionMilestoneFired.has(m)) {
       crossed = m;
       sessionMilestoneFired.add(m);
     }

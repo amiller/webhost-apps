@@ -5,10 +5,11 @@ import {
   addSub, removeSub, allSubs, lastPushed, markPushed,
   updateSession, pendingSessionMilestone, getSession, initStore,
   recordPush, getPushLog, checkConfirmedActivity, consecutivePolls, cumulativePolls,
-  pendingWatchDetected,
+  pendingWatchDetected, sessionShorts,
 } from "./store.ts";
 import { configurePush, pushAll, vapidPublicKey } from "./push.ts";
 import { renderDiary } from "./diary.ts";
+import { streakNotif } from "./variants.ts";
 
 let ready = false;
 const POLL_IDLE_MS = 5 * 60 * 1000;
@@ -20,6 +21,7 @@ const SESSION_MILESTONES = [30, 60, 90, 120];
 let oauth3Node = "";
 let openrouterKey = "";
 let diaryModel = "anthropic/claude-sonnet-4-5";
+let streakVariant = "classify";
 let nextPollAt = 0;
 let verbose = false;
 let adminToken = "";
@@ -74,8 +76,11 @@ async function tick(): Promise<boolean> {
   // totalDelta would NEVER fire there; headWatchDelta does. It also seeds to 0 when either snap
   // lacks a headId (first poll / migration), so a deploy can't fire a spurious watch. Normal
   // mode stays on shorts-count growth exactly as before.
+  // A previously-unseen short is the primary signal in BOTH modes (the count delta it replaced
+  // reads 0 or negative on a saturated window). Verbose additionally counts any watch at all —
+  // a regular video or a rewatch moves headId without adding a short.
   const headDelta = headWatchDelta(prevSnap, snap);
-  const hasActivity = verbose ? headDelta > 0 : countDelta > 0;
+  const hasActivity = snap.newShorts > 0 || (verbose && headDelta > 0);
 
   await addSnapshot(snap);
 
@@ -83,22 +88,23 @@ async function tick(): Promise<boolean> {
   const state = computeState(recentSnapshots(), prev?.energy ?? 0);
   setState(state);
 
-  const sess = updateSession(hasActivity);
+  const sess = updateSession(hasActivity, snap.newShorts);
 
   console.log(
     `[tick] verbose=${verbose} watching=${snap.watching} new=${snap.newShorts} count=${snap.shortsCount} ` +
     `total=${snap.totalCount} head=${snap.headId.slice(0, 11)} delta=${countDelta} totalDelta=${totalDelta} ` +
-    `headDelta=${headDelta} active=${hasActivity} cumulative=${cumulativePolls()} state=${state.stateCode} energy=${state.energy}`
+    `headDelta=${headDelta} active=${hasActivity} cumulative=${cumulativePolls()} sessionMin=${sess.sessionMin} ` +
+    `sessionShorts=${sessionShorts()} state=${state.stateCode} energy=${state.energy}`
   );
 
   const triggers: string[] = [];
-  if (checkConfirmedActivity(hasActivity, 5)) triggers.push("confirmed_5");
+  if (checkConfirmedActivity(5, 5)) triggers.push("confirmed_5");
   let watchDelta = 0;
   if (verbose) {
     const d = pendingWatchDetected(hasActivity, headDelta);
     if (d !== null) { triggers.push("watch_detected"); watchDelta = d; }
   }
-  const m = pendingSessionMilestone(cumulativePolls(), SESSION_MILESTONES);
+  const m = pendingSessionMilestone(sess.sessionMin, SESSION_MILESTONES);
   if (m !== null) triggers.push(`session_${m}`);
   if (state.stateCode !== lastPushed() && (state.stateCode === "drained" || state.stateCode === "night_owl")) {
     triggers.push(state.stateCode);
@@ -107,12 +113,19 @@ async function tick(): Promise<boolean> {
 
   for (const t of triggers) {
     let body: string;
-    if (t === "confirmed_5") body = "5 minutes of solid scrolling. Cat noticed.";
+    let title = "feedling";
+    let url = "";
+    let extra = {};
+    if (t === "confirmed_5") {
+      const n = streakNotif(streakVariant, recentSnapshots());
+      if (!n) { console.log(`[push] trigger=confirmed_5 variant=${streakVariant} skipped — no material`); continue; }
+      ({ title, body, url, extra } = n);
+    }
     else if (t === "watch_detected") body = `you watched something just now — ${watchDelta} new item(s)`;
     else if (t.startsWith("session_")) body = milestoneCopy(Number(t.slice("session_".length)), state);
     else body = pushCopy[state.stateCode];
     try {
-      const rep = await pushAll("feedling", body, "");
+      const rep = await pushAll(title, body, url, extra);
       console.log(`[push] trigger=${t} sent=${rep.sent} pruned=${rep.pruned}`);
       await recordPush({
         at: Date.now(),
@@ -185,6 +198,7 @@ function initOnce(env: Record<string, string>, dataDir: string) {
   })();
   openrouterKey = env.OPENROUTER_API_KEY || "";
   diaryModel = env.DIARY_MODEL || diaryModel;
+  streakVariant = env.STREAK_VARIANT || streakVariant;
   adminToken = env.FEEDLING_ADMIN_TOKEN || "";
   buildSha = env.GIT_SHA || "";
   if (!adminToken) console.warn("[init] FEEDLING_ADMIN_TOKEN unset — every owner route will refuse");
@@ -305,6 +319,18 @@ export default async function handler(
       dataDir: ctx.dataDir || "(none)",
       nextPollAt,
     });
+  }
+  if (req.method === "POST" && path === "/api/notif-action") {
+    const { action, variant } = await req.json();
+    console.log(`[action] variant=${variant} action=${action}`);
+    await recordPush({
+      at: Date.now(), trigger: `action:${action}`, body: variant ?? "",
+      sent: 0, pruned: 0, endpoints: [],
+    });
+    return json({ ok: true });
+  }
+  if (req.method === "GET" && path === "/api/variant") {
+    return json({ variant: streakVariant });
   }
   if (req.method === "POST" && path === "/api/unsubscribe") {
     if (!isAdmin(req)) return DENY();
