@@ -11,6 +11,7 @@ import { configurePush, pushAll, vapidPublicKey } from "./push.ts";
 import { renderDiary } from "./diary.ts";
 import { streakNotif } from "./variants.ts";
 import { adapt, readAnswers, type Adaptation } from "./adapt.ts";
+import { renderRoast, draftTweet } from "./roast.ts";
 
 let ready = false;
 const POLL_IDLE_MS = 5 * 60 * 1000;
@@ -319,6 +320,28 @@ export default async function handler(
     if (!isAdmin(req)) return DENY();
     try { return json({ items: await rawHistory() }); }
     catch (e) { return json({ error: (e as Error).message }, { status: 503 }); }
+  }
+  if (req.method === "GET" && path === "/api/roast") {
+    if (!isAdmin(req)) return DENY();
+    try {
+      const items = await rawHistory();
+      const roast = await renderRoast(items.map((i) => i.title), openrouterKey, diaryModel,
+        url.searchParams.get("force") === "1");
+      return json({ roast });
+    } catch (e) {
+      return json({ error: (e as Error).message }, { status: 503 });
+    }
+  }
+  if (req.method === "GET" && path === "/api/tweet-draft") {
+    if (!isAdmin(req)) return DENY();
+    try {
+      const items = await rawHistory();
+      const draft = await draftTweet(items.map((i) => i.title), openrouterKey, diaryModel,
+        url.searchParams.get("force") === "1");
+      return json({ draft });
+    } catch (e) {
+      return json({ error: (e as Error).message }, { status: 503 });
+    }
   }
   if (req.method === "GET" && path === "/api/pushes") {
     const limit = url.searchParams.get("limit");
