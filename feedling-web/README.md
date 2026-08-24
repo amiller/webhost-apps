@@ -32,7 +32,8 @@ Public: `GET /api/state`, `/api/pushes`, `/api/diary` (cached), `/api/vapid-key`
 Owner-only, requiring `Authorization: Bearer $FEEDLING_ADMIN_TOKEN`: `POST /api/test-push`,
 `/api/disconnect`, `/api/verbose`, `/api/poll-now`, `/api/subscribe`, `/api/unsubscribe`, plus
 `GET /api/history` and `GET /api/diary?force=1` (which bypasses the daily cache and spends
-OpenRouter credit per call).
+OpenRouter credit per call), plus `GET /api/roast` and `GET /api/tweet-draft` — drafts only,
+nothing publishes; `?force=1` on either bypasses their daily cache and spends credit.
 
 The gate **fails closed**: with `FEEDLING_ADMIN_TOKEN` unset every owner route refuses, rather
 than falling open. Public `/api/state` is title-stripped — the titles live in `snaps[].shorts[]`,
