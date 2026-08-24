@@ -1,5 +1,5 @@
 import { shortCheck, rawHistory, connState, configureOauth3, disconnect, stepConnect } from "./oauth3-client.ts";
-import { computeState, snapshotFrom, pushCopy, headWatchDelta } from "./state.ts";
+import { computeState, snapshotFrom, pushCopy, headWatchDelta, nagLadder } from "./state.ts";
 import {
   addSnapshot, recentSnapshots, setState, getState,
   addSub, removeSub, allSubs, lastPushed, markPushed,
@@ -10,6 +10,7 @@ import {
 import { configurePush, pushAll, vapidPublicKey } from "./push.ts";
 import { renderDiary } from "./diary.ts";
 import { streakNotif } from "./variants.ts";
+import { adapt, readAnswers, type Adaptation } from "./adapt.ts";
 
 let ready = false;
 const POLL_IDLE_MS = 5 * 60 * 1000;
@@ -17,11 +18,10 @@ const POLL_ACTIVE_MS = 60 * 1000;
 // Verbose/test mode (FEEDLING_VERBOSE=1): watch for ANY watch, not just shorts — poll idle every
 // 60s and ping on the first new item of a session so a brief / regular-video watch isn't missed.
 const POLL_IDLE_MS_VERBOSE = 60 * 1000;
-const SESSION_MILESTONES = [30, 60, 90, 120];
 let oauth3Node = "";
 let openrouterKey = "";
 let diaryModel = "anthropic/claude-sonnet-4-5";
-let streakVariant = "classify";
+let seedVariant = "classify";  // STREAK_VARIANT is now only the seed; adapt() owns the live value
 let nextPollAt = 0;
 let verbose = false;
 let adminToken = "";
@@ -43,6 +43,21 @@ function milestoneCopy(activeMin: number, state: ReturnType<typeof getState>): s
 }
 
 let lastPoll = { at: 0, error: "" };
+
+// Recomputed once per CALENDAR DAY, like diary.ts's cache — so an answer lands within a day and
+// the thresholds do not thrash tick-to-tick. `adaptation.variant` feeds back in as `current`, so a
+// rotation sticks instead of being recomputed from the env seed every day.
+let adaptation: Adaptation = { nagScale: 1, variant: seedVariant, reason: "no answers read yet" };
+let adaptDay = "";
+function currentAdaptation(): Adaptation {
+  const day = new Date().toISOString().slice(0, 10);
+  if (day !== adaptDay) {
+    adaptDay = day;
+    adaptation = adapt(readAnswers(getPushLog(), Date.now()), adaptation.variant);
+    console.log(`[adapt] ${adaptDay} scale=${adaptation.nagScale} variant=${adaptation.variant} :: ${adaptation.reason}`);
+  }
+  return adaptation;
+}
 
 async function tick(): Promise<boolean> {
   if (!connState().connected) {
@@ -104,7 +119,8 @@ async function tick(): Promise<boolean> {
     const d = pendingWatchDetected(hasActivity, headDelta);
     if (d !== null) { triggers.push("watch_detected"); watchDelta = d; }
   }
-  const m = pendingSessionMilestone(sess.sessionMin, SESSION_MILESTONES);
+  const ad = currentAdaptation();
+  const m = pendingSessionMilestone(sess.sessionMin, nagLadder(sess.sessionMin, ad.nagScale));
   if (m !== null) triggers.push(`session_${m}`);
   if (state.stateCode !== lastPushed() && (state.stateCode === "drained" || state.stateCode === "night_owl")) {
     triggers.push(state.stateCode);
@@ -117,8 +133,8 @@ async function tick(): Promise<boolean> {
     let url = "";
     let extra = {};
     if (t === "confirmed_5") {
-      const n = streakNotif(streakVariant, recentSnapshots());
-      if (!n) { console.log(`[push] trigger=confirmed_5 variant=${streakVariant} skipped — no material`); continue; }
+      const n = streakNotif(ad.variant, recentSnapshots());
+      if (!n) { console.log(`[push] trigger=confirmed_5 variant=${ad.variant} skipped — no material`); continue; }
       ({ title, body, url, extra } = n);
     }
     else if (t === "watch_detected") body = `you watched something just now — ${watchDelta} new item(s)`;
@@ -198,7 +214,8 @@ function initOnce(env: Record<string, string>, dataDir: string) {
   })();
   openrouterKey = env.OPENROUTER_API_KEY || "";
   diaryModel = env.DIARY_MODEL || diaryModel;
-  streakVariant = env.STREAK_VARIANT || streakVariant;
+  seedVariant = env.STREAK_VARIANT || seedVariant;
+  adaptation = { nagScale: 1, variant: seedVariant, reason: "no answers read yet" };
   adminToken = env.FEEDLING_ADMIN_TOKEN || "";
   buildSha = env.GIT_SHA || "";
   if (!adminToken) console.warn("[init] FEEDLING_ADMIN_TOKEN unset — every owner route will refuse");
@@ -329,8 +346,12 @@ export default async function handler(
     });
     return json({ ok: true });
   }
+  if (req.method === "GET" && path === "/api/adapt") {
+    const ad = currentAdaptation();
+    return json({ ...ad, answers: readAnswers(getPushLog(), Date.now()), computedFor: adaptDay });
+  }
   if (req.method === "GET" && path === "/api/variant") {
-    return json({ variant: streakVariant });
+    return json({ variant: currentAdaptation().variant });
   }
   if (req.method === "POST" && path === "/api/unsubscribe") {
     if (!isAdmin(req)) return DENY();

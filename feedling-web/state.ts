@@ -132,3 +132,20 @@ export const pushCopy: Record<StateCode, string> = {
   cozy: "Cozy vibes with your cat ~",
   missing: "Your cat misses you, come say hi!",
 };
+
+/**
+ * Session-nag rungs: 30, 60, 90, then every 20 minutes, capped at 240 so a wedged session cannot
+ * nag forever. `scale` comes from adapt() — >1 spreads them out, <1 tightens them. Returns only
+ * the rungs at or below `sessionMin`, so pendingSessionMilestone fires each one exactly once.
+ */
+export function nagLadder(sessionMin: number, scale = 1): number[] {
+  const base = [30, 60, 90];
+  for (let m = 110; m <= 240; m += 20) base.push(m);
+  const out: number[] = [];
+  for (const b of base) {
+    const r = Math.round(b * scale);
+    if (r > sessionMin) break;
+    if (!out.length || r > out[out.length - 1]) out.push(r);
+  }
+  return out;
+}
