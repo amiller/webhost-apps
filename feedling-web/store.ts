@@ -39,12 +39,39 @@ export interface PushLogEntry {
 }
 const pushLog: PushLogEntry[] = [];
 
+// The corpus ledger: an APPEND-ONLY record of every history item ever seen, with the time it was
+// first observed. This is the only durable record of what was watched — snapshots expire after 24h
+// and YouTube's history page carries no per-item dates, so anything not written here is gone.
+// Measured 2026-08-24: the ~200-item window turned over 117 items in 13h, i.e. ~200/day were
+// being discarded. NO TTL: a year of watching is ~5MB.
+export interface CorpusEntry {
+  id: string;
+  title: string;
+  isShort: boolean;
+  /** When feedling FIRST SAW it, not when YouTube says it was watched (it says nothing).
+   *  Polling is 60s in verbose mode, so this trails the real watch by minutes at most. */
+  firstSeen: number;
+}
+let corpusFile = "";
+const corpus: CorpusEntry[] = [];
+const corpusIds = new Set<string>();
+
 export async function initStore(dir: string): Promise<void> {
   dataDir = dir;
   if (!dataDir) return;
   subsFile = `${dataDir}/subs.json`;
   snapsFile = `${dataDir}/snaps.json`;
   pushLogFile = `${dataDir}/pushes.json`;
+  corpusFile = `${dataDir}/corpus.jsonl`;
+  try {
+    const txt = await Deno.readTextFile(corpusFile);
+    for (const line of txt.split("\n")) {
+      if (!line.trim()) continue;
+      const e = JSON.parse(line) as CorpusEntry;
+      if (!corpusIds.has(e.id)) { corpusIds.add(e.id); corpus.push(e); }
+    }
+    console.log(`[store] loaded ${corpus.length} corpus entries`);
+  } catch { /* no corpus yet */ }
   try {
     const txt = await Deno.readTextFile(subsFile);
     const arr = JSON.parse(txt) as PushSub[];
@@ -217,3 +244,28 @@ export async function removeSub(endpoint: string): Promise<void> {
 export function allSubs(): PushSub[] {
   return Array.from(subs.values());
 }
+
+/** Record any item not seen before. Returns how many were new. Append-only: one JSON object per
+ *  line, so a partial write costs at most the last line rather than the whole ledger. */
+export async function recordCorpus(
+  items: { id: string; title: string; isShort: boolean }[],
+  now = Date.now(),
+): Promise<number> {
+  const fresh = items.filter((it) => it.id && !corpusIds.has(it.id));
+  if (!fresh.length) return 0;
+  const lines: string[] = [];
+  for (const it of fresh) {
+    const e: CorpusEntry = { id: it.id, title: it.title, isShort: it.isShort, firstSeen: now };
+    corpusIds.add(e.id);
+    corpus.push(e);
+    lines.push(JSON.stringify(e));
+  }
+  if (corpusFile) await Deno.writeTextFile(corpusFile, lines.join("\n") + "\n", { append: true });
+  return fresh.length;
+}
+
+export function getCorpus(since = 0): CorpusEntry[] {
+  return since ? corpus.filter((e) => e.firstSeen >= since) : corpus.slice();
+}
+
+export function corpusSize(): number { return corpus.length; }

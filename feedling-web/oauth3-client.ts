@@ -25,6 +25,8 @@ export interface ShortCheckResult {
   todayHonest: boolean;
   videosToday: number;
   shorts: { id: string; title: string; date?: string }[];
+  /** Every item currently on the history page. Feeds the corpus ledger. */
+  items: { id: string; title: string; isShort: boolean }[];
   checked: string;
   elapsed: string;
 }
@@ -155,6 +157,10 @@ export async function shortCheck(): Promise<ShortCheckResult> {
     todayHonest,
     videosToday: todayHonest ? countVideosToday(items, sod) : (items.length - shortsCount),
     shorts: fresh.map((it) => ({ id: it.id, title: it.title, date: it.date })),
+    // The WHOLE page, so the corpus ledger can record what was on screen without a second
+    // fetch. The history window turns over ~117 items in 13h (measured 2026-08-24), so anything
+    // not captured on the poll that sees it is lost for good.
+    items: items.map((it) => ({ id: it.id, title: it.title, isShort: !!it.meta?.isShort })),
     checked: new Date().toISOString(),
     elapsed: `${Date.now() - t0}ms`,
   };

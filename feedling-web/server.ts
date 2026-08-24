@@ -5,6 +5,7 @@ import {
   addSub, removeSub, allSubs, lastPushed, markPushed,
   updateSession, pendingSessionMilestone, getSession, initStore,
   recordPush, getPushLog, checkConfirmedActivity, consecutivePolls, cumulativePolls,
+  recordCorpus, getCorpus, corpusSize,
   pendingWatchDetected, sessionShorts,
 } from "./store.ts";
 import { configurePush, pushAll, vapidPublicKey } from "./push.ts";
@@ -104,6 +105,9 @@ async function tick(): Promise<boolean> {
   const hasActivity = snap.newShorts > 0 || (verbose && headDelta > 0);
 
   await addSnapshot(snap);
+  // Capture BEFORE anything can throw below: the history window turns over ~200 items/day and
+  // whatever is not written here is unrecoverable — the page carries no dates to backfill from.
+  const newToCorpus = await recordCorpus(r.items);
 
   const prev = getState();
   const state = computeState(recentSnapshots(), prev?.energy ?? 0);
@@ -115,6 +119,7 @@ async function tick(): Promise<boolean> {
     `[tick] verbose=${verbose} watching=${snap.watching} new=${snap.newShorts} count=${snap.shortsCount} ` +
     `total=${snap.totalCount} head=${snap.headId.slice(0, 11)} delta=${countDelta} totalDelta=${totalDelta} ` +
     `headDelta=${headDelta} active=${hasActivity} cumulative=${cumulativePolls()} sessionMin=${sess.sessionMin} ` +
+    `corpus=${corpusSize()}(+${newToCorpus}) ` +
     `sessionShorts=${sessionShorts()} state=${state.stateCode} energy=${state.energy}`
   );
 
@@ -373,6 +378,14 @@ export default async function handler(
       sent: 0, pruned: 0, endpoints: [],
     });
     return json({ ok: true });
+  }
+  if (req.method === "GET" && path === "/api/corpus") {
+    // Titles are the private surface — the public feed gets shape, never content (same rule as
+    // /api/state's title stripping and /api/history's gate).
+    if (!isAdmin(req)) return DENY();
+    const since = Number(url.searchParams.get("since") || 0) || 0;
+    const items = getCorpus(since);
+    return json({ count: items.length, total: corpusSize(), items });
   }
   if (req.method === "GET" && path === "/api/adapt") {
     const ad = currentAdaptation();
