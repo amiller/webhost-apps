@@ -152,7 +152,16 @@ const SESSION_GAP_MS = 15 * 60 * 1000;
 
 export interface SessionUpdate {
   newSession: boolean;
-  sessionMin: number; // 0 if no session
+  /** Wall-clock since the session opened, INCLUDING the idle tail. A session stays open for
+   *  SESSION_GAP_MS after the last watch, so this keeps climbing after he has stopped. Kept for
+   *  display only — never nag or score on it. */
+  sessionMin: number;
+  /** Watching span: session start -> last watch. This is what "you have been scrolling for N
+   *  minutes" actually means, and the only honest ground truth for a clock-check probe.
+   *  Observed 2026-08-24: sessionMin said 30 while the real span was 15 and he had been idle 15. */
+  activeMin: number;
+  /** Minutes since the last watch. >0 means the session is coasting, not running. */
+  idleMin: number;
   startedAt: number | null;
 }
 
@@ -176,7 +185,13 @@ export function updateSession(hasActivity: boolean, newShorts = 0, now = Date.no
     consecutiveActivePolls += 1;
     sessionNewShorts += newShorts;
     lastActivityAt = now;
-    return { newSession, sessionMin: Math.round((now - sessionStartedAt) / 60_000), startedAt: sessionStartedAt };
+    return {
+      newSession,
+      sessionMin: Math.round((now - sessionStartedAt) / 60_000),
+      activeMin: Math.round((lastActivityAt - sessionStartedAt) / 60_000),
+      idleMin: 0,
+      startedAt: sessionStartedAt,
+    };
   }
   consecutiveActivePolls = 0;
   // No activity: optionally close out a stale session
@@ -186,6 +201,8 @@ export function updateSession(hasActivity: boolean, newShorts = 0, now = Date.no
   return {
     newSession: false,
     sessionMin: sessionStartedAt ? Math.round((now - sessionStartedAt) / 60_000) : 0,
+    activeMin: sessionStartedAt && lastActivityAt ? Math.round((lastActivityAt - sessionStartedAt) / 60_000) : 0,
+    idleMin: lastActivityAt ? Math.round((now - lastActivityAt) / 60_000) : 0,
     startedAt: sessionStartedAt,
   };
 }

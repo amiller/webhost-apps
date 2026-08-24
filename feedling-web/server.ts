@@ -50,6 +50,9 @@ let lastPoll = { at: 0, error: "" };
 // because the question interrupted him" from "he stopped anyway" — every probe is an intervention,
 // so reactivity has to be estimated rather than assumed away.
 const SILENT_RATE = 0.2;
+// Past this much idle the session is over in every sense that matters; nagging about scrolling
+// someone has already stopped is the false positive that gets notifications switched off.
+const IDLE_SUPPRESS_MIN = 5;
 let sessionSilent = false;
 
 // Recomputed once per CALENDAR DAY, like diary.ts's cache — so an answer lands within a day and
@@ -129,7 +132,7 @@ async function tick(): Promise<boolean> {
     `[tick] verbose=${verbose} watching=${snap.watching} new=${snap.newShorts} count=${snap.shortsCount} ` +
     `total=${snap.totalCount} head=${snap.headId.slice(0, 11)} delta=${countDelta} totalDelta=${totalDelta} ` +
     `headDelta=${headDelta} active=${hasActivity} cumulative=${cumulativePolls()} sessionMin=${sess.sessionMin} ` +
-    `corpus=${corpusSize()}(+${newToCorpus}) silent=${sessionSilent} scored=${scored} ` +
+    `corpus=${corpusSize()}(+${newToCorpus}) active=${sess.activeMin}m idle=${sess.idleMin}m silent=${sessionSilent} scored=${scored} ` +
     `sessionShorts=${sessionShorts()} state=${state.stateCode} energy=${state.energy}`
   );
 
@@ -141,7 +144,11 @@ async function tick(): Promise<boolean> {
     if (d !== null) { triggers.push("watch_detected"); watchDelta = d; }
   }
   const ad = currentAdaptation();
-  const m = pendingSessionMilestone(sess.sessionMin, nagLadder(sess.sessionMin, ad.nagScale));
+  // Nag on WATCHING time, not wall-clock. A session stays open for 15 min after the last watch,
+  // so keying on sessionMin fired milestones during the idle tail and the copy ("30 min of
+  // confirmed scrolling") was simply false. Observed 2026-08-24 15:58: sessionMin 30 / active 15 /
+  // idle 15 — he had stopped 13 minutes before the notification arrived.
+  const m = pendingSessionMilestone(sess.activeMin, nagLadder(sess.activeMin, ad.nagScale));
   if (m !== null) triggers.push(`session_${m}`);
   if (state.stateCode !== lastPushed() && (state.stateCode === "drained" || state.stateCode === "night_owl")) {
     triggers.push(state.stateCode);
@@ -167,12 +174,16 @@ async function tick(): Promise<boolean> {
     }
     else if (t === "watch_detected") body = `you watched something just now — ${watchDelta} new item(s)`;
     else if (t.startsWith("session_")) {
+      if (sess.idleMin >= IDLE_SUPPRESS_MIN) {
+        console.log(`[push] ${t} suppressed — idle ${sess.idleMin}m, the session has already ended`);
+        continue;
+      }
       // These slots carried NO buttons until now, so their zero taps measured nothing. They are the
       // only spare question budget the channel has — spend them on the one probe with an exact
       // answer the app already holds.
-      body = milestoneCopy(Number(t.slice("session_".length)), state);
+      body = milestoneCopy(sess.activeMin, state);
       if (!sessionSilent) {
-        const n = timeCheckNotif(sess.sessionMin);
+        const n = timeCheckNotif(sess.activeMin);
         title = n.title; body = n.body; extra = n.extra;
         const opts = (n.extra as { actions?: { action: string }[] }).actions?.map((a) => a.action) ?? [];
         probeId = (await openProbe("timecheck", opts, n.truth)).id;
@@ -336,6 +347,11 @@ export default async function handler(
         startedAt: sess.startedAt,
         lastActivityAt: sess.lastActivityAt,
         minutes: sessionMin,
+        // Both clocks, because they diverge: a session stays open 15 min past the last watch.
+        activeMinutes: sess.startedAt && sess.lastActivityAt
+          ? Math.round((sess.lastActivityAt - sess.startedAt) / 60_000) : 0,
+        idleMinutes: sess.lastActivityAt
+          ? Math.round((Date.now() - sess.lastActivityAt) / 60_000) : 0,
         consecutiveActivePolls: consecutivePolls(),
         cumulativeActivePolls: cumulativePolls(),
       },

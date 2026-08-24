@@ -12,7 +12,7 @@
 // so totalCount stays flat and a count-growth signal NEVER fires. The head item id DOES change on
 // any watch (regular, short, or rewatch). This regression is exactly what the prior
 // totalDelta-based code shipped against and is asserted below.
-import { assertEquals } from "jsr:@std/assert";
+import { assert, assertEquals } from "jsr:@std/assert";
 import { initStore, pendingWatchDetected, updateSession } from "./store.ts";
 import { headWatchDelta } from "./state.ts";
 import type { Snapshot } from "./state.ts";
@@ -150,4 +150,33 @@ Deno.test("session milestones read elapsed minutes and fire once each", () => {
   assertEquals(pendingSessionMilestone(30, [30, 60, 90, 120]), 30, "30 min ⇒ session_30");
   assertEquals(pendingSessionMilestone(31, [30, 60, 90, 120]), null, "already fired");
   assertEquals(pendingSessionMilestone(60, [30, 60, 90, 120]), 60, "next milestone still arms");
+});
+
+// ---------------------------------------------------------------------------
+// REGRESSION, reported live 2026-08-24 15:58: a clock-check arrived claiming 28 minutes when he
+// had not watched anything for ~13. A session stays OPEN for SESSION_GAP_MS (15 min) after the
+// last watch, so `sessionMin` keeps climbing through the idle tail. Prod at that moment:
+// startedAt 15:29:32, lastActivity 15:44:48, sessionMin 30, active 15, idle 15.
+// Nagging and probe ground truth must key on the ACTIVE span, never wall-clock.
+// ---------------------------------------------------------------------------
+import { updateSession as _updateSession } from "./store.ts";
+
+Deno.test("session clocks diverge once watching stops", () => {
+  const t0 = 2_000_000_000_000;
+  const MIN = 60_000;
+  // Watching for 15 minutes.
+  _updateSession(true, 1, t0);
+  const active = _updateSession(true, 1, t0 + 15 * MIN);
+  assertEquals(active.activeMin, 15);
+  assertEquals(active.idleMin, 0);
+
+  // 13 minutes later he has stopped, but the session has not closed yet (gap < 15 min).
+  const coasting = _updateSession(false, 0, t0 + 28 * MIN);
+  assertEquals(coasting.sessionMin, 28, "wall-clock keeps climbing");
+  assertEquals(coasting.activeMin, 15, "watching span does NOT — this is the honest number");
+  assertEquals(coasting.idleMin, 13, "and this is why the notification was wrong");
+  assert(
+    coasting.activeMin < coasting.sessionMin,
+    "if these are ever equal the regression is back",
+  );
 });
