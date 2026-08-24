@@ -49,12 +49,17 @@ let lastPoll = { at: 0, error: "" };
 // the thresholds do not thrash tick-to-tick. `adaptation.variant` feeds back in as `current`, so a
 // rotation sticks instead of being recomputed from the env seed every day.
 let adaptation: Adaptation = { nagScale: 1, variant: seedVariant, reason: "no answers read yet" };
+let adaptAnswers: ReturnType<typeof readAnswers> | null = null;
 let adaptDay = "";
 function currentAdaptation(): Adaptation {
   const day = new Date().toISOString().slice(0, 10);
   if (day !== adaptDay) {
     adaptDay = day;
-    adaptation = adapt(readAnswers(getPushLog(), Date.now()), adaptation.variant);
+    // Keep the counts the decision was made FROM. Recomputing them per request made /api/adapt
+    // contradict itself within a day — the cached `reason` said 6 "still going" while a freshly
+    // read `answers` said 7, because a tap had landed since the day flipped.
+    adaptAnswers = readAnswers(getPushLog(), Date.now());
+    adaptation = adapt(adaptAnswers, adaptation.variant);
     console.log(`[adapt] ${adaptDay} scale=${adaptation.nagScale} variant=${adaptation.variant} :: ${adaptation.reason}`);
   }
   return adaptation;
@@ -371,7 +376,14 @@ export default async function handler(
   }
   if (req.method === "GET" && path === "/api/adapt") {
     const ad = currentAdaptation();
-    return json({ ...ad, answers: readAnswers(getPushLog(), Date.now()), computedFor: adaptDay });
+    // `answers` is what `reason` was computed from; `answersNow` is live, so a tap you just made
+    // is visible before tomorrow's recompute folds it in.
+    return json({
+      ...ad,
+      answers: adaptAnswers,
+      answersNow: readAnswers(getPushLog(), Date.now()),
+      computedFor: adaptDay,
+    });
   }
   if (req.method === "GET" && path === "/api/variant") {
     return json({ variant: currentAdaptation().variant });
