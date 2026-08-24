@@ -5,13 +5,14 @@ import {
   addSub, removeSub, allSubs, lastPushed, markPushed,
   updateSession, pendingSessionMilestone, getSession, initStore,
   recordPush, getPushLog, checkConfirmedActivity, consecutivePolls, cumulativePolls,
-  recordCorpus, getCorpus, corpusSize,
+  recordCorpus, getCorpus, corpusSize, corpusActivityBetween,
   pendingWatchDetected, sessionShorts,
 } from "./store.ts";
 import { configurePush, pushAll, vapidPublicKey } from "./push.ts";
 import { renderDiary } from "./diary.ts";
-import { streakNotif } from "./variants.ts";
-import { adapt, readAnswers, type Adaptation } from "./adapt.ts";
+import { streakNotif, timeCheckNotif } from "./variants.ts";
+import { adapt, readAnswers, ARMS, type Adaptation } from "./adapt.ts";
+import { initProbes, openProbe, answerProbe, scoreDue, getProbes, probeStats } from "./probes.ts";
 import { renderRoast, draftTweet } from "./roast.ts";
 
 let ready = false;
@@ -23,7 +24,6 @@ const POLL_IDLE_MS_VERBOSE = 60 * 1000;
 let oauth3Node = "";
 let openrouterKey = "";
 let diaryModel = "anthropic/claude-sonnet-4-5";
-let seedVariant = "classify";  // STREAK_VARIANT is now only the seed; adapt() owns the live value
 let nextPollAt = 0;
 let verbose = false;
 let adminToken = "";
@@ -46,10 +46,16 @@ function milestoneCopy(activeMin: number, state: ReturnType<typeof getState>): s
 
 let lastPoll = { at: 0, error: "" };
 
+// ~20% of sessions get NO probe at all. Without a silent arm you cannot separate "he stopped
+// because the question interrupted him" from "he stopped anyway" — every probe is an intervention,
+// so reactivity has to be estimated rather than assumed away.
+const SILENT_RATE = 0.2;
+let sessionSilent = false;
+
 // Recomputed once per CALENDAR DAY, like diary.ts's cache — so an answer lands within a day and
 // the thresholds do not thrash tick-to-tick. `adaptation.variant` feeds back in as `current`, so a
 // rotation sticks instead of being recomputed from the env seed every day.
-let adaptation: Adaptation = { nagScale: 1, variant: seedVariant, reason: "no answers read yet" };
+let adaptation: Adaptation = { nagScale: 1, reason: "no answers read yet" };
 let adaptAnswers: ReturnType<typeof readAnswers> | null = null;
 let adaptDay = "";
 function currentAdaptation(): Adaptation {
@@ -60,8 +66,8 @@ function currentAdaptation(): Adaptation {
     // contradict itself within a day — the cached `reason` said 6 "still going" while a freshly
     // read `answers` said 7, because a tap had landed since the day flipped.
     adaptAnswers = readAnswers(getPushLog(), Date.now());
-    adaptation = adapt(adaptAnswers, adaptation.variant);
-    console.log(`[adapt] ${adaptDay} scale=${adaptation.nagScale} variant=${adaptation.variant} :: ${adaptation.reason}`);
+    adaptation = adapt(adaptAnswers);
+    console.log(`[adapt] ${adaptDay} scale=${adaptation.nagScale} :: ${adaptation.reason}`);
   }
   return adaptation;
 }
@@ -114,12 +120,16 @@ async function tick(): Promise<boolean> {
   setState(state);
 
   const sess = updateSession(hasActivity, snap.newShorts);
+  if (sess.newSession) sessionSilent = Math.random() < SILENT_RATE;
+  // Score anything whose horizon has elapsed. Runs every tick and reads the corpus, so a probe he
+  // ignored still gets an outcome — non-response is not missing data here.
+  const scored = await scoreDue(corpusActivityBetween);
 
   console.log(
     `[tick] verbose=${verbose} watching=${snap.watching} new=${snap.newShorts} count=${snap.shortsCount} ` +
     `total=${snap.totalCount} head=${snap.headId.slice(0, 11)} delta=${countDelta} totalDelta=${totalDelta} ` +
     `headDelta=${headDelta} active=${hasActivity} cumulative=${cumulativePolls()} sessionMin=${sess.sessionMin} ` +
-    `corpus=${corpusSize()}(+${newToCorpus}) ` +
+    `corpus=${corpusSize()}(+${newToCorpus}) silent=${sessionSilent} scored=${scored} ` +
     `sessionShorts=${sessionShorts()} state=${state.stateCode} energy=${state.energy}`
   );
 
@@ -143,13 +153,32 @@ async function tick(): Promise<boolean> {
     let title = "feedling";
     let url = "";
     let extra = {};
+    let probeId = "";
     if (t === "confirmed_5") {
-      const n = streakNotif(ad.variant, recentSnapshots());
-      if (!n) { console.log(`[push] trigger=confirmed_5 variant=${ad.variant} skipped — no material`); continue; }
+      if (sessionSilent) { console.log("[push] confirmed_5 suppressed — silent control session"); continue; }
+      // Randomised PER SEND, so arm is not confounded with date the way daily rotation was.
+      const arm = ARMS[Math.floor(Math.random() * ARMS.length)];
+      const n = streakNotif(arm, recentSnapshots());
+      if (!n) { console.log(`[push] trigger=confirmed_5 arm=${arm} skipped — no material`); continue; }
       ({ title, body, url, extra } = n);
+      const opts = (extra as { actions?: { action: string }[] }).actions?.map((a) => a.action) ?? [];
+      probeId = (await openProbe(arm as "predict" | "commit", opts)).id;
+      extra = { ...extra, probeId };
     }
     else if (t === "watch_detected") body = `you watched something just now — ${watchDelta} new item(s)`;
-    else if (t.startsWith("session_")) body = milestoneCopy(Number(t.slice("session_".length)), state);
+    else if (t.startsWith("session_")) {
+      // These slots carried NO buttons until now, so their zero taps measured nothing. They are the
+      // only spare question budget the channel has — spend them on the one probe with an exact
+      // answer the app already holds.
+      body = milestoneCopy(Number(t.slice("session_".length)), state);
+      if (!sessionSilent) {
+        const n = timeCheckNotif(sess.sessionMin);
+        title = n.title; body = n.body; extra = n.extra;
+        const opts = (n.extra as { actions?: { action: string }[] }).actions?.map((a) => a.action) ?? [];
+        probeId = (await openProbe("timecheck", opts, n.truth)).id;
+        extra = { ...extra, probeId };
+      }
+    }
     else body = pushCopy[state.stateCode];
     try {
       const rep = await pushAll(title, body, url, extra);
@@ -158,6 +187,8 @@ async function tick(): Promise<boolean> {
         at: Date.now(),
         trigger: t,
         body,
+        probeId: probeId || undefined,
+        probeKind: probeId ? (t === "confirmed_5" ? (extra as { variant?: string }).variant : "timecheck") : undefined,
         sent: rep.sent,
         pruned: rep.pruned,
         endpoints: rep.details.map((d) => ({
@@ -209,6 +240,7 @@ async function loop() {
 function initOnce(env: Record<string, string>, dataDir: string) {
   if (ready) return;
   initStore(dataDir).catch((e) => console.error("[init] store:", (e as Error).message));
+  initProbes(dataDir).catch((e) => console.error("[init] probes:", (e as Error).message));
   oauth3Node = env.OAUTH3_NODE || "https://pod.dstack.soc1024.com/oauth3";
   verbose = /^(1|true|yes|on)$/i.test(env.FEEDLING_VERBOSE || "");
   // Get feedling's scoped token via the SDK connect() handshake — an explicit OAUTH3_TOKEN
@@ -225,8 +257,7 @@ function initOnce(env: Record<string, string>, dataDir: string) {
   })();
   openrouterKey = env.OPENROUTER_API_KEY || "";
   diaryModel = env.DIARY_MODEL || diaryModel;
-  seedVariant = env.STREAK_VARIANT || seedVariant;
-  adaptation = { nagScale: 1, variant: seedVariant, reason: "no answers read yet" };
+  adaptation = { nagScale: 1, reason: "no answers read yet" };
   adminToken = env.FEEDLING_ADMIN_TOKEN || "";
   buildSha = env.GIT_SHA || "";
   if (!adminToken) console.warn("[init] FEEDLING_ADMIN_TOKEN unset — every owner route will refuse");
@@ -371,13 +402,18 @@ export default async function handler(
     });
   }
   if (req.method === "POST" && path === "/api/notif-action") {
-    const { action, variant } = await req.json();
-    console.log(`[action] variant=${variant} action=${action}`);
+    const { action, variant, probeId, at } = await req.json();
+    // sw.js has always sent `at`; it used to be discarded, so response latency could only be
+    // estimated from push-log adjacency. Correlate by nonce and keep the real timestamp.
+    const tapAt = typeof at === "number" && at > 0 ? at : Date.now();
+    const matched = probeId ? await answerProbe(probeId, action, tapAt) : false;
+    console.log(`[action] variant=${variant} action=${action} probe=${probeId || "-"} matched=${matched}`);
     await recordPush({
-      at: Date.now(), trigger: `action:${action}`, body: variant ?? "",
+      at: tapAt, trigger: `action:${action}`, body: variant ?? "",
+      probeId: probeId || undefined,
       sent: 0, pruned: 0, endpoints: [],
     });
-    return json({ ok: true });
+    return json({ ok: true, matched });
   }
   if (req.method === "GET" && path === "/api/corpus") {
     // Titles are the private surface — the public feed gets shape, never content (same rule as
@@ -386,6 +422,10 @@ export default async function handler(
     const since = Number(url.searchParams.get("since") || 0) || 0;
     const items = getCorpus(since);
     return json({ count: items.length, total: corpusSize(), items });
+  }
+  if (req.method === "GET" && path === "/api/probes") {
+    const since = Number(url.searchParams.get("since") || 0) || 0;
+    return json({ stats: probeStats(since), probes: isAdmin(req) ? getProbes(since) : undefined });
   }
   if (req.method === "GET" && path === "/api/adapt") {
     const ad = currentAdaptation();
@@ -399,7 +439,7 @@ export default async function handler(
     });
   }
   if (req.method === "GET" && path === "/api/variant") {
-    return json({ variant: currentAdaptation().variant });
+    return json({ arms: ARMS, randomizedPerSend: true, silentRate: SILENT_RATE });
   }
   if (req.method === "POST" && path === "/api/unsubscribe") {
     if (!isAdmin(req)) return DENY();

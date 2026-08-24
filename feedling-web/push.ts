@@ -37,6 +37,7 @@ export interface PushExtra {
   image?: string;
   actions?: { action: string; title: string }[];
   variant?: string;
+  probeId?: string;
 }
 
 export async function pushAll(title: string, body: string, url = "", extra: PushExtra = {}): Promise<PushReport> {

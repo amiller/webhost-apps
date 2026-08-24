@@ -36,6 +36,10 @@ export interface PushLogEntry {
   sent: number;
   pruned: number;
   endpoints: { host: string; ok: boolean; status?: number; error?: string }[];
+  /** Which probe this push carried, if any. Without it a `pick:`/`min:` tap is uninterpretable —
+   *  you know an answer arrived but not what was asked or which option was correct. */
+  probeId?: string;
+  probeKind?: string;
 }
 const pushLog: PushLogEntry[] = [];
 
@@ -269,3 +273,9 @@ export function getCorpus(since = 0): CorpusEntry[] {
 }
 
 export function corpusSize(): number { return corpus.length; }
+
+/** Was anything watched in (from, to]? The behavioural endpoint every probe is scored against —
+ *  observed from the corpus, so an UNANSWERED probe still yields an outcome. */
+export function corpusActivityBetween(from: number, to: number): boolean {
+  return corpus.some((e) => e.firstSeen > from && e.firstSeen <= to);
+}

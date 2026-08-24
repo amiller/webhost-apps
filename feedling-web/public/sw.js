@@ -29,7 +29,7 @@ self.addEventListener('notificationclick', (event) => {
     event.waitUntil(fetch(self.registration.scope + 'api/notif-action', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: event.action, variant: d.variant || '', at: Date.now() }),
+      body: JSON.stringify({ action: event.action, variant: d.variant || '', probeId: d.probeId || '', at: Date.now() }),
     }));
     return;
   }

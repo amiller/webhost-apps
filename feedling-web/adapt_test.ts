@@ -1,5 +1,5 @@
 import { assertEquals, assert } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { readAnswers, adapt, VARIANTS } from "./adapt.ts";
+import { readAnswers, adapt, ARMS } from "./adapt.ts";
 import { nagLadder } from "./state.ts";
 import type { PushLogEntry } from "./store.ts";
 
@@ -28,14 +28,13 @@ Deno.test("readAnswers excludes entries older than the window", () => {
 });
 
 Deno.test("readAnswers attributes taps to the variant in body", () => {
-  const a = readAnswers([e("action:still-going", 0, "classify"), e("action:pick:xyz", 0, "recall")], NOW);
-  assertEquals(a.byVariant, { classify: 1, recall: 1 });
+  const a = readAnswers([e("action:yes-more", 0, "predict"), e("action:min:30", 0, "timecheck")], NOW);
+  assertEquals(a.byVariant, { predict: 1, timecheck: 1 });
 });
 
 Deno.test("under 5 answers reports what is still needed and does not adapt", () => {
-  const a = adapt(answers(2, 2, 0), "classify");
+  const a = adapt(answers(2, 2, 0));
   assertEquals(a.nagScale, 1);
-  assertEquals(a.variant, "classify");
   assert(a.reason.includes("1 more"), a.reason);
 });
 
@@ -43,31 +42,48 @@ Deno.test("under 5 answers reports what is still needed and does not adapt", () 
 // 8 actually-done. A bucketed rule ("still-going >= 2x actually-done") returns exactly 1.0 here,
 // i.e. the owner answers for a week and sees nothing change — the bug this module exists to fix.
 Deno.test("the real prod distribution (6 vs 8) moves the number", () => {
-  const a = adapt(answers(6, 8), "classify");
+  const a = adapt(answers(6, 8));
   assertEquals(a.nagScale, 0.91);
   assert(a.reason.includes("6") && a.reason.includes("8"), a.reason);
 });
 
 Deno.test("mostly still-going spreads nags out; mostly actually-done tightens them", () => {
-  const up = adapt(answers(9, 1), "classify").nagScale;
-  const down = adapt(answers(1, 9), "classify").nagScale;
+  const up = adapt(answers(9, 1)).nagScale;
+  const down = adapt(answers(1, 9)).nagScale;
   assert(up > 1 && up <= 1.6, `up=${up}`);
   assert(down < 1 && down >= 0.6, `down=${down}`);
 });
 
 Deno.test("flipping one answer toward still-going strictly increases the scale", () => {
-  assert(adapt(answers(7, 7), "classify").nagScale > adapt(answers(6, 8), "classify").nagScale);
+  assert(adapt(answers(7, 7)).nagScale > adapt(answers(6, 8)).nagScale);
 });
 
-Deno.test("a variant that earns nothing rotates; one that earns taps does not", () => {
-  const dead = adapt(readAnswers(Array.from({ length: 8 }, () => e("confirmed_5")), NOW), "classify");
-  assertEquals(dead.variant, "recall");
-  assert(VARIANTS.includes(dead.variant));
-  assertEquals(adapt(answers(6, 8), "classify").variant, "classify");
+// Replaces the old rotation test. Rotation is gone: arms are randomised per send, and the bug it
+// hid was that `total` excluded pick:*/min:* taps, so a variant being answered read as unanswered.
+Deno.test("every tap counts as an answer, whatever it said", () => {
+  const a = readAnswers([
+    e("action:yes-more"), e("action:no-done"), e("action:min:30"), e("action:pick:abc"),
+  ], NOW);
+  assertEquals(a.answered, 4, "all four taps are answers");
+  assertEquals(a.directional, 2, "only continue/stop taps bear on nag spacing");
+  assertEquals(a.total, a.answered);
+});
+
+Deno.test("new arm actions map onto the continue/stop poles", () => {
+  const a = readAnswers([
+    e("action:yes-more"), e("action:not-stopping"),
+    e("action:no-done"), e("action:done-hold-me"), e("action:actually-done"),
+  ], NOW);
+  assertEquals(a.stillGoing, 2);
+  assertEquals(a.actuallyDone, 3);
+});
+
+Deno.test("ARMS is exactly the two scored arms", () => {
+  assertEquals(ARMS, ["predict", "commit"]);
 });
 
 Deno.test("adapt is deterministic for identical input", () => {
-  assertEquals(adapt(answers(6, 8), "classify"), adapt(answers(6, 8), "classify"));
+  assertEquals(adapt(answers(6, 8)), adapt(answers(6, 8)));
 });
 
 Deno.test("nagLadder rungs and cap", () => {

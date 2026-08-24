@@ -1,10 +1,16 @@
 import type { PushLogEntry } from "./store.ts";
 
 export interface Answers {
+  /** Answers meaning "I'll keep going": yes-more, not-stopping (+ legacy still-going). */
   stillGoing: number;
+  /** Answers meaning "I'm stopping": no-done, done-hold-me (+ legacy actually-done). */
   actuallyDone: number;
   /** Taps keyed by the variant that produced them — `notif-action` stores it in `body`. */
   byVariant: Record<string, number>;
+  /** Every tap, whatever it said. */
+  answered: number;
+  /** Only the taps that bear on nag spacing (continue vs stop). */
+  directional: number;
   /** confirmed_5 pushes sent in the window. Without this, a variant earning ZERO taps could
    *  never rotate: rotation keyed on taps alone deadlocks at total === 0. */
   confirmedSends: number;
@@ -13,17 +19,20 @@ export interface Answers {
 
 export interface Adaptation {
   nagScale: number;
-  variant: string;
   reason: string;
 }
 
-export const VARIANTS = ["classify", "recall", "mirror"];
+// The predict/commit arms are randomised PER SEND in server.ts, not rotated per day. Daily
+// rotation was both wrong for a within-subject contrast (it confounds arm with date) and buggy:
+// `total` excluded `pick:*` taps, so a variant that WAS being answered still read total === 0 and
+// tripped the "no answers — switching" rule, i.e. it got rotated away from for being answered.
+export const ARMS = ["predict", "commit"];
 const MIN_ANSWERS = 5;
 const WINDOW_DAYS = 7;
 
 export function readAnswers(log: PushLogEntry[], now: number, days = WINDOW_DAYS): Answers {
   const cutoff = now - days * 86_400_000;
-  let stillGoing = 0, actuallyDone = 0, confirmedSends = 0;
+  let stillGoing = 0, actuallyDone = 0, confirmedSends = 0, answered = 0;
   const byVariant: Record<string, number> = {};
   for (const e of log) {
     if (e.at < cutoff) continue;
@@ -33,10 +42,15 @@ export function readAnswers(log: PushLogEntry[], now: number, days = WINDOW_DAYS
     // is engagement even though it is neither still-going nor actually-done.
     if (e.body) byVariant[e.body] = (byVariant[e.body] ?? 0) + 1;
     const a = e.trigger.slice("action:".length);
-    if (a === "still-going") stillGoing++;
-    else if (a === "actually-done") actuallyDone++;
+    answered++;
+    if (a === "still-going" || a === "yes-more" || a === "not-stopping") stillGoing++;
+    else if (a === "actually-done" || a === "no-done" || a === "done-hold-me") actuallyDone++;
+    // `min:*` timecheck taps count as answered but carry no continue/stop meaning.
   }
-  return { stillGoing, actuallyDone, byVariant, confirmedSends, total: stillGoing + actuallyDone };
+  // `total` is EVERY answer, so no probe type is invisible to the "is this being answered" test.
+  // `directional` is only the answers that actually bear on nag spacing.
+  return { stillGoing, actuallyDone, byVariant, confirmedSends, answered, total: answered,
+           directional: stillGoing + actuallyDone };
 }
 
 const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x));
@@ -48,27 +62,16 @@ const round2 = (x: number) => Math.round(x * 100) / 100;
  * actually-done — so the owner would answer for a week and see nothing change, which is the whole
  * complaint. Every answer has to move the number.
  */
-export function adapt(a: Answers, current: string): Adaptation {
-  if (a.total < MIN_ANSWERS) {
-    // A variant that never earns a tap has to be able to rotate, and it cannot do that on tap
-    // counts (it has none). Prompts-sent-with-nothing-back is the signal that works.
-    if (a.confirmedSends >= MIN_ANSWERS && a.total === 0) {
-      const next = VARIANTS[(VARIANTS.indexOf(current) + 1) % VARIANTS.length];
-      return {
-        nagScale: 1,
-        variant: next,
-        reason: `${a.confirmedSends} prompts in the last ${WINDOW_DAYS} days and no answers — switching from "${current}" to "${next}".`,
-      };
-    }
-    const need = MIN_ANSWERS - a.total;
+export function adapt(a: Answers): Adaptation {
+  if (a.directional < MIN_ANSWERS) {
+    const need = MIN_ANSWERS - a.directional;
     return {
       nagScale: 1,
-      variant: current,
-      reason: `${a.total} answer${a.total === 1 ? "" : "s"} in the last ${WINDOW_DAYS} days — ${need} more and the cat starts adjusting.`,
+      reason: `${a.directional} directional answer${a.directional === 1 ? "" : "s"} in the last ${WINDOW_DAYS} days — ${need} more and the cat starts adjusting.`,
     };
   }
 
-  const nagScale = round2(clamp(1 + 0.6 * (a.stillGoing - a.actuallyDone) / a.total, 0.6, 1.6));
+  const nagScale = round2(clamp(1 + 0.6 * (a.stillGoing - a.actuallyDone) / a.directional, 0.6, 1.6));
   const dir = nagScale > 1
     ? `nags are ${nagScale}x further apart`
     : nagScale < 1
@@ -76,7 +79,6 @@ export function adapt(a: Answers, current: string): Adaptation {
     : "nag spacing is unchanged";
   return {
     nagScale,
-    variant: current,
-    reason: `Last ${WINDOW_DAYS} days: ${a.stillGoing} "still going", ${a.actuallyDone} "actually done" — ${dir}.`,
+    reason: `Last ${WINDOW_DAYS} days: ${a.stillGoing} "keep going", ${a.actuallyDone} "stopping" — ${dir}.`,
   };
 }

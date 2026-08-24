@@ -21,16 +21,38 @@ function seen(snaps: Snapshot[]): { id: string; title: string }[] {
 export function streakNotif(variant: string, snaps: Snapshot[]): Notif | null {
   const history = seen(snaps);
 
-  if (variant === "classify") {
+  // The two arms of the predict/commit split. "Which one is this?" collapsed three different
+  // questions — report ("what were you doing"), predict ("will you continue"), decide ("are you
+  // stopping") — into one string, so an answer had no stable referent and the adaptation built on
+  // it meant nothing. Each arm now asks exactly one of them, and BOTH are scored the same way:
+  // the tick loop keeps watching for HORIZON_MS afterwards, so the answer is checked against
+  // behaviour rather than trusted. The contrast between arms is the actual experiment — does
+  // committing to stop produce more stopping than merely predicting it?
+  if (variant === "predict") {
     return {
-      title: "Five minutes in.",
-      body: "Which one is this?",
+      title: "Prediction.",
+      body: "Will you still be scrolling in 5 minutes?",
       url: "",
       extra: {
         variant,
         actions: [
-          { action: "still-going", title: "Still going" },
-          { action: "actually-done", title: "Actually done" },
+          { action: "yes-more", title: "Yes, more" },
+          { action: "no-done", title: "No, done soon" },
+        ],
+      },
+    };
+  }
+
+  if (variant === "commit") {
+    return {
+      title: "Decision.",
+      body: "Done after this one?",
+      url: "",
+      extra: {
+        variant,
+        actions: [
+          { action: "done-hold-me", title: "Done \u2014 hold me to it" },
+          { action: "not-stopping", title: "Not stopping yet" },
         ],
       },
     };
@@ -72,4 +94,31 @@ export function streakNotif(variant: string, snaps: Snapshot[]): Notif | null {
 
 
   throw new Error(`unknown STREAK_VARIANT: ${variant}`);
+}
+
+/**
+ * Time-perception probe for the session-milestone slots, which until now carried NO buttons at all
+ * (`extra` stayed `{}` for every `session_*` push) — so their zero taps measured nothing. They are
+ * the only free question budget the channel has.
+ *
+ * Underestimating elapsed time is the signature of absorbed scrolling, and unlike a preference
+ * question this one has an exact answer the app already holds. The truth moves every session, so it
+ * cannot decay into a reflex the way a fixed binary does.
+ */
+export function timeCheckNotif(trueMin: number): Notif & { truth: { trueMin: number; decoyMin: number } } {
+  const decoy = Math.random() < 0.5 ? Math.max(5, Math.round(trueMin / 2)) : trueMin * 2;
+  const [lo, hi] = trueMin < decoy ? [trueMin, decoy] : [decoy, trueMin];
+  return {
+    title: "Clock check.",
+    body: "How long has this session been?",
+    url: "",
+    truth: { trueMin, decoyMin: decoy },
+    extra: {
+      variant: "timecheck",
+      actions: [
+        { action: `min:${lo}`, title: `About ${lo} min` },
+        { action: `min:${hi}`, title: `About ${hi} min` },
+      ],
+    },
+  };
 }
