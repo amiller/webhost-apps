@@ -35,7 +35,7 @@
  */
 (function () {
   "use strict";
-  var VERSION = "0.4.0";
+  var VERSION = "0.4.1";
 
   var CSS = [
 /* base — consumes host tokens; scoped so it never touches host styles */
@@ -275,11 +275,13 @@
    *       "reading" → ("waiting-approval" → "reading")*. Resolves with the token once a probe
    *       (if any) passes; with no probe, resolves right after connect.
    *
-   *   oauth3Read(node, path, token) -> Promise<body>
+   *   oauth3Read(node, path, token, opts) -> Promise<body>
    *     - the gated-read primitive the probe calls (e.g. "/api/twitter/feed"). 409
    *       challenge_pending + challengeId throws the RETRYABLE marker; any other non-2xx
    *       throws a TERMINAL Error carrying the node's real {error}; 2xx returns the parsed
    *       body. A network failure throws a terminal "couldn't reach the oauth3 node" error.
+   *       opts.timeoutMs overrides the default 15s abort for reads that legitimately run long
+   *       (browser-SPI-backed plugins: the twitter feed read measured 13.4s on staging 2026-08-27).
    *
    * The step-up challenge poll mirrors otterpilot's proven recover pattern (webhost-apps
    * #61/#62): the server holds a guarded read for out-of-band approval (RFC 0005) and the
@@ -290,7 +292,8 @@
       node = String(node || "").replace(/\/$/, "");
       var r;
       var controller = typeof AbortController === "function" ? new AbortController() : null;
-      var timer = controller ? setTimeout(function () { controller.abort(); }, 15000) : null;
+      var ms = (opts && opts.timeoutMs) || 15000;
+      var timer = controller ? setTimeout(function () { controller.abort(); }, ms) : null;
       try {
         r = await fetch(node + path, {
           headers: { Authorization: "Bearer " + token },
