@@ -1,0 +1,347 @@
+18:02:35Z # brainrot-box #93 — briefs changing across a transcript window (deployed staging, REAL LLMs)
+18:02:35Z # core: OAUTH3_CORE=https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network/oauth3 (from ~/paseo-batch/.intake-env) — the env the instance was deployed with
+18:02:35Z # deploy pin (daemon /_api/projects):
+brainrot-box tree_hash 50466b3224a3d8c8f867a50c5f214b5f0739a50fb6a96acef40a44131663131e deployed_at 2026-08-15T18:53:49.708432+00:00
+18:02:36Z # app /diag before:
+{
+    "otter": {
+        "cursor": 0,
+        "last_fetch_ok": false,
+        "last_fetch_err": "",
+        "last_fetch_at": 0,
+        "segment_count": 1
+    },
+    "ledger_count": 1,
+    "conv_type": {
+        "type": "",
+        "rationale_len": 0,
+        "last_at": 0
+    },
+    "state": {
+        "recap_len": 72,
+        "shifts": 0,
+        "last_topic": "Rehearsing demo before Tuesday"
+    },
+    "tools": {
+        "count": 6,
+        "max": 24
+    },
+    "graph": {
+        "nodes": 1,
+        "topics": 1,
+        "undecoded": 0
+    },
+    "mic_segments": 1,
+    "routing": [
+        {
+            "lane": "judge",
+            "model": "deepseek-ai/DeepSeek-V4-Flash",
+            "transport": "near-e2ee",
+            "hears_room": true
+        },
+        {
+            "lane": "distill",
+            "model": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+            "transport": "chutes-e2ee",
+            "hears_room": true
+        },
+        {
+            "lane": "decoder",
+            "model": "deepseek-ai/DeepSeek-V4-Flash",
+            "transport": "near-e2ee",
+            "hears_room": true
+        },
+        {
+            "lane": "state",
+            "model": "deepseek-ai/DeepSeek-V4-Flash",
+            "transport": "near-e2ee",
+            "hears_room": true
+        },
+        {
+            "lane": "convtype",
+            "model": "deepseek-ai/DeepSeek-V4-Flash",
+            "transport": "near-e2ee",
+            "hears_room": true
+        },
+        {
+            "lane": "critic",
+            "model": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+            "transport": "chutes-e2ee",
+            "hears_room": false,
+            "enabled": false
+        },
+        {
+            "lane": "toolsmith",
+            "model": "deepseek-ai/DeepSeek-V4-Flash",
+            "transport": "near-e2ee",
+            "hears_room": false
+        },
+        {
+            "lane": "compositor",
+            "model": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+            "transport": "chutes-e2ee",
+            "hears_room": false
+        }
+    ],
+    "self_eval": {
+        "staleness": 0,
+        "stale_window": 10,
+        "stale_threshold": 8,
+        "composition_count": 0,
+        "nudge_count": 0,
+        "last_nudge_at": 0,
+        "last_nudge_action": ""
+    },
+    "idle": {
+        "enabled": false,
+        "weave_running": false,
+        "otter_running": false,
+        "weave_idle_ms": 180000,
+        "otter_idle_ms": 600000,
+        "last_consumer_at": 0,
+        "last_live_at": 1787853723288,
+        "last_weave_idle_at": 0,
+        "last_otter_idle_at": 0,
+        "weave_idle_reason": "",
+        "otter_idle_reason": ""
+    },
+    "trace": {
+        "session_id": "2026-08-27T14-55-34-807Z-1fd66be6",
+        "events_written": 11,
+        "write_ok": true
+    },
+    "archive": {
+        "backend": "none",
+        "flushed": 0,
+        "pending": 0,
+        "last_ok": 0,
+        "last_err": ""
+    },
+    "snapshot": {
+        "dir": "snapshots",
+        "session_id": "2026-08-27T14-55-34-807Z-2f3f83b9",
+        "write_ok": true,
+        "written": 0,
+        "last_err": ""
+    }
+}
+18:02:36Z # events cursor before run: seq=11
+18:02:36Z 
+18:02:36Z === POST /listen w1a.wav (speech -> real STT -> judge + distill on the instance) ===
+{"text":"We should rehearse the demo end to end before Tuesday, and cut whatever is not finished.","confidence":0.8924022953147032,"dropped":false,"ingested":true,"order":1000000002}
+18:02:58Z --- /events since 11 ---
+  SEG    {"order": 1000000002, "speaker": "mic", "t": 1787853760056, "text": "We should rehearse the demo end to end before Tuesday, and cut whatever is not finished."}
+  POINT  {}
+  BRIEF  {"direction": "Animate a countdown clock, emphasize the 'Tuesday' date, highlight 'cut' with a scissor-like motion", "emphasis": "2-word declarative", "mood": "Preparing for the big stage", "tone": "Focused, determined"}
+18:03:15Z 
+18:03:15Z === POST /listen w1b.wav (speech -> real STT -> judge + distill on the instance) ===
+{"text":"The demo is on Tuesday, and we are honestly not ready for it.","confidence":0.9356231297361756,"dropped":false,"ingested":true,"order":1000000003}
+18:03:36Z --- /events since 16 ---
+  SEG    {"order": 1000000003, "speaker": "mic", "t": 1787853798304, "text": "The demo is on Tuesday, and we are honestly not ready for it."}
+  POINT  {}
+  BRIEF  {"direction": "A racing clock, ticking louder as it nears Tuesday, with 'not ready' written in a disorganized scrawl, emphasized in red.", "emphasis": "2-word declarative", "mood": "Caught in the headlights", "tone": "urgent, anxious"}
+18:03:52Z 
+18:03:52Z === POST /listen w2a.wav (speech -> real STT -> judge + distill on the instance) ===
+{"text":"The real constraint is the budget, not the calendar. We cannot afford the full scope this quarter.","confidence":0.9165877495118414,"dropped":false,"ingested":true,"order":1000000004}
+18:04:13Z --- /events since 21 ---
+  SEG    {"order": 1000000004, "speaker": "mic", "t": 1787853835637, "text": "The real constraint is the budget, not the calendar. We cannot afford the full scope this quarter."}
+  POINT  {}
+  BRIEF  {"direction": "Use muted, earthy colors. Show a calendar with crossed-out dates, and a scale with a heavy weight on the 'budget' side, slowly tilting.", "emphasis": "2-word declarative", "mood": "Treading carefully through financial constraints", "tone": "sober, pragmatic"}
+18:04:29Z 
+18:04:29Z === POST /listen w2b.wav (speech -> real STT -> judge + distill on the instance) ===
+{"text":"We are burning money on features nobody asked for. Cut it down to the essentials.","confidence":0.9263450006673574,"dropped":false,"ingested":true,"order":1000000005}
+18:04:48Z --- /events since 26 ---
+  SEG    {"order": 1000000005, "speaker": "mic", "t": 1787853873308, "text": "We are burning money on features nobody asked for. Cut it down to the essentials."}
+  POINT  {}
+  BRIEF  {"direction": "A stark, descending bar graph with a red 'burning' effect, emphasizing the 'essential' features with a green highlight, moving towards simplicity", "emphasis": "2-word declarative", "mood": "Minimalist efficiency in the face of waste", "tone": "Urgent, matter-of-fact"}
+18:05:04Z 
+18:05:04Z === POST /listen w3a.wav (speech -> real STT -> judge + distill on the instance) ===
+{"text":"Okay. Let us go with plan B, and stop arguing about it.","confidence":0.9439861586896073,"dropped":false,"ingested":true,"order":1000000006}
+18:05:27Z --- /events since 31 ---
+  SEG    {"order": 1000000006, "speaker": "mic", "t": 1787853908068, "text": "Okay. Let us go with plan B, and stop arguing about it."}
+  POINT  {}
+  BRIEF  {"direction": "Show a stubborn figure yielding, with a bold, red 'Plan B' sign appearing and taking center stage, while surrounding arguments fade away", "emphasis": "2-word declarative", "mood": "Abandon resistance, embrace alternative", "tone": "Resolute, dismissive"}
+18:05:44Z 
+18:05:44Z === POST /listen w3b.wav (speech -> real STT -> judge + distill on the instance) ===
+{"text":"Ship the verifiable subset first, then block hard on the remainder.","confidence":0.9393574305043634,"dropped":false,"ingested":true,"order":1000000007}
+18:06:07Z --- /events since 36 ---
+  SEG    {"order": 1000000007, "speaker": "mic", "t": 1787853947396, "text": "Ship the verifiable subset first, then block hard on the remainder."}
+  POINT  {}
+  BRIEF  {"direction": "Animate the 'subset' with a green checkmark, moving towards a 'ship' icon. Freeze the 'remainder' in red, with a barrier descending upon it.", "emphasis": "2-word declarative", "mood": "Pragmatic progress in stages", "tone": "Firm, methodical"}
+18:06:08Z 
+18:06:08Z # brief events above show the distilled brief EVOLVING across the three windows.
+18:06:08Z # app /diag after:
+{
+    "otter": {
+        "cursor": 0,
+        "last_fetch_ok": false,
+        "last_fetch_err": "",
+        "last_fetch_at": 0,
+        "segment_count": 7
+    },
+    "ledger_count": 7,
+    "conv_type": {
+        "type": "",
+        "rationale_len": 0,
+        "last_at": 0
+    },
+    "state": {
+        "recap_len": 86,
+        "shifts": 2,
+        "last_topic": "Shipping plan B subset"
+    },
+    "tools": {
+        "count": 6,
+        "max": 24
+    },
+    "graph": {
+        "nodes": 7,
+        "topics": 1,
+        "undecoded": 0
+    },
+    "mic_segments": 7,
+    "routing": [
+        {
+            "lane": "judge",
+            "model": "deepseek-ai/DeepSeek-V4-Flash",
+            "transport": "near-e2ee",
+            "hears_room": true
+        },
+        {
+            "lane": "distill",
+            "model": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+            "transport": "chutes-e2ee",
+            "hears_room": true
+        },
+        {
+            "lane": "decoder",
+            "model": "deepseek-ai/DeepSeek-V4-Flash",
+            "transport": "near-e2ee",
+            "hears_room": true
+        },
+        {
+            "lane": "state",
+            "model": "deepseek-ai/DeepSeek-V4-Flash",
+            "transport": "near-e2ee",
+            "hears_room": true
+        },
+        {
+            "lane": "convtype",
+            "model": "deepseek-ai/DeepSeek-V4-Flash",
+            "transport": "near-e2ee",
+            "hears_room": true
+        },
+        {
+            "lane": "critic",
+            "model": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+            "transport": "chutes-e2ee",
+            "hears_room": false,
+            "enabled": false
+        },
+        {
+            "lane": "toolsmith",
+            "model": "deepseek-ai/DeepSeek-V4-Flash",
+            "transport": "near-e2ee",
+            "hears_room": false
+        },
+        {
+            "lane": "compositor",
+            "model": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+            "transport": "chutes-e2ee",
+            "hears_room": false
+        }
+    ],
+    "self_eval": {
+        "staleness": 0,
+        "stale_window": 10,
+        "stale_threshold": 8,
+        "composition_count": 0,
+        "nudge_count": 0,
+        "last_nudge_at": 0,
+        "last_nudge_action": ""
+    },
+    "idle": {
+        "enabled": false,
+        "weave_running": false,
+        "otter_running": false,
+        "weave_idle_ms": 180000,
+        "otter_idle_ms": 600000,
+        "last_consumer_at": 1787853968154,
+        "last_live_at": 1787853947396,
+        "last_weave_idle_at": 0,
+        "last_otter_idle_at": 0,
+        "weave_idle_reason": "",
+        "otter_idle_reason": ""
+    },
+    "trace": {
+        "session_id": "2026-08-27T14-55-34-807Z-1fd66be6",
+        "events_written": 41,
+        "write_ok": true
+    },
+    "archive": {
+        "backend": "none",
+        "flushed": 0,
+        "pending": 0,
+        "last_ok": 0,
+        "last_err": ""
+    },
+    "snapshot": {
+        "dir": "snapshots",
+        "session_id": "2026-08-27T14-55-34-807Z-2f3f83b9",
+        "write_ok": true,
+        "written": 0,
+        "last_err": ""
+    }
+}
+
+18:06:43Z # appendix: /goodpoints ledger AFTER the run (the 'POINT {}' lines above were real goodpoint
+# events whose quote/score live under e.point — printer fixed in run.sh for reruns; the first ledger
+# entry t=1787853728487 is the pre-run smoke POST of w1a.wav). Real judge LLM, real bangers:
+{
+    "goodpoints": [
+        {
+            "t": 1787853728487,
+            "quote": "We should rehearse the demo end to end before Tuesday, and cut whatever is not finished.",
+            "why": "Clear actionable decision with deadline and scope control.",
+            "score": 8
+        },
+        {
+            "t": 1787853765012,
+            "quote": "We should rehearse the demo end to end before Tuesday, and cut whatever is not finished.",
+            "why": "Clear actionable decision to rehearse and cut unfinished parts.",
+            "score": 8
+        },
+        {
+            "t": 1787853802944,
+            "quote": "We should rehearse the demo end to end before Tuesday, and cut whatever is not finished.",
+            "why": "Actionable rehearsal and scope-cutting decision for readiness.",
+            "score": 8
+        },
+        {
+            "t": 1787853837781,
+            "quote": "The real constraint is the budget, not the calendar.",
+            "why": "Reframes problem from schedule to resource limitation, actionable insight.",
+            "score": 8
+        },
+        {
+            "t": 1787853875730,
+            "quote": "The real constraint is the budget, not the calendar. We cannot afford the full scope this quarter.",
+            "why": "Reframes priority from time to budget, actionable insight.",
+            "score": 8
+        },
+        {
+            "t": 1787853913372,
+            "quote": "We are burning money on features nobody asked for. Cut it down to the essentials.",
+            "why": "Clear cost-cutting directive with actionable focus.",
+            "score": 8
+        },
+        {
+            "t": 1787853952361,
+            "quote": "Ship the verifiable subset first, then block hard on the remainder.",
+            "why": "Clear decision and sequencing for delivery.",
+            "score": 8
+        }
+    ]
+}
+
+# final /events tail (any late distills/statuses):

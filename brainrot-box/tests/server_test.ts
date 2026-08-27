@@ -766,6 +766,53 @@ Deno.test("#94 /diag reports per-lane routing (no secrets)", async () => {
   rt.stop();
 });
 
+Deno.test("#93 distill evolves the brief from segments with no banger, and a banger still overrides", async () => {
+  let banger = false;
+  const rt = new GoodpointRuntime(
+    env,
+    async () =>
+      banger
+        ? { good_point: true, quote: "Ship the verifiable subset first", why: "scope clarity", score: 9 }
+        : { good_point: false, quote: "", why: "", score: 0 },
+    {
+      complete: async (_lane: string, system: string) =>
+        system.includes("VISUAL BRIEF")
+          ? JSON.stringify({
+            mood: "quiet confidence building toward a launch",
+            emphasis: "trim the checklist",
+            tone: "measured, curious",
+            direction: "slow upward drift, warm edges, sparse accents",
+          })
+          : '{"layers":[]}',
+    },
+    null,
+  );
+  rt.transcript.push({
+    order: 1,
+    text: "we should rehearse the demo end to end before tuesday and cut whatever is not finished",
+    t: Date.now(),
+  });
+  await rt.distill();
+  assertEquals(rt.brief.mood, "quiet confidence building toward a launch", "no banger fired — the distilled brief stands");
+  assertEquals(rt.brief.tone, "measured, curious");
+  assert(
+    rt.events.some((e) => (e.ev as { type?: string }).type === "brief"),
+    "the distilled brief was pushed to the event stream",
+  );
+
+  banger = true;
+  rt.transcript.push({
+    order: 2,
+    text: "agreed — and ship the verifiable subset first, then block hard on the remainder",
+    t: Date.now(),
+  });
+  const point = await rt.judgeRecent(true);
+  assertEquals(point?.score, 9, "the judged good point fired");
+  assertEquals(rt.brief.mood, "good point", "the banger OVERRIDES the distilled brief (priority path)");
+  assertEquals(rt.brief.tone, "triumphant");
+  assertEquals(rt.brief.emphasis, "5-word declarative");
+});
+
 Deno.test("#94 distill output is sanitized before the paint crew sees it (verbatim key phrase dropped)", async () => {
   const recent = "I really think we should ship the tabs before demo day and then celebrate properly tonight";
   const distillJson = JSON.stringify({
