@@ -1,0 +1,30 @@
+# Issue #45 — signed-in read transcript against deployed staging (2026-08-27)
+# Personal-data rule: the operator's real timeline CONTENT is redacted; only shape,
+# counts, timing and the account handle (already public in this repo, router-dashboard) are recorded.
+# The scoped token is redacted (revocable, single-purpose).
+
+## 1. Pre-fix, deployed app (origin/staging bytes), in the real bridge browser
+   navigate https://<webhost-staging>/timeline-peek/?token=tok-twitter-REDACTED
+   → after share-kit's 15s abort:
+   note.textContent = "couldn't reach the oauth3 node (request timed out)"   [note.className = "note err"]
+   articles = 0
+
+## 2. Same read, raw HTTP (curl, no client abort)
+   GET /oauth3/api/twitter/feed   Authorization: Bearer tok-twitter-REDACTED
+   HTTP 200 — time_total 13.374s
+   {"plugin":"twitter","who":"socrates1024","items":[ … 8 items … ]}
+   item keys (every item): handle, name, stats, text, time     ← NO media / avatar / verified
+   (second read: HTTP 200, 13.4s, 8 items — consistent)
+
+## 3. Post-fix (this branch, deployed as staging project timeline-peek-fix45), real bridge browser
+   navigate https://<webhost-staging>/timeline-peek-fix45/?token=tok-twitter-REDACTED
+   → feed rendered (60s budget, completed well inside it):
+   articles = 11
+   first article innerText (prefix, content redacted): "<avatar letter> | Talia Ringer | @TaliaRinger | 7h | [redacted text]"
+   screenshot taken in-session (NOT committed — operator's personal timeline)
+
+## 4. parseFeed source check (teleport-computer/oauth3-server, 2026-08-27)
+   server/browser.ts:49 function parseFeed(text: string): FeedItem[]
+   — splits page innerText on line boundaries; produces name/handle/time/text/stats only.
+   browserFeed() returns items from `spi("/eval", {script:"x"})` innerText.
+   → real tweet media/avatars cannot reach this app until that scraper changes (cross-repo).
