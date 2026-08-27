@@ -90,3 +90,26 @@ so it **idles with the weave (#90)** — no new timer, same pattern as #83/#88. 
 respects the **starter-protected LRU (#130)**. `brief.avoid` survives a `distill()`/`judgeRecent()`
 brief rewrite until the toolsmith consumes it (one-shot). Offline unit tests prove near-identical
 runs nudge and varied runs do not; see `../.evidence/issue-92/`.
+
+## Continuous transcript→visual-brief distillation (issue #93)
+
+The port had compressed interleave's scaffolding; both halves are restored (prompts landed via
+#104, the distill stage via #112, output sanitization via #94):
+
+- **`TOOLSMITH_SYSTEM`** carries interleave's full craft: the BUILD A VARIETY directive with the
+  four rotating categories (atmosphere / 3D-projection with the inline `sx = w/2 + x*f/(f+z)`
+  math / SVG-Path2D emblems / animated typography), blendability, and the compactness rules,
+  adapted only for the `txt` caption param, plus the later CRAFT luminosity rules (#94 era).
+- **`distill()`** runs whenever new segments arrive (otter poll or mic `/listen` ingest) and the
+  12s gate has cleared — matching interleave's reference interval — feeding `recentText(45s)` to
+  the distill lane. The distilled brief is sanitized (`sanitizeDistilled`, #94) before the paint
+  crew sees it. A judged good point (banger) still **overrides** the brief (the `goodpoint` event
+  carries the sanitized banger brief); the next distill evolves it again.
+
+Evidence: `../.evidence/issue-93/` — offline unit test (`#93 distill evolves the brief from
+segments with no banger, and a banger still overrides`) plus a deployed-staging run
+(`staging-run.log`, pinned tree `50466b3224a3…`) feeding espeak-ng speech through the real STT /
+judge / distill LLMs: six windows, six distinct evolving briefs, with real score-8 bangers in the
+ledger across the same run. The instance's otter lane polls the real `OAUTH3_CORE` from
+`.intake-env`; its `OTTER_TOKEN` is currently dead (`token delegation invalid`) — the mic ingest
+path is unaffected.

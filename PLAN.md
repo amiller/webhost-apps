@@ -1,37 +1,39 @@
-# PLAN — #6 twitter-debug: render media (images/video) in the timeline
+# PLAN — #93 brainrot-box: restore interleave's prompt craft + continuous visual-brief distillation
 
-Base: `origin/staging` · Worktree: `/tmp/app-6` · Branch: `ready-6`
+Base: `origin/staging` · Worktree: `/tmp/app-93` · Branch: `ready-93-v2`
 
 ## Acceptance (from the issue, verbatim)
-- [ ] The deployed twitter-debug `timeline` op returns each tweet with a `media[]` array of `{type: "photo" | "video", url}`. Today the mapper emits only `{id, text, by}` (`twitter-debug/server.ts:301`).
-- [ ] The rendered timeline shows those inline in the tweet card — at least one real image and one video thumbnail visible in the walked flow, not a text wall.
-- [ ] Media loads through the pod (a same-origin proxy route, the way the otter `/frame` proxy works): with the network panel filtered to `twimg.com` there are zero requests from the page.
+- [x] TOOLSMITH_SYSTEM matches the reference's content (variety directive + 3D math + Path2D + typography present), adapted only for the txt param.
+- [x] Distill stage: offline test with a mock LLM shows brief updates from segments without any banger, and a banger still overrides.
+- [x] One run against the real staging core (.intake-env) shows briefs changing across a transcript window (log committed; LLM may be mocked).
+- [x] deno check clean; flow.md updated; PR base staging, title carries (#NN), ready-to-merge when evidence is in.
 
-## Reality on the box (2026-08-15, probed live)
-- Deployed prod app: rettiwt blind path = `Unknown error` (X blocks it on pod egress — the app's thesis);
-  `engine timeline` = "queryId for HomeTimeline not in bundle" (X moved queryIds out of main.js);
-  `reify` = **works** (browser-observed HomeTimeline replay: 200, 37 entries). → the feed must ride the reify path, as the issue text says.
-- Reproduced the engine recipe from THIS box with the rig's jar (`~/.paseo-secrets/jars/x.com.json`, standing
-  credential) + browser-observed queryId: 200, 35 tweets, **11 photos + 2 videos** at count=50. Real media entities
-  confirmed at `legacy.extended_entities.media[]` (`media_url_https`, `video_info.variants[].url` mp4).
-- twitter-debug is a `runtime:image` PROD app; no prod deploy creds / ghcr push on this box → the deployed-pod walk is
-  operator-run after merge. Local verification covers everything reachable (see VERIFY).
+## Reality on the box (2026-08-27, probed live)
+- The runtime halves of #93 are ALREADY on staging: prompts via PR #104 (merged 2026-07-21),
+  distill stage via PR #112 (merged 2026-07-22), both then sanitized/extended by PR #99 (#94,
+  2026-08-15). PR #98 (the original #93 attempt) was closed as "Superseded by #104 + #112" —
+  its evidence never merged, and no test asserts the #93 interplay. Verified against
+  `origin/staging`: TOOLSMITH_SYSTEM carries the full reference content (variety/3D/Path2D/
+  typography + txt param) plus the later CRAFT section; `distill()` runs on new segments with
+  the 12s gate (interleave's own reference interval; the issue body said 20s, the reference
+  and the code say 12s); a banger overwrites `this.brief` (judgeRecent) after any distilled brief.
+- Staging HEAD's `server.ts` did NOT parse: `` `timeout after ${${timeoutMs / 1000}s` `` (stray
+  `${`, landed in #106's rebase, 09f081f) — `deno check` fails on the base branch. Fixed here
+  (one line). The deployed instance predates it (tree `50466b3224a3…`, 2026-08-15) and parses fine.
+- Deployed staging instance live at `$TEE_DAEMON_URL/brainrot-box` with real STT/judge/distill
+  LLMs; espeak-ng (lib only) synthesizable via ctypes → real-speech `/listen` ingest works
+  (whisper conf ~0.89–0.94). `/_api/version` 404s on this daemon; the pin is the daemon's
+  tree_hash for brainrot-box + `/diag`.
+- `.intake-env` `OTTER_TOKEN` is dead (`{"error":"token delegation invalid"}` against the real
+  core) — otter-poll ingest is dead, mic `/listen` ingest is not.
 
 ## Build
-- [x] server.ts: `mapMediaEntity` / `mapTweet` / `mapTimeline` (GraphQL HomeTimeline JSON → tweets with media[])
-- [x] server.ts: rettiwt `timeline` mapper emits media[] too (`ITweetMedia{id,type,url,thumbnailUrl}` shape, rettiwt 7.1.2)
-- [x] server.ts: `engine timeline` maps its GraphQL response to tweets+media; queryId fallback to the browser-observed one
-- [x] server.ts: `replayHeadless` also returns parsed JSON; new `POST /twitter/feed` = fresh-or-recapture trace → replay → mapTimeline (browser lock+cooldown, like /twitter/reify)
-- [x] server.ts: `GET /twitter/media?u=<b64url>` — same-origin twimg-only media proxy (otter /frame pattern; Range pass-through for video)
-- [x] web/index.html: card ⑧ "Timeline — the feed": run feed op → JSON (media[] populated) + rendered tweet cards (avatar + media grid, video poster + click-to-play), all media via `twitter/media?u=`; clearly-labeled `?demo` sample (public brand assets on twimg) for render review
-- [x] README: endpoints table + media notes
+- [x] tests/server_test.ts: `#93 distill evolves the brief from segments with no banger, and a banger still overrides` (mock lane provider + judge override)
+- [x] server.ts: fix the `${${` template syntax error blocking `deno check` (#106 rebase typo)
+- [x] .evidence/issue-93/: tts.py (ctypes libespeak-ng), run.sh driver, staging-run.log
 
 ## Verify
-- [x] Parse checks: server.ts (esbuild/bun parse — `deno check` can't resolve its npm bare imports), inline script driven in-browser
-- [x] `mapTimeline` unit-run against the REAL capture (`/tmp/hometimeline50.json`, stays out of the repo — personal feed data)
-- [x] Local run of the REAL server (tsx): `/twitter/media` returns real twimg bytes (curl + magic check), rejects non-twimg; `/twitter/feed` errors honestly (no pod browser)
-- [x] Envoy-bridge walk of the local page (`?demo`): cards render, images load, `performance` entries contain ZERO twimg.com requests — screenshots + flow.md in `.evidence/issue-6/`
-- [ ] Real-pod walk + DevTools twimg-filter check: OPERATOR step (no prod creds) — exact steps in the PR/issue comment
-
-## Ship
-- [ ] commit + push `ready-6`, PR → staging, evidence embedded, `ready` → `in-review`, comment on #6
+- [x] `deno check server.ts tests/server_test.ts` clean
+- [x] `deno test --allow-all`: 49/49 (48 inherited + the new #93 test)
+- [x] Deployed-staging run (REAL LLMs, no mocks): 6 speech windows → 6 distinct evolving briefs
+  + 8 real score-8 bangers in the ledger (override path firing live); pinned tree `50466b3224a3…`

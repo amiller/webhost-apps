@@ -1496,7 +1496,7 @@ export class GoodpointRuntime {
       return content;
     } catch (e) {
       // If OUR deadline fired (not a lane stop or an upstream error), throw the stable message.
-      if (deadline?.signal.aborted) throw new Error(`timeout after ${${timeoutMs / 1000}s`);
+      if (deadline?.signal.aborted) throw new Error(`timeout after ${timeoutMs / 1000}s`);
       throw e;
     } finally {
       if (timer !== undefined) clearTimeout(timer);
