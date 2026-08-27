@@ -287,7 +287,7 @@
    * #61/#62): the server holds a guarded read for out-of-band approval (RFC 0005) and the
    * app bounces back automatically on approval instead of going down.
    */
-  function oauth3Read(node, path, token) {
+  function oauth3Read(node, path, token, opts) {
     return (async function () {
       node = String(node || "").replace(/\/$/, "");
       var r;
