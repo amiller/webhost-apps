@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Login with Everything — OAuth3</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="description" content="One subject, many sign-ins. Any site you're logged into is a login provider. The app gets a scoped, revocable token — never your cookies." />
+<style>
+  /* ──────────────────────────────────────────────────────────────────────
+     design system: constructivist overprint (watermelon classic)
+     inlined verbatim from specs/design/{tokens,components}.css — style
+     through these tokens, never hardcode hex. No border-radius except pills.
+     ────────────────────────────────────────────────────────────────────── */
+  :root {
+    --ink1: #00838a;   /* teal — structure, primary actions, ok-status */
+    --ink2: #ff48b0;   /* fluoro pink — emphasis, danger, stamps, wedges */
+    --paper: #f8f7f3;
+    --deep: #123f43;
+    --overprint: #00255f;
+    --bg: var(--paper);
+    --text: var(--deep);
+    --faint: color-mix(in srgb, var(--deep) 55%, var(--paper));
+    --rule: color-mix(in srgb, var(--deep) 16%, var(--paper));
+    --card: #fff;
+    --block: var(--deep);
+    --block-text: #f8f7f3;
+    --wash1: color-mix(in srgb, var(--ink1) 15%, var(--paper));
+    --wash2: color-mix(in srgb, var(--ink2) 17%, var(--paper));
+    --i1-text: #00676d;
+    --i2-text: #c2187a;
+    --warn: #a8780c;
+    --warn-wash: color-mix(in srgb, #e0a41a 22%, var(--paper));
+    --sans: "Helvetica Neue", Arial, sans-serif;
+    --cond: "Arial Narrow", "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    --off: 1px;
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --ink1: #2fbdc4; --ink2: #ff5fbb;
+    --paper: #0e1f21; --deep: #081517;
+    --bg: #0e1f21; --text: #e9f0ee;
+    --faint: color-mix(in srgb, #e9f0ee 55%, #0e1f21);
+    --rule: color-mix(in srgb, #e9f0ee 14%, #0e1f21);
+    --card: #142829; --block: #081517; --block-text: #e9f0ee;
+    --wash1: color-mix(in srgb, #2fbdc4 20%, #0e1f21);
+    --wash2: color-mix(in srgb, #ff5fbb 20%, #0e1f21);
+    --i1-text: #5fd3d9; --i2-text: #ff8ccb;
+    --warn: #e0b34a; --warn-wash: color-mix(in srgb, #e0b34a 18%, #0e1f21);
+  } }
+  :root[data-theme="dark"] {
+    --ink1: #2fbdc4; --ink2: #ff5fbb;
+    --paper: #0e1f21; --deep: #081517;
+    --bg: #0e1f21; --text: #e9f0ee;
+    --faint: color-mix(in srgb, #e9f0ee 55%, #0e1f21);
+    --rule: color-mix(in srgb, #e9f0ee 14%, #0e1f21);
+    --card: #142829; --block: #081517; --block-text: #e9f0ee;
+    --wash1: color-mix(in srgb, #2fbdc4 20%, #0e1f21);
+    --wash2: color-mix(in srgb, #ff5fbb 20%, #0e1f21);
+    --i1-text: #5fd3d9; --i2-text: #ff8ccb;
+    --warn: #e0b34a; --warn-wash: color-mix(in srgb, #e0b34a 18%, #0e1f21);
+  }
+  :root[data-theme="light"] {
+    --ink1: #00838a; --ink2: #ff48b0;
+    --paper: #f8f7f3; --deep: #123f43;
+    --bg: #f8f7f3; --text: #123f43;
+    --faint: color-mix(in srgb, #123f43 55%, #f8f7f3);
+    --rule: color-mix(in srgb, #123f43 16%, #f8f7f3);
+    --card: #fff; --block: #123f43; --block-text: #f8f7f3;
+    --wash1: color-mix(in srgb, #00838a 15%, #f8f7f3);
+    --wash2: color-mix(in srgb, #ff48b0 17%, #f8f7f3);
+    --i1-text: #00676d; --i2-text: #c2187a;
+    --warn: #a8780c; --warn-wash: color-mix(in srgb, #e0a41a 22%, #f8f7f3);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font: 15px/1.6 var(--sans); min-height: 100vh; padding: 40px 20px 64px; }
+  a { color: var(--i1-text); }
+  :focus-visible { outline: 2px solid var(--ink2); outline-offset: 2px; }
+  .wrap { max-width: 940px; margin: 0 auto; }
+
+  .display { font: 800 clamp(30px, 5.5vw, 54px)/0.94 var(--cond); text-transform: uppercase; margin: 0; color: var(--ink1); text-shadow: var(--off) var(--off) 0 var(--ink2); text-wrap: balance; }
+  .label { font: 500 11px/1 var(--mono); letter-spacing: .16em; text-transform: lowercase; color: var(--faint); }
+  .wordmark { display: inline-flex; align-items: center; gap: 8px; font: 800 18px var(--sans); letter-spacing: -.01em; color: var(--text); }
+  .wordmark .mark { color: var(--ink1); }
+  .wordmark b { color: var(--i2-text); font-weight: inherit; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; font: 800 14px var(--cond); text-transform: uppercase; letter-spacing: .12em; border: 0; padding: 12px 22px; cursor: pointer; background: var(--ink1); color: #fff; box-shadow: 3px 3px 0 var(--ink2); text-decoration: none; }
+  .btn.ghost { background: transparent; color: var(--i1-text); border: 3px solid var(--ink1); box-shadow: none; }
+  .btn.danger { background: var(--ink2); color: var(--deep); box-shadow: 3px 3px 0 var(--ink1); }
+  .btn.quiet { background: transparent; color: var(--text); border: 1px solid var(--rule); box-shadow: none; font: 600 13px var(--sans); letter-spacing: 0; text-transform: none; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font: 500 12px/1 var(--mono); padding: 4px 10px; border-radius: 999px; }
+  .pill.ok   { background: var(--wash1); color: var(--i1-text); }
+  .pill.warn { background: var(--warn-wash); color: var(--warn); }
+  .pill.bad  { background: var(--wash2); color: var(--i2-text); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+  .dot.ok { background: var(--ink1); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--ink2); }
+  .card { background: var(--card); border: 2.5px solid var(--ink1); padding: 18px 20px; }
+  .card b.title { font: 800 16px var(--cond); text-transform: uppercase; letter-spacing: .08em; }
+  .note { background: var(--wash1); border-left: 6px solid var(--ink1); padding: 12px 14px; font-size: 14px; }
+  .block { background: var(--block); color: var(--block-text); border-left: 12px solid var(--ink2); padding: 16px 20px; font: 13px/1.7 var(--mono); overflow-x: auto; }
+  .chip { font: 12px var(--mono); background: var(--wash1); color: var(--i1-text); padding: 2px 7px; }
+  .halftone { height: 12px; border-radius: 2px; background: radial-gradient(circle, var(--ink1) 34%, transparent 36%) 0 0/9px 9px, radial-gradient(circle, var(--ink2) 30%, transparent 32%) 4px 5px/9px 9px; }
+  .wedge { position: relative; height: clamp(48px, 9vw, 84px); max-width: 460px; }
+  .wedge i { position: absolute; inset: 0; clip-path: polygon(0 0, 100% 50%, 0 100%); }
+  .wedge i.under { background: var(--ink1); transform: translate(5px, 4px); }
+  .wedge i.over { background: radial-gradient(circle, var(--ink2) 42%, transparent 45%) 0 0/8px 8px; }
+
+  /* ── page layout ── */
+  header.top { display: flex; flex-direction: column; gap: 16px; margin-bottom: 8px; }
+  header.top .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  header.top .lede { font-size: 16px; color: var(--faint); max-width: 60ch; }
+  header.top .lede b { color: var(--text); font-weight: 600; }
+  section.act { margin-top: 40px; }
+  section.act > .head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 6px; flex-wrap: wrap; }
+  section.act > .head h2 { font: 800 clamp(22px, 3.4vw, 30px)/1 var(--cond); text-transform: uppercase; color: var(--text); }
+  section.act .thesis { margin: 10px 0 18px; max-width: 64ch; color: var(--faint); }
+  .row-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+
+  /* identity live readout */
+  .id-card { margin-top: 14px; }
+  .id-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .subject { font: 13px/1.5 var(--mono); word-break: break-all; background: var(--block); color: var(--block-text); border-left: 8px solid var(--ink1); padding: 12px 14px; margin-top: 12px; }
+  .subject .k { opacity: .55; }
+  .links { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+  .link-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .id-empty { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; margin-top: 4px; }
+  .id-empty p { color: var(--faint); }
+  .id-unreachable { color: var(--warn); font-size: 13px; }
+
+  /* delegation grid */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(258px, 1fr)); gap: 14px; }
+  .pcard { background: var(--card); border: 2.5px solid var(--ink1); padding: 18px; display: flex; flex-direction: column; min-height: 168px; position: relative; }
+  .pcard:hover:not(.signed-in):not(.cold) { box-shadow: 4px 4px 0 var(--ink2); cursor: pointer; }
+  .pcard .pname { font: 800 16px var(--cond); text-transform: uppercase; letter-spacing: .04em; }
+  .pcard .pdomain { font: 12px var(--mono); color: var(--faint); margin-top: 2px; }
+  .pcard .pgrant { font-size: 13px; color: var(--faint); margin-top: 10px; flex: 1; }
+  .pcold { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .pcold .cta { font: 600 13px var(--sans); color: var(--i1-text); }
+  .pcard.cold { border-color: var(--rule); border-style: dashed; }
+  .pcard.connecting { pointer-events: none; }
+  .spinner { width: 18px; height: 18px; border: 2px solid var(--rule); border-top-color: var(--ink1); border-radius: 50%; animation: spin .8s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .pcard.signed-in { border-color: var(--ink1); background: var(--wash1); }
+  .pcard.signed-in .check { position: absolute; top: 14px; right: 14px; }
+  .signed-body { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .tok { font: 12px var(--mono); color: var(--i1-text); background: var(--card); padding: 6px 8px; word-break: break-all; border: 1px solid var(--rule); }
+  .scope { font: 11px var(--mono); color: var(--faint); }
+  .proof { font: 11px var(--mono); color: var(--faint); }
+  .proof.ok { color: var(--i1-text); }
+  .skeleton { background: var(--card); border: 2.5px solid var(--rule); height: 168px; animation: pulse 1.5s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+
+  footer.foot { margin-top: 48px; padding-top: 20px; border-top: 2px solid var(--ink1); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; font: 12px var(--mono); color: var(--faint); }
+  footer.foot a { color: var(--i1-text); }
+
+  /* extension / error notes */
+  .warn-note { background: var(--warn-wash); border-left: 6px solid var(--warn); padding: 12px 14px; margin: 12px 0; font-size: 14px; }
+  .err-note { background: var(--wash2); border-left: 6px solid var(--ink2); padding: 12px 14px; margin: 12px 0; font-size: 14px; color: var(--i2-text); }
+
+  @media (max-width: 540px) {
+    body { padding: 28px 14px 48px; }
+    .row-actions .btn { flex: 1; justify-content: center; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="row">
+      <div class="wordmark"><span class="mark">∀</span><span>OAuth<b>3</b></span></div>
+      <span class="label">login-with-everything · demo app</span>
+    </div>
+    <div class="wedge" aria-hidden="true"><i class="under"></i><i class="over"></i></div>
+    <h1 class="display">Login with everything</h1>
+    <p class="lede">
+      Two proofs on one page. <b>Top — who you are:</b> one subject, reached through any
+      federated sign-in or passkey. <b>Bottom — what you've delegated:</b> any site you're
+      logged into becomes a login provider, handing this app a scoped, revocable read token
+      — never your cookies.
+    </p>
+  </header>
+
+  <!-- ════════════ ROW 1 — IDENTITY ════════════ -->
+  <section class="act" id="identity">
+    <div class="head">
+      <span class="label">row 1 · identity</span>
+      <h2>Who you are</h2>
+    </div>
+    <p class="thesis">
+      Federate every identity provider and link them to <b>one subject</b>. Sign in with
+      OpenKey, link a passkey, sign out, sign back in with the passkey — the same subject
+      comes back. That's portable identity, live on the core right now. This section drives
+      the real <code class="chip">/oauth3/login</code> + <code class="chip">/oauth3/dashboard</code>.
+    </p>
+
+    <div class="card id-card" id="id-card">
+      <div class="id-status">
+        <span class="label">your subject</span>
+        <span id="id-pill" class="pill warn"><span class="dot warn"></span>checking…</span>
+      </div>
+      <div id="id-body"><p style="color:var(--faint);margin-top:10px">Reading your session from the pod…</p></div>
+
+      <div class="row-actions">
+        <a class="btn" id="go-login" href="/oauth3/login" target="_blank" rel="noopener">Sign in / switch method →</a>
+        <a class="btn ghost" id="go-dash" href="/oauth3/dashboard" target="_blank" rel="noopener">Open your account →</a>
+      </div>
+      <p style="margin-top:12px;font-size:13px;color:var(--faint)">
+        The buttons open the real core pages where linking, passkey enrolment and sign-out
+        happen. Because the app is same-origin with the pod, your session is shared — when
+        you come back, the readout above updates on its own.
+      </p>
+    </div>
+  </section>
+
+  <div class="halftone" style="margin-top:40px" aria-hidden="true"></div>
+
+  <!-- ════════════ ROW 2 — DELEGATED ACCESS ════════════ -->
+  <section class="act" id="delegation">
+    <div class="head">
+      <span class="label">row 2 · delegated access</span>
+      <h2>What you've delegated</h2>
+    </div>
+    <p class="thesis">
+      A different mechanism from identity. With the OAuth3 extension, every site you're
+      already logged into becomes a login provider: the app receives a <b>scoped read token</b>
+      for that one site — revocable, never your cookies. A card with no jar yet is a cold
+      start: connect your browser to sync, not a dead-end.
+    </p>
+
+    <div id="ext-prompt" class="warn-note" style="display:none">
+      <b>OAuth3 extension not detected.</b> Install <code class="chip">oauth3-extension</code> to turn
+      your logged-in sites into login providers. Until then the cards below show what each
+      would grant.
+    </div>
+
+    <div id="loading" class="grid" aria-hidden="true">
+      <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
+    </div>
+
+    <div id="providers" class="grid" style="display:none"></div>
+    <div id="errors"></div>
+  </section>
+
+  <footer class="foot">
+    <span><a href="/oauth3/" target="_blank" rel="noopener">oauth3 pod</a> · scoped tokens · revocable · no cookies shared</span>
+    <span>same-origin with <code class="chip">/oauth3</code></span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  // OAuth3 node: same-origin, works on any mount. Points at the LIVE core.
+  var NODE = location.origin + "/oauth3";
+  var APP  = "login-with-everything";
+
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+    return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]; }); }
+  function truncate(tok) {
+    if (!tok) return "";
+    return tok.length <= 32 ? tok : tok.slice(0, 16) + "…" + tok.slice(-8);
+  }
+  // human label for a linked identity, mirroring /oauth3/dashboard
+  function linkLabel(id) {
+    if (id.indexOf("gh:") === 0)        return "GitHub · #" + id.slice(3);
+    if (id.indexOf("google:") === 0)    return "Google · " + id.slice(7, 16) + "…";
+    if (id.indexOf("did:pkh:") === 0) {
+      var a = id.split(":").pop() || "";
+      return "OpenKey / Ethereum · " + (a.length > 10 ? a.slice(0, 6) + "…" + a.slice(-4) : a);
+    }
+    return id;
+  }
+  function providerEmoji(id) {
+    return ({ otter: "🦦", youtube: "▶️", reddit: "🔴", nytimes: "📰",
+              twitter: "🐦", "google-calendar": "📅", github: "🐙", google: "🔵" })[id] || "🔐";
+  }
+
+  /* ───────────── ROW 1: live identity readout from /oauth3/api/me ─────────────
+     Same-origin with the pod ⇒ the session key in localStorage is shared, so we can
+     read the REAL subject + linked providers and show them here. Polls so it updates
+     when the user returns from the login/dashboard tabs. */
+  var SK = "oauth3_session";
+  function sessionHeader() {
+    try { var t = localStorage.getItem(SK); return t ? { Authorization: "Bearer " + t } : {}; }
+    catch (e) { return {}; }
+  }
+  function setPill(el, kind, text) {
+    el.className = "pill " + kind;
+    el.innerHTML = '<span class="dot ' + kind + '"></span>' + esc(text);
+  }
+  async function loadMe() {
+    var pill = $("id-pill"), body = $("id-body");
+    try {
+      var res = await fetch(NODE + "/api/me", { headers: sessionHeader() });
+      if (!res.ok) throw new Error("api/me " + res.status);
+      var me = await res.json();
+      if (!me.signedIn) {
+        setPill(pill, "warn", "not signed in");
+        body.innerHTML =
+          '<div class="id-empty">' +
+            '<p>No subject yet — sign in once and everything below resolves to one identity.</p>' +
+          '</div>';
+        return;
+      }
+      setPill(pill, "ok", "signed in");
+      var subj = me.subject;
+      var links = me.links || [];
+      var linksHtml;
+      if (links.length) {
+        linksHtml = '<div class="links">' + links.map(function (l) {
+          return '<div class="link-line"><span class="pill ok">' + esc(linkLabel(l)) + '</span>' +
+                 '<span class="scope">linked → same subject</span></div>';
+        }).join("") + "</div>";
+      } else {
+        linksHtml = '<div class="links"><div class="link-line"><span class="pill warn">no linked sign-ins yet</span>' +
+                    '<span class="scope">link one from the account page</span></div></div>';
+      }
+      body.innerHTML =
+        '<div class="subject"><span class="k">subject </span>' + esc(subj) + "</div>" +
+        linksHtml +
+        '<p class="scope" style="margin-top:10px">Passkeys enrolled against this subject sign you in ' +
+        "on any device — and resolve to the exact same string above.</p>";
+    } catch (e) {
+      setPill(pill, "bad", "pod unreachable");
+      body.innerHTML = '<p class="id-unreachable">Could not reach <code class="chip">' + esc(NODE) +
+                       "</code> — the identity readout is live-only. The delegation row below " +
+                       "still renders against the same node.</p>";
+    }
+  }
+  function startIdentityPoll() {
+    loadMe();
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) loadMe(); });
+    setInterval(loadMe, 5000);
+  }
+
+  /* ───────────── ROW 2: delegated-access provider grid ───────────── */
+  var providersEl = $("providers"), loadingEl = $("loading"),
+      extPromptEl = $("ext-prompt"), errorsEl = $("errors");
+  var signedInState = new Map(); // pluginId -> { token, plugin }
+
+  function hasExtension() { return !!(window.oauth3 && window.oauth3.connect); }
+  function checkExtension() {
+    if (!hasExtension()) { extPromptEl.style.display = "block"; return false; }
+    extPromptEl.style.display = "none";
+    return true;
+  }
+  function showError(message) {
+    var div = document.createElement("div");
+    div.className = "err-note";
+    div.innerHTML = "<b>" + esc(message.split(":")[0]) + "</b>" + esc(message.slice(message.indexOf(":") + 1));
+    errorsEl.appendChild(div);
+  }
+
+  async function fetchPlugins() {
+    try {
+      var res = await fetch(NODE + "/api/plugins");
+      if (!res.ok) throw new Error("Failed to fetch plugins: " + res.status);
+      var data = await res.json();
+      return data.plugins || [];
+    } catch (e) {
+      showError("Failed to load providers: the pod at " + NODE + " was unreachable.");
+      return [];
+    }
+  }
+
+  function renderProviders(plugins) {
+    loadingEl.style.display = "none";
+    providersEl.style.display = "grid";
+    providersEl.innerHTML = "";
+    if (!plugins.length) { showError("No providers available at the pod."); return; }
+    plugins.forEach(function (p) { providersEl.appendChild(createCard(p)); });
+  }
+
+  function createCard(plugin) {
+    var card = document.createElement("div");
+    card.className = "pcard";
+    card.dataset.pluginId = plugin.id;
+    var domain = (plugin.cookieDomains && plugin.cookieDomains[0]) || plugin.id;
+    var hasJar = !!(plugin.jar && plugin.jar.present);
+    var count  = (plugin.jar && plugin.jar.count) || 0;
+
+    card.innerHTML =
+      '<div class="pname">' + providerEmoji(plugin.id) + " " + esc(plugin.label) + "</div>" +
+      '<div class="pdomain">' + esc(domain) + "</div>" +
+      '<div class="pgrant">Sign in with ' + esc(plugin.label) +
+      " · the app gets a read-only token for this site only.</div>";
+
+    if (!hasJar) {
+      // cold-start graceful state — not a dead-end
+      card.classList.add("cold");
+      var cold = document.createElement("div");
+      cold.className = "pcold";
+      cold.innerHTML =
+        '<span class="pill warn"><span class="dot warn"></span>jar empty</span>' +
+        '<span class="cta">Connect your browser to sync ' + esc(plugin.label) + " →</span>";
+      card.appendChild(cold);
+    }
+    card.addEventListener("click", function () { handleProviderClick(plugin, card); });
+    return card;
+  }
+
+  async function handleProviderClick(plugin, card) {
+    if (card.classList.contains("signed-in") || card.classList.contains("connecting")) return;
+    if (!checkExtension()) return;
+    card.classList.add("connecting");
+    var spin = document.createElement("span");
+    spin.className = "spinner"; spin.style.marginTop = "10px";
+    card.appendChild(spin);
+    try {
+      var token = await window.oauth3.connect({ plugin: plugin.id, app: APP, node: NODE });
+      updateCardSignedIn(card, plugin, token);
+      signedInState.set(plugin.id, { token: token, plugin: plugin });
+    } catch (e) {
+      card.classList.remove("connecting");
+      var s = card.querySelector(".spinner"); if (s) s.remove();
+      showError("Failed to connect with " + plugin.label + ": " + (e && e.message || String(e)));
+    }
+  }
+
+  function updateCardSignedIn(card, plugin, token) {
+    card.classList.remove("connecting", "cold");
+    card.classList.add("signed-in");
+    var s = card.querySelector(".spinner"); if (s) s.remove();
+
+    // subject from the token format base64(plugin|subject|app|timestamp|signature)
+    var subject = "did:oauth3:anonymous";
+    try { var parts = atob(token).split("|"); if (parts.length >= 2) subject = parts[1]; } catch (e) {}
+
+    card.innerHTML =
+      '<span class="check"><span class="pill ok"><span class="dot ok"></span>signed in</span></span>' +
+      '<div class="pname">' + providerEmoji(plugin.id) + " " + esc(plugin.label) + "</div>" +
+      '<div class="pdomain">scoped read token</div>' +
+      '<div class="signed-body">' +
+        '<div class="subject"><span class="k">subject </span>' + esc(subject) + "</div>" +
+        '<div class="tok">' + esc(truncate(token)) + "</div>" +
+        '<div class="scope">read-only · ' + esc(plugin.label) + " only · revocable</div>" +
+        '<button class="btn danger" type="button">Revoke token</button>' +
+        '<div class="proof" id="revoked-' + esc(plugin.id) + '"></div>' +
+      "</div>";
+
+    var btn = card.querySelector(".btn.danger");
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      handleRevoke(plugin, token, btn, card);
+    });
+  }
+
+  async function handleRevoke(plugin, token, btn, card) {
+    if (btn.disabled) return;
+    btn.disabled = true; btn.textContent = "Revoking…";
+    try {
+      var res = await fetch(NODE + "/api/tokens/" + encodeURIComponent(token), { method: "DELETE" });
+      if (!res.ok) { var body = await res.json().catch(function () { return {}; });
+        throw new Error(body.error || "Failed to revoke: " + res.status); }
+      // prove it: the token must now 401
+      var verify = await fetch(NODE + "/api/" + encodeURIComponent(plugin.id) + "/items",
+        { headers: { Authorization: "Bearer " + token } });
+      btn.textContent = "Token revoked";
+      var proof = $("revoked-" + plugin.id);
+      if (proof) {
+        if (!verify.ok && verify.status === 401) {
+          proof.textContent = "✓ Verified: token now returns 401 Unauthorized";
+          proof.className = "proof ok";
+        } else {
+          proof.textContent = "⚠ Token revoked but still appears valid — retry";
+        }
+      }
+      signedInState.delete(plugin.id);
+    } catch (e) {
+      btn.disabled = false; btn.textContent = "Revoke token";
+      showError("Failed to revoke token: " + (e && e.message || String(e)));
+    }
+  }
+
+  // init
+  async function init() {
+    startIdentityPoll();           // row 1
+    checkExtension();
+    var plugins = await fetchPlugins();
+    if (plugins.length) renderProviders(plugins);
+    else loadingEl.style.display = "none";
+  }
+  init();
+})();
+</script>
+</body>
+</html>
