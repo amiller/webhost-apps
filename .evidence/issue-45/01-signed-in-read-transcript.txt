@@ -28,3 +28,21 @@
    — splits page innerText on line boundaries; produces name/handle/time/text/stats only.
    browserFeed() returns items from `spi("/eval", {script:"x"})` innerText.
    → real tweet media/avatars cannot reach this app until that scraper changes (cross-repo).
+
+## 5. Rework re-verification, post-rebase (2026-08-27 evening)
+   daemon /_api/version -> {"version":"dev","commit":"0336a7b3"}   (CVM had updated ~22:16Z; projects + twitter jar survived)
+   u-swarm login subject: u-eaf13541f186c7c5f466dc04e2e5da4b   (this core generation re-derived the subject;
+                                                                 CONSTITUTION's u-cc7f19ff… predates the update)
+   connect(twitter, timeline-peek) -> approve -> poll: approved, scoped token minted (redacted, revocable)
+   GET /oauth3/api/twitter/feed (Bearer token)   HTTP 200 — time_total 15.625s, who: socrates1024
+   items present (count 8; content redacted — personal data). No 409 step-up on first use this run.
+   Deployed rebased HEAD (ddb76e9, tree c282d9bf) as staging project timeline-peek-fix45.
+   PIN at walk time: /timeline-peek/ (main staging) served bytes WITHOUT FEED_TIMEOUT_MS (pre-fix);
+                     /timeline-peek-fix45/ served bytes WITH FEED_TIMEOUT_MS + ?node= override (post-fix).
+   Walk (envoy bridge, real Brave, no CDP):
+   A  /timeline-peek/?token=<redacted>          -> note err "couldn't reach the oauth3 node (request timed out)", articles=0   [02-pre-fix-terminal-error.png]
+   B  /timeline-peek-fix45/?node=<staging>/oauth3&token=<redacted>
+                                                -> articles=7, title "@socrates1024 / Home / Timeline Peek",
+                                                   first-article header has name/@handle/time, 0 imgs (no media fields yet)
+                                                   [screenshot kept PRIVATE — operator's personal timeline]
+   C  /timeline-peek-fix45/?demo                -> 6 articles, 16 loaded images, footer "Demo · sample data…" [03-demo-media-grids.png]
