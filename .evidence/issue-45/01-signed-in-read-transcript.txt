@@ -1,0 +1,48 @@
+# Issue #45 — signed-in read transcript against deployed staging (2026-08-27)
+# Personal-data rule: the operator's real timeline CONTENT is redacted; only shape,
+# counts, timing and the account handle (already public in this repo, router-dashboard) are recorded.
+# The scoped token is redacted (revocable, single-purpose).
+
+## 1. Pre-fix, deployed app (origin/staging bytes), in the real bridge browser
+   navigate https://<webhost-staging>/timeline-peek/?token=tok-twitter-REDACTED
+   → after share-kit's 15s abort:
+   note.textContent = "couldn't reach the oauth3 node (request timed out)"   [note.className = "note err"]
+   articles = 0
+
+## 2. Same read, raw HTTP (curl, no client abort)
+   GET /oauth3/api/twitter/feed   Authorization: Bearer tok-twitter-REDACTED
+   HTTP 200 — time_total 13.374s
+   {"plugin":"twitter","who":"socrates1024","items":[ … 8 items … ]}
+   item keys (every item): handle, name, stats, text, time     ← NO media / avatar / verified
+   (second read: HTTP 200, 13.4s, 8 items — consistent)
+
+## 3. Post-fix (this branch, deployed as staging project timeline-peek-fix45), real bridge browser
+   navigate https://<webhost-staging>/timeline-peek-fix45/?token=tok-twitter-REDACTED
+   → feed rendered (60s budget, completed well inside it):
+   articles = 11
+   first article innerText (prefix, content redacted): "<avatar letter> | Talia Ringer | @TaliaRinger | 7h | [redacted text]"
+   screenshot taken in-session (NOT committed — operator's personal timeline)
+
+## 4. parseFeed source check (teleport-computer/oauth3-server, 2026-08-27)
+   server/browser.ts:49 function parseFeed(text: string): FeedItem[]
+   — splits page innerText on line boundaries; produces name/handle/time/text/stats only.
+   browserFeed() returns items from `spi("/eval", {script:"x"})` innerText.
+   → real tweet media/avatars cannot reach this app until that scraper changes (cross-repo).
+
+## 5. Rework re-verification, post-rebase (2026-08-27 evening)
+   daemon /_api/version -> {"version":"dev","commit":"0336a7b3"}   (CVM had updated ~22:16Z; projects + twitter jar survived)
+   u-swarm login subject: u-eaf13541f186c7c5f466dc04e2e5da4b   (this core generation re-derived the subject;
+                                                                 CONSTITUTION's u-cc7f19ff… predates the update)
+   connect(twitter, timeline-peek) -> approve -> poll: approved, scoped token minted (redacted, revocable)
+   GET /oauth3/api/twitter/feed (Bearer token)   HTTP 200 — time_total 15.625s, who: socrates1024
+   items present (count 8; content redacted — personal data). No 409 step-up on first use this run.
+   Deployed rebased HEAD (ddb76e9, tree c282d9bf) as staging project timeline-peek-fix45.
+   PIN at walk time: /timeline-peek/ (main staging) served bytes WITHOUT FEED_TIMEOUT_MS (pre-fix);
+                     /timeline-peek-fix45/ served bytes WITH FEED_TIMEOUT_MS + ?node= override (post-fix).
+   Walk (envoy bridge, real Brave, no CDP):
+   A  /timeline-peek/?token=<redacted>          -> note err "couldn't reach the oauth3 node (request timed out)", articles=0   [02-pre-fix-terminal-error.png]
+   B  /timeline-peek-fix45/?node=<staging>/oauth3&token=<redacted>
+                                                -> articles=7, title "@socrates1024 / Home / Timeline Peek",
+                                                   first-article header has name/@handle/time, 0 imgs (no media fields yet)
+                                                   [screenshot kept PRIVATE — operator's personal timeline]
+   C  /timeline-peek-fix45/?demo                -> 6 articles, 16 loaded images, footer "Demo · sample data…" [03-demo-media-grids.png]
