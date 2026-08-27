@@ -630,7 +630,10 @@ svg.ic{width:1.5em;height:1.5em;fill:currentColor;vertical-align:middle}
 <!-- /share-kit:inline -->
 
 <script>
-const NODE = location.origin + "/oauth3";
+// The oauth3 node is the sibling of this app's own mount (works under any prefix),
+// overridable with ?node= to point the app at another instance.
+const NODE = new URLSearchParams(location.search).get("node")
+  || (location.origin + location.pathname.replace(/\/timeline-peek\/?$/, "") + "/oauth3");
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const DEMO = params.has("demo");
