@@ -1,0 +1,25 @@
+# screenshare-debug e2e (#70): headful Chromium under Xvfb capturing its own virtual display,
+# plus the deno sink, over the compose network. `docker compose up --build --exit-code-from e2e`
+# drives the recorder page for real (getDisplayMedia auto-resolved by chromium flags) and exits 0
+# only if the full record→review→redact→upload→pixel-check path holds.
+name: screenshare-debug-e2e
+services:
+  sink:
+    image: denoland/deno:2.9.0
+    working_dir: /app
+    command: ["run", "-A", "server.ts"]
+    volumes:
+      - ./server.ts:/app/server.ts:ro
+      - ./public:/app/public:ro
+
+  e2e:
+    build: ./e2e
+    depends_on:
+      - sink
+    environment:
+      SINK_URL: http://sink:8080
+      CHROMIUM_PATH: /usr/bin/chromium
+    volumes:
+      - ./e2e/out:/out
+
+volumes: {}

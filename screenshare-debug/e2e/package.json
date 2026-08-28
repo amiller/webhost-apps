@@ -1,0 +1,9 @@
+{
+  "name": "screenshare-debug-e2e",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "jpeg-js": "^0.4.4",
+    "playwright-core": "^1.49.0"
+  }
+}
