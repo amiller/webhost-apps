@@ -4,18 +4,21 @@
 <base href="/screenshare-debug/" />
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>screenshare-debug — what did the pod receive?</title>
+<title>screenshare-debug — share your screen with the devs</title>
 <!--
-  screenshare-debug — the screen-stream analogue of twitter-debug: a debug surface for the
-  browser→pod frame path. The capture client is the proven getDisplayMedia → downsample →
-  per-frame luma → JPEG pipeline (ported from tee-daemon/examples/screenshare-frames);
-  rate / resolution / JPEG-quality are live controls. The pod sink stores the last frames
-  and echoes them back, so you compare what you SENT against what the pod RECEIVED,
-  frame by frame (bytes, luma, latency, HTTP outcome).
+  screenshare-debug — opt-in debug-trace recorder (#70). A user hitting a bug presses Start,
+  shares ONE window (the picker scopes the capture), reproduces it, presses Stop. The frames
+  never leave the browser during recording: they land in this page's memory, the user reviews
+  the filmstrip, deletes frames, blacks out regions, writes a "what were you doing?" note, and
+  only then uploads — the sink receives one bounded session with redaction already baked into
+  the JPEGs (blackout rects are applied BEFORE the encode, so the pixels never existed as a
+  frame). Unkept sessions expire on the sink after 1h.
 
-  oauth3 is identity only (window.oauth3.signIn tags the trace with your subject); it is
-  never in the frame data path. The earlier consent-grant/capability build of this app is
-  preserved in NOTES-consent-demo.md for a separate demo.
+  ?synthetic=1 swaps getDisplayMedia for an animated canvas — a frame source for fast tests
+  that needs no capture permission and no desktop.
+
+  No identity, no sign-ins, no grants, no tokens (#70 non-goals): the browser originating the
+  upload is the control.
 
   Design: pod design system · constructivist overprint · watermelon-classic inks · light.
 -->
@@ -67,7 +70,7 @@ h1.display { font:800 clamp(28px,5vw,46px)/0.94 var(--cond); text-transform:uppe
   color:var(--ink1); text-shadow:var(--off) var(--off) 0 var(--ink2); text-wrap:balance; }
 .sub { color:var(--faint); font:14px/1.6 var(--sans); margin:8px 0 0; max-width:70ch; }
 .sub b { color:var(--i2-text); font-weight:700; }
-/* status pill row */
+/* status pill row — the recording indicator, always visible */
 .bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:18px 0 6px; }
 .pill { display:inline-flex; align-items:center; gap:6px; font:500 12px/1 var(--mono);
   padding:4px 10px; border-radius:999px; text-transform:capitalize; }
@@ -78,33 +81,43 @@ h1.display { font:800 clamp(28px,5vw,46px)/0.94 var(--cond); text-transform:uppe
 .dot.live { background:var(--ink1); animation:blink 1s infinite; }
 .dot.bad { background:var(--ink2); } .dot.idle { background:var(--rule); }
 @keyframes blink { 50% { opacity:.25; } }
-.who { font:500 12px var(--mono); color:var(--i1-text); }
+.muted { color:var(--faint); }
+.err { color:var(--i2-text); font:12.5px/1.5 var(--mono); }
 /* buttons (components.css grammar) */
 .btn { display:inline-flex; align-items:center; gap:8px; font:800 14px var(--cond);
   text-transform:uppercase; letter-spacing:.12em; border:0; padding:12px 22px; cursor:pointer;
   background:var(--ink1); color:#fff; box-shadow:3px 3px 0 var(--ink2); }
 .btn:disabled { opacity:.5; cursor:default; }
 .btn.danger { background:var(--ink2); color:var(--deep); box-shadow:3px 3px 0 var(--ink1); }
-.btn.ghost { background:transparent; color:var(--i1-text); border:2px solid var(--ink1); box-shadow:none; }
+.btn.ghost { background:transparent; color:var(--i1-text); border:2px solid var(--ink1); box-shadow:none; padding:10px 18px; }
+.btn.small { padding:7px 12px; font-size:12px; box-shadow:2px 2px 0 var(--ink2); }
 .btn:active { transform:translateY(1px); }
 /* controls */
 .ctrls { display:flex; gap:16px 22px; flex-wrap:wrap; align-items:end; margin:14px 0 4px; }
 .ctrls label { display:flex; flex-direction:column; gap:4px; font:500 11px/1 var(--mono);
   letter-spacing:.12em; text-transform:lowercase; color:var(--faint); }
-.ctrls input { background:var(--card); border:1.5px solid var(--rule); color:var(--text);
+.ctrls input, .ctrls textarea { background:var(--card); border:1.5px solid var(--rule); color:var(--text);
   border-radius:0; padding:8px; font:14px var(--mono); min-width:5em; }
 .card { background:var(--card); border:2.5px solid var(--ink1); padding:16px 18px; margin:14px 0; }
 .card .title { font:800 16px var(--cond); text-transform:uppercase; letter-spacing:.08em; color:var(--ink1); }
 .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
 @media (max-width:760px){ .grid { grid-template-columns:1fr; } }
-/* live preview + echo strip */
 #preview { width:100%; max-height:230px; object-fit:contain; background:#000; display:block;
   border:1.5px solid var(--rule); }
-.echo { display:flex; gap:6px; overflow-x:auto; padding:8px 0 2px; }
-.echo figure { margin:0; flex:0 0 auto; }
-.echo img { height:64px; display:block; border:1.5px solid var(--rule); }
-.echo figcaption { font:10px var(--mono); color:var(--faint); }
-/* metadata table */
+/* filmstrip */
+.strip { display:flex; gap:6px; overflow-x:auto; padding:8px 0 2px; }
+.strip figure { margin:0; flex:0 0 auto; position:relative; }
+.strip img { height:72px; display:block; border:2px solid var(--rule); cursor:pointer; }
+.strip figure.sel img { border-color:var(--ink2); }
+.strip figure.gone img { opacity:.25; filter:grayscale(1); }
+.strip figcaption { font:10px var(--mono); color:var(--faint); text-align:center; }
+/* review frame + blackout overlay */
+#frameWrap { position:relative; display:inline-block; max-width:100%; }
+#frameBig { max-width:100%; display:block; border:1.5px solid var(--rule); }
+#frameWrap canvas { position:absolute; inset:0; width:100%; height:100%; cursor:crosshair; touch-action:none; }
+.rectlbl { position:absolute; font:500 10px var(--mono); color:#fff; background:var(--ink2);
+  padding:1px 5px; cursor:pointer; }
+/* metadata tables */
 table { width:100%; border-collapse:collapse; font:12px/1.5 var(--mono); }
 th, td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--rule); white-space:nowrap; }
 th { color:var(--faint); font-weight:500; text-transform:lowercase; letter-spacing:.1em; }
@@ -113,246 +126,388 @@ td.ok { color:var(--i1-text); } td.bad { color:var(--i2-text); }
 .block { background:var(--block); color:var(--block-text); border-left:12px solid var(--ink2);
   padding:14px 18px; font:12.5px/1.7 var(--mono); overflow-x:auto; }
 .block .k { opacity:.55; display:inline-block; min-width:11ch; }
-.muted { color:var(--faint); }
-.err { color:var(--i2-text); font:12.5px/1.5 var(--mono); }
-video, canvas { display:none; }
+.note { width:100%; min-height:64px; font:14px/1.5 var(--mono); }
 .halftone { height:10px; margin:22px 0; border-radius:2px;
   background:radial-gradient(circle,var(--ink1) 34%,transparent 36%) 0 0/9px 9px,
              radial-gradient(circle,var(--ink2) 30%,transparent 32%) 4px 5px/9px 9px; }
+video, canvas.src { display:none; }
+details.dev summary { cursor:pointer; font:800 15px var(--cond); text-transform:uppercase;
+  letter-spacing:.08em; color:var(--ink1); }
+.sess { border-top:1.5px solid var(--rule); padding:10px 0; }
+.sess:first-child { border-top:0; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <p class="label">oauth3 · screen-stream debug · build <span id="build">…</span></p>
-  <h1 class="display">what did the pod receive?</h1>
+  <p class="label">oauth3 · screen-trace debug · build <span id="build">…</span> · <span id="modeTag">screen capture</span></p>
+  <h1 class="display">share your screen with the devs</h1>
   <p class="sub">
-    The screen-stream analogue of <b>twitter-debug</b>: the browser turns a live screen into a
-    stream of JPEG frames and POSTs each one to this pod's sink; the sink stores the trace and
-    echoes it back. You compare <b>what you sent</b> against <b>what the pod received</b>,
-    frame by frame — bytes, luma, latency, HTTP outcome. Try it below, then copy the three files.
+    Hit a bug? <b>Start</b>, share <b>one window</b> (the picker scopes the capture — devs see only
+    that window, never your screen), reproduce it, <b>Stop</b>. Frames stay <b>in this browser</b>
+    until you review them and press <b>Upload</b>: delete what you don't want, black out what
+    you must — blackout is applied <b>before</b> the JPEG is encoded, so redacted pixels never
+    exist as an image. Near-identical frames are dropped automatically (smaller traces).
+    Unkept traces expire on the sink after 1 hour.
   </p>
-  <p class="muted" style="font:13px var(--mono); margin:10px 0 0">
-    open source: <a href="https://github.com/amiller/webhost-apps/tree/main/screenshare-debug">code</a> ·
-    <a href="https://github.com/amiller/webhost-apps/blob/main/screenshare-debug/README.md">README</a> ·
-    <a href="https://github.com/amiller/webhost-apps/blob/main/screenshare-debug/server.ts">server.ts (the sink)</a>
-  </p>
-
-  <div class="card">
-    <div class="title">the pipeline · three steps</div>
-    <ol style="margin:10px 0 4px; padding-left:22px; font:13.5px/1.7 var(--sans)">
-      <li><b>capture</b> — <code>getDisplayMedia</code> → downsample to a target width → per-frame
-        luma → JPEG, entirely in the browser (<code>capture()</code> in this page's source).</li>
-      <li><b>post</b> — each frame goes direct browser → pod sink, tagged with your oauth3
-        identity (<code>window.oauth3.signIn</code>; oauth3 is never in the frame data path).</li>
-      <li><b>echo</b> — the sink stores the last 60 frames + metadata and serves them back, so the
-        receive side is inspectable next to the send side.</li>
-    </ol>
-  </div>
 
   <div class="bar">
     <span class="pill ok" id="statusPill"><span class="dot idle" id="statusDot"></span><span id="statusTxt">idle</span></span>
-    <span class="who" id="who" hidden></span>
     <span class="muted" id="rateTxt" style="font:12px var(--mono)"></span>
     <button class="btn ghost" id="themeBtn" type="button">dark</button>
   </div>
+  <p class="err" id="errTxt"></p>
 
   <div class="ctrls">
-    <button class="btn" id="start" type="button">Start streaming</button>
+    <button class="btn" id="start" type="button">Start recording</button>
     <button class="btn danger" id="stop" type="button" disabled>Stop</button>
-    <label>interval (s)<input id="interval" type="number" value="2" min="0.2" step="0.2" style="width:5em" /></label>
-    <label>width (px)<input id="width" type="number" value="320" min="64" step="32" style="width:5em" /></label>
-    <label>quality<input id="quality" type="number" value="0.6" min="0.1" max="1" step="0.05" style="width:5em" /></label>
+    <label>interval (s)<input id="interval" type="number" value="1" min="0.2" step="0.1" style="width:5em" /></label>
+    <label>width (px)<input id="width" type="number" value="480" min="160" step="32" style="width:5em" /></label>
+    <label>jpeg quality<input id="quality" type="number" value="0.6" min="0.1" max="1" step="0.05" style="width:5em" /></label>
+    <label>change-drop floor<input id="floor" type="number" value="4" min="0" max="60" step="1" style="width:5em" /></label>
   </div>
   <p class="muted" style="font:12px var(--mono); margin:6px 0 0">
-    desktop-only: <code>getDisplayMedia</code> isn't implemented on mobile browsers. A screen-picker
-    prompt appears on Start.
+    desktop-only for real capture (<code>getDisplayMedia</code>); window-scoped by the picker ·
+    width/quality are the privacy dial — lower both for less incidental detail ·
+    <code id="synHint"></code>
   </p>
 
   <div class="halftone"></div>
 
-  <div class="grid">
-    <div class="card">
-      <div class="title">live preview · what you're sending</div>
-      <img id="preview" alt="current frame preview" />
-      <p class="muted" id="prevCap" style="font:12px var(--mono); margin:8px 0 0">no frames yet</p>
-    </div>
-    <div class="card">
-      <div class="title">echo · what the pod received</div>
-      <div class="echo" id="echo"><span class="muted" style="font:12px var(--mono)">nothing echoed back yet</span></div>
-      <p class="muted" id="echoCap" style="font:12px var(--mono); margin:8px 0 0">the sink keeps the last 60 frames on this pod (enclave) — the echo runs alongside the app</p>
-    </div>
+  <div class="card" id="recCard">
+    <div class="title">recording · what stays in this browser</div>
+    <img id="preview" alt="current frame preview" hidden />
+    <p class="muted" id="prevCap" style="font:12px var(--mono); margin:8px 0 0">not recording</p>
   </div>
 
-  <div class="card" style="margin-top:16px">
-    <div class="title">per-frame metadata</div>
+  <div class="card" id="reviewCard" hidden>
+    <div class="title">review · session <span id="sid"></span> · <span id="keptN"></span></div>
+    <div class="strip" id="strip"></div>
+    <p class="muted" style="font:12px var(--mono); margin:6px 0 0">
+      click a frame to enlarge · drag on it to <b>black out</b> a region (click a region's ✕ to undo) ·
+      ✕ under a frame deletes it from the upload
+    </p>
+    <div id="frameWrap" style="margin:10px 0" hidden><img id="frameBig" alt="selected frame" /><canvas id="rects"></canvas></div>
+    <div id="rectList" style="font:12px var(--mono)"></div>
+    <label class="label" style="display:block; margin:12px 0 4px">what were you doing?</label>
+    <textarea class="note" id="note" placeholder="freeform — what you did when the bug hit"></textarea>
+    <div class="bar" style="margin:12px 0 0">
+      <button class="btn" id="upload" type="button">Upload trace</button>
+      <button class="btn ghost" id="discard" type="button">Discard</button>
+    </div>
+    <p class="err" id="upErr"></p>
+  </div>
+
+  <div class="card" id="doneCard" hidden>
+    <div class="title">uploaded · what the devs received</div>
     <div class="scroll">
       <table>
-        <thead><tr><th>#</th><th>time</th><th>bytes</th><th>luma</th><th>delivered</th><th>latency</th><th>http</th></tr></thead>
-        <tbody id="rows"><tr><td colspan="7" class="muted">no frames yet</td></tr></tbody>
+        <thead><tr><th>#</th><th>bytes</th><th>luma</th><th>http</th><th>delivered</th></tr></thead>
+        <tbody id="upRows"></tbody>
       </table>
     </div>
-    <p class="err" id="streamErr"></p>
+    <div class="bar" style="margin:12px 0 0">
+      <button class="btn ghost" id="keepBtn" type="button">Keep this trace</button>
+      <span class="muted" id="keepTxt" style="font:12px var(--mono)">unkept traces expire on the sink after 1h</span>
+    </div>
   </div>
 
   <div class="halftone"></div>
 
+  <details class="dev card" id="devSide">
+    <summary>dev side · sessions on the sink</summary>
+    <div id="devBody" style="margin-top:10px"><span class="muted" style="font:12px var(--mono)">no sessions loaded — upload a trace or open this after one</span></div>
+  </details>
+
+  <div class="halftone"></div>
+
   <div class="card">
-    <div class="title">use this as a template</div>
-    <p style="font:13.5px/1.7 var(--sans); margin:10px 0 6px">
-      The whole app is three files in one directory —
-      <a href="https://github.com/amiller/webhost-apps/tree/main/screenshare-debug">webhost-apps/screenshare-debug</a>.
-      Copy it, point <code>deploy.sh</code> at your pod, done.
-    </p>
-    <ul style="margin:6px 0 10px; padding-left:22px; font:13px/1.8 var(--mono)">
-      <li><a href="https://github.com/amiller/webhost-apps/blob/main/screenshare-debug/server.ts">server.ts</a> — the sink + trace store (under 100 lines, deno, zero deps)</li>
-      <li><a href="https://github.com/amiller/webhost-apps/blob/main/screenshare-debug/public/index.html">public/index.html</a> — the capture client (this page)</li>
-      <li><a href="https://github.com/amiller/webhost-apps/blob/main/screenshare-debug/deploy.sh">deploy.sh</a> — tarball → <code>POST /_api/projects</code> on a tee-daemon</li>
-    </ul>
-    <div class="block"><span class="k">deploy:</span> bash deploy.sh <span class="muted"># no secrets needed</span></div>
+    <div class="title">the mechanism</div>
+    <div class="block">
+      <span class="k">record:</span> getDisplayMedia → downsample → luma → change-drop → in-page canvas store (zero network)<br />
+      <span class="k">review:</span> filmstrip · per-frame delete · blackout rects in frame-pixel coords · freeform note<br />
+      <span class="k">upload:</span> rects filled black → JPEG encode → POST sink/frame/&lt;sid&gt;/&lt;seq&gt; · session meta POSTed first<br />
+      <span class="k">sink:</span> deno, zero deps · sessions under <code>.data/sessions/&lt;sid&gt;/</code> · 1h TTL unless kept<br />
+      <span class="k">synthetic:</span> <code>?synthetic=1</code> — animated canvas source, no capture permission needed<br />
+      <span class="k">source:</span> <a href="https://github.com/amiller/webhost-apps/tree/main/screenshare-debug">webhost-apps/screenshare-debug</a> · compose e2e included
+    </div>
   </div>
 </div>
 
 <video id="v" autoplay muted playsinline></video>
-<canvas id="c"></canvas>
+<canvas id="syn" class="src" width="960" height="600"></canvas>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
-const NODE = location.origin + "/oauth3";
-const video = $("v"), canvas = $("c"), ctx = canvas.getContext("2d");
-const preview = $("preview"), rowsEl = $("rows"), echoEl = $("echo"), streamErr = $("streamErr");
+const SYNTHETIC = new URLSearchParams(location.search).has("synthetic");
+const video = $("v"), synCanvas = $("syn"), synCtx = synCanvas.getContext("2d");
+const work = document.createElement("canvas"), workCtx = work.getContext("2d", { willReadFrequently: true });
+const GRID = 24; // 24x24 luma grid for change-drop
 
-let subject = null;
-let stream = null, timer = null;
-let frames = [], seq = 0;
+let mode = "idle";           // idle | recording | review | uploaded
+let stream = null, timer = null, synT = null;
+let sid = null, seq = 0, lastGrid = null, sinceKeep = 0;
+let frames = [];             // {seq,ts,w,h,luma,grid,canvas,thumb,rects:[],deleted,bytes,delivered,http}
+let selSeq = null;
 
 function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
-
 function setStatus(state, txt){
   const pill = $("statusPill"), dot = $("statusDot");
   pill.className = "pill " + (state==="live"?"ok":state==="bad"?"bad":"warn");
   dot.className = "dot " + (state==="live"?"live":state==="bad"?"bad":"idle");
   $("statusTxt").textContent = txt || state;
 }
+function fail(msg){ setStatus("bad", "error"); $("errTxt").textContent = msg; throw new Error(msg); }
 
-// --- identity: oauth3 signIn (no plugin — oauth3 is identity only, never in the frame path) ---
-async function ensureIdentity(){
-  if (subject) return subject;
-  if (!window.oauth3) {
-    // honest unauthenticated mode — the trace is tagged with a random anon label, surfaced clearly.
-    subject = "anon-" + Math.random().toString(36).slice(2,10);
-    $("who").hidden = false;
-    $("who").textContent = "⚠ no oauth3 extension — identity unverified (" + subject + ")";
-    return subject;
-  }
-  setStatus("idle", "signing in via oauth3…");
-  const r = await window.oauth3.signIn({ node: NODE });
-  subject = (r && r.subject) || ("u-" + Math.random().toString(36).slice(2,10));
-  $("who").hidden = false;
-  $("who").textContent = "✓ streaming as " + subject;
-  return subject;
+// --- synthetic frame source: animated canvas, for tests and capture-less machines ---
+if (SYNTHETIC) {
+  $("modeTag").textContent = "synthetic source (?synthetic=1)";
+  $("synHint").textContent = "this page runs the synthetic source — no screen is captured";
+  synT = setInterval(() => {
+    const t = Date.now() / 1000;
+    synCtx.fillStyle = "#fff"; synCtx.fillRect(0, 0, 960, 600);
+    for (let i = 0; i < 6; i++) {
+      synCtx.fillStyle = ["#00838a", "#ff48b0", "#123f43"][i % 3];
+      const x = 80 + 140 * i + 60 * Math.sin(t + i), y = 90 + 90 * (i % 3) + 50 * Math.cos(t * 1.3 + i);
+      synCtx.fillRect(x, y, 110, 80);
+    }
+    synCtx.fillStyle = "#123f43"; synCtx.font = "700 28px monospace";
+    synCtx.fillText("synthetic " + new Date().toISOString().slice(11, 23), 40, 560);
+  }, 250);
 }
 
-// --- start: identity → screen picker → capture loop ---
+// --- start: pick one window (or use the synthetic source) and record into memory only ---
 $("start").onclick = async () => {
-  $("start").disabled = true;
-  streamErr.textContent = "";
+  $("errTxt").textContent = ""; $("start").disabled = true;
   try {
-    await ensureIdentity();
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia)
-      throw new Error("getDisplayMedia not available — desktop browser required");
-    stream = await navigator.mediaDevices.getDisplayMedia({ video:true, audio:false });
-    video.srcObject = stream; await video.play();
-    stream.getVideoTracks()[0].onended = stop;
+    sid = "s-" + Math.random().toString(36).slice(2, 10);
+    seq = 0; frames = []; lastGrid = null; sinceKeep = 0;
+    if (SYNTHETIC) {
+      // synthetic source already animates
+    } else {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia)
+        throw new Error("getDisplayMedia not available — desktop browser required, or open ?synthetic=1");
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      video.srcObject = stream; await video.play();
+      stream.getVideoTracks()[0].onended = stop;
+    }
     $("stop").disabled = false;
-    const rate = Math.max(0.2, Number($("interval").value) || 2);
+    const rate = Math.max(0.2, Number($("interval").value) || 1);
     timer = setInterval(capture, Math.max(200, rate * 1000));
-    setStatus("live", "streaming");
-    $("rateTxt").textContent = "· " + rate.toFixed(1) + "s/frame · " + ($("width").value) + "px";
-    capture(); refreshEcho();
+    setStatus("live", "recording — frames stay in this browser");
+    $("rateTxt").textContent = "· " + rate.toFixed(1) + "s/frame · " + $("width").value + "px · session " + sid;
+    $("preview").hidden = false;
+    mode = "recording";
+    capture();
   } catch (e) {
     $("start").disabled = false;
     setStatus("bad", "start failed");
-    streamErr.textContent = String((e && e.message) || e);
+    $("errTxt").textContent = String((e && e.message) || e);
   }
 };
 
 $("stop").onclick = stop;
 function stop(){
   if (timer) clearInterval(timer); timer = null;
-  if (stream) stream.getTracks().forEach(t => t.stop()); stream = null;
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   $("start").disabled = false; $("stop").disabled = true;
-  setStatus("idle","stopped");
+  if (mode !== "recording") return;
+  mode = "review";
+  $("preview").hidden = true;
+  setStatus("warn", "stopped — review before anything is sent");
+  $("rateTxt").textContent = "";
+  $("reviewCard").hidden = false;
+  $("sid").textContent = sid;
+  renderStrip();
 }
 
-// --- capture one frame: downsample → luma → JPEG → POST to the sink ---
+// --- capture one frame: downsample → luma+grid → change-drop → keep in memory ---
 async function capture(){
-  if (!video.videoWidth) return;
+  if (!SYNTHETIC && !video.videoWidth) return;
+  const sw = SYNTHETIC ? synCanvas.width : video.videoWidth, sh = SYNTHETIC ? synCanvas.height : video.videoHeight;
+  if (!sw) return;
   const w = Math.max(64, Number($("width").value) | 0);
-  const h = Math.round(video.videoHeight * w / video.videoWidth);
-  canvas.width = w; canvas.height = h;
-  ctx.drawImage(video, 0, 0, w, h);
-  const img = ctx.getImageData(0, 0, w, h).data;
-  let sum = 0; for (let i = 0; i < img.length; i += 4) sum += 0.299*img[i] + 0.587*img[i+1] + 0.114*img[i+2];
-  const luma = sum / (w * h);
-  const q = Math.min(1, Math.max(0.1, Number($("quality").value)));
-  const blob = await new Promise(res => canvas.toBlob(res, "image/jpeg", q));
-  preview.src = URL.createObjectURL(blob);   // immediate: what you're sending
-  const sentAt = Date.now();
-  let row = { n: ++seq, t: new Date().toLocaleTimeString(), bytes: blob.size, luma, delivered:false, status:"…", latency:"" };
-  frames.push(row); renderRows();
-  try {
-    const r = await fetch("sink/frame", { method:"POST",
-      headers:{ "content-type":"image/jpeg", "x-luma":luma.toFixed(2), "x-subject":subject },
-      body: blob });
-    const j = await r.json().catch(()=>({}));
-    const rtt = Date.now() - sentAt;
-    row.latency = rtt + "ms";
-    if (r.ok && j.ok !== false) {
-      row.delivered = true; row.status = "ok";
-      $("prevCap").textContent = "frame " + row.n + " · " + blob.size + "B · luma " + luma.toFixed(1) + " · delivered ✓";
-    } else {
-      row.delivered = false; row.status = "fail"; row.http = r.status;
-      streamErr.textContent = "sink error: " + (j.error || ("HTTP " + r.status));
+  const h = Math.max(48, Math.round(sh * w / sw));
+  work.width = w; work.height = h;
+  workCtx.drawImage(SYNTHETIC ? synCanvas : video, 0, 0, w, h);
+  const img = workCtx.getImageData(0, 0, w, h).data;
+
+  // luma + coarse grid
+  let sum = 0; const gw = GRID, gh = GRID, grid = new Float32Array(gw * gh), cellN = (w / gw) * (h / gh);
+  for (let y = 0; y < h; y++) {
+    const gyy = Math.min(gh - 1, (y / h * gh) | 0);
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4, l = 0.299 * img[i] + 0.587 * img[i + 1] + 0.114 * img[i + 2];
+      sum += l; grid[gyy * gw + Math.min(gw - 1, (x / w * gw) | 0)] += l / cellN;
     }
-  } catch (e) {
-    row.delivered = false; row.status = "fail"; row.latency = "";
-    row.http = "network";
-    streamErr.textContent = "network error posting frame: " + ((e && e.message) || e);
   }
-  renderRows(); refreshEcho();
+  const luma = sum / (w * h);
+
+  // change-drop: skip frames whose grid barely moved since the last KEPT frame (max 5 apart)
+  let diff = 1e9;
+  if (lastGrid) { let d = 0; for (let i = 0; i < grid.length; i++) d += Math.abs(grid[i] - lastGrid[i]); diff = d / grid.length; }
+  const floor = Math.max(0, Number($("floor").value) || 0);
+  if (lastGrid && diff < floor && sinceKeep < 5) {
+    sinceKeep++;
+    $("prevCap").textContent = "frame dropped (change " + diff.toFixed(1) + " < floor " + floor + ") · " + frames.filter(f => !f.deleted).length + " kept";
+    return;
+  }
+  lastGrid = grid; sinceKeep = 0;
+
+  const keep = document.createElement("canvas"); keep.width = w; keep.height = h;
+  keep.getContext("2d").drawImage(work, 0, 0);
+  const thumb = await new Promise(res => work.toBlob(res, "image/jpeg", 0.5));
+  const thumbUrl = URL.createObjectURL(thumb);
+  frames.push({ seq: ++seq, ts: Date.now(), w, h, luma, grid, canvas: keep, thumb, thumbUrl, rects: [], deleted: false, bytes: 0, delivered: false, http: "" });
+  $("preview").src = thumbUrl;
+  $("prevCap").textContent = "frame " + seq + " kept · luma " + luma.toFixed(1) + " · change " + diff.toFixed(1) + " · " + frames.filter(f => !f.deleted).length + " kept";
 }
 
-function renderRows(){
-  rowsEl.innerHTML = frames.slice(-40).reverse().map(r =>
-    "<tr><td>" + r.n + "</td><td>" + esc(r.t) + "</td><td>" + r.bytes + "</td><td>" +
-    (r.luma?r.luma.toFixed(1):"—") + "</td><td class='" + (r.delivered?"ok":"bad") + "'>" +
-    (r.delivered?"yes":"no") + "</td><td>" + esc(r.latency||"—") + "</td><td class='" +
-    (r.delivered?"ok":"bad") + "'>" + esc(String(r.http|| (r.delivered?"200":"…"))) + "</td></tr>"
+// --- review: filmstrip, delete, blackout ---
+function kept(){ return frames.filter(f => !f.deleted); }
+function renderStrip(){
+  $("keptN").textContent = kept().length + " frame" + (kept().length === 1 ? "" : "s") + " · " + frames.length + " captured";
+  $("strip").innerHTML = frames.map(f =>
+    "<figure class='" + (f.deleted ? "gone" : f.seq === selSeq ? "sel" : "") + "' data-seq='" + f.seq + "'>" +
+    "<img src='" + f.thumbUrl + "' alt='frame " + f.seq + "' />" +
+    (f.deleted ? "" : "<figcaption>#" + f.seq + " · " + f.rects.length + "● · <a href='#' data-del='" + f.seq + "'>✕</a></figcaption>") +
+    (f.deleted ? "<figcaption>#" + f.seq + " deleted</figcaption>" : "") + "</figure>"
   ).join("");
+  $("strip").querySelectorAll("img").forEach(im => im.onclick = () => { selSeq = Number(im.parentElement.dataset.seq); renderStrip(); renderBig(); });
+  $("strip").querySelectorAll("[data-del]").forEach(a => a.onclick = (e) => {
+    e.preventDefault();
+    const f = frames.find(x => x.seq === Number(a.dataset.del));
+    f.deleted = true; if (selSeq === f.seq) selSeq = kept()[0] ? kept()[0].seq : null;
+    renderStrip(); renderBig();
+  });
+  renderBig();
 }
 
-// echo strip = what the POD received (independent of our POST response)
-let echoTimer = null;
-async function refreshEcho(){
-  if (echoTimer) return;
-  echoTimer = setTimeout(()=>{ echoTimer = null; }, 600);
-  try {
-    const list = await fetch("sink/frames").then(r => r.json());
-    if (!list.length){ return; }
-    echoEl.innerHTML = list.slice(0, 12).map(f =>
-      "<figure><img src='sink/frame/" + f.ts + ".jpg' alt='echo'><figcaption>" +
-      new Date(f.ts).toLocaleTimeString() + " · " + f.bytes + "B</figcaption></figure>"
-    ).join("");
-    $("echoCap").textContent = list.length + " frame" + (list.length>1?"s":"") + " received by the pod";
-  } catch (_) { /* echo is best-effort */ }
+function renderBig(){
+  const f = frames.find(x => x.seq === selSeq);
+  const wrap = $("frameWrap");
+  if (!f || f.deleted) { wrap.hidden = true; $("rectList").textContent = ""; return; }
+  wrap.hidden = false;
+  $("frameBig").src = f.thumbUrl;
+  const cv = $("rects");
+  cv.width = f.w * 2; cv.height = f.h * 2; // 2x for pointer precision; CSS stretches over the img
+  const cx = cv.getContext("2d");
+  cx.fillStyle = "rgba(255,72,176,.55)";
+  f.rects.forEach(r => cx.fillRect(r.x * 2, r.y * 2, r.w * 2, r.h * 2));
+  $("rectList").innerHTML = f.rects.length
+    ? f.rects.map((r, i) => "rect " + i + ": " + Math.round(r.x) + "," + Math.round(r.y) + " " + Math.round(r.w) + "×" + Math.round(r.h) + " (frame px)").join(" · ")
+    : "no blackout rects on frame #" + f.seq;
+
+  // drag to black out — coords normalized by the canvas box to frame px
+  let a = null;
+  const px = (e) => {
+    const b = cv.getBoundingClientRect();
+    return { x: (e.clientX - b.left) / b.width * f.w, y: (e.clientY - b.top) / b.height * f.h };
+  };
+  cv.onpointerdown = (e) => { cv.setPointerCapture(e.pointerId); a = px(e); };
+  cv.onpointermove = (e) => {
+    if (!a) return; const p = px(e);
+    cx.fillStyle = "rgba(255,72,176,.55)";
+    cx.clearRect(0, 0, cv.width, cv.height);
+    f.rects.forEach(r => cx.fillRect(r.x * 2, r.y * 2, r.w * 2, r.h * 2));
+    cx.fillRect(Math.min(a.x, p.x) * 2, Math.min(a.y, p.y) * 2, Math.abs(p.x - a.x) * 2, Math.abs(p.y - a.y) * 2);
+  };
+  cv.onpointerup = (e) => {
+    if (!a) return; const p = px(e);
+    const r = { x: Math.min(a.x, p.x), y: Math.min(a.y, p.y), w: Math.abs(p.x - a.x), h: Math.abs(p.y - a.y) };
+    a = null;
+    if (r.w >= 4 && r.h >= 4) f.rects.push(r); // ignore taps: a click alone adds nothing
+    renderBig(); renderStrip();
+  };
 }
 
-async function diag(){
+$("discard").onclick = () => {
+  frames = []; selSeq = null; mode = "idle";
+  $("reviewCard").hidden = true; $("doneCard").hidden = true;
+  setStatus("idle", "discarded — nothing was sent");
+};
+
+// --- upload: blackout applied BEFORE JPEG encode; session meta first, then each frame ---
+$("upload").onclick = async () => {
+  const keptF = kept();
+  if (!keptF.length) return void ($("upErr").textContent = "nothing to upload — every frame is deleted");
+  $("upload").disabled = true; $("upErr").textContent = "";
+  setStatus("warn", "uploading…");
+  const q = Math.min(1, Math.max(0.1, Number($("quality").value)));
+  const enc = document.createElement("canvas"), ecx = enc.getContext("2d");
+  const rows = [];
   try {
-    const h = await fetch("health").then(r => r.json());
-    $("build").textContent = h.build;
-  } catch (_) { /* health is best-effort */ }
+    // 1. session meta — the sink learns the trace exists (and the note) before any pixels
+    const meta = await fetch("sink/session", { method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sid, note: $("note").value, frames: keptF.map(f => ({ seq: f.seq, ts: f.ts, luma: +f.luma.toFixed(1), bytes: 0 })) }) });
+    if (!meta.ok) fail("session create failed: HTTP " + meta.status + " " + (await meta.text()).slice(0, 200));
+
+    // 2. each kept frame: draw stored canvas → fill rects black → encode → POST
+    for (const f of keptF) {
+      enc.width = f.w; enc.height = f.h;
+      ecx.drawImage(f.canvas, 0, 0);
+      ecx.fillStyle = "#000";
+      f.rects.forEach(r => ecx.fillRect(r.x, r.y, r.w, r.h));
+      const blob = await new Promise(res => enc.toBlob(res, "image/jpeg", q));
+      const r = await fetch("sink/frame/" + sid + "/" + f.seq + ".jpg", {
+        method: "POST", headers: { "content-type": "image/jpeg", "x-luma": f.luma.toFixed(2) }, body: blob });
+      f.bytes = blob.size; f.http = r.status; f.delivered = r.ok;
+      rows.push("<tr><td>#" + f.seq + "</td><td>" + blob.size + "</td><td>" + f.luma.toFixed(1) +
+        "</td><td class='" + (r.ok ? "ok" : "bad") + "'>" + r.status + "</td><td class='" + (r.ok ? "ok" : "bad") + "'>" + (r.ok ? "yes" : "no") + "</td></tr>");
+      $("upRows").innerHTML = rows.join("");
+    }
+    if (!keptF.every(f => f.delivered)) fail("a frame failed to upload — see the table");
+    mode = "uploaded";
+    setStatus("ok", "uploaded · " + keptF.length + " frames · session " + sid);
+    $("reviewCard").hidden = true; $("doneCard").hidden = false;
+    $("keepBtn").dataset.sid = sid;
+    loadDev();
+  } catch (e) {
+    $("upload").disabled = false;
+    setStatus("bad", "upload failed");
+    $("upErr").textContent = String((e && e.message) || e);
+  }
+};
+
+$("keepBtn").onclick = async () => {
+  const r = await fetch("sink/session/" + $("keepBtn").dataset.sid + "/keep", { method: "POST" });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.ok) return void ($("keepTxt").textContent = "keep failed: " + (j.error || r.status));
+  $("keepBtn").disabled = true;
+  $("keepTxt").textContent = "kept — this trace no longer expires";
+  loadDev();
+};
+
+// --- dev side: session list → filmstrip → per-frame metadata ---
+async function loadDev(){
+  const list = await fetch("sink/sessions").then(r => r.json());
+  if (!Array.isArray(list) || !list.length) {
+    $("devBody").innerHTML = "<span class='muted' style='font:12px var(--mono)'>no sessions on the sink</span>"; return;
+  }
+  $("devBody").innerHTML = list.map(s =>
+    "<div class='sess' data-sid='" + esc(s.sid) + "'>" +
+    "<div class='bar' style='margin:4px 0'>" +
+    "<span class='pill " + (s.kept ? "ok" : "warn") + "'>" + esc(s.sid) + (s.kept ? " · kept" : " · expires " + new Date(s.expiresAt || 0).toLocaleTimeString()) + "</span>" +
+    "<span class='muted' style='font:12px var(--mono)'>" + s.frames.length + " frames · " + esc(s.note || "(no note)") + "</span>" +
+    "<button class='btn ghost small' data-open='" + esc(s.sid) + "'>open</button></div>" +
+    "<div class='devFrames' id='dev-" + esc(s.sid) + "' hidden></div></div>"
+  ).join("");
+  $("devBody").querySelectorAll("[data-open]").forEach(b => b.onclick = async () => {
+    const box = $("dev-" + b.dataset.open);
+    if (!box.hidden) { box.hidden = true; return; }
+    const ss = list.find(x => x.sid === b.dataset.open);
+    box.innerHTML =
+      "<div class='strip'>" + ss.frames.map(f =>
+        "<figure><img src='sink/frame/" + esc(ss.sid) + "/" + f.seq + ".jpg' alt='frame " + f.seq + "' />" +
+        "<figcaption>#" + f.seq + "</figcaption></figure>").join("") + "</div>" +
+      "<div class='scroll'><table><thead><tr><th>#</th><th>time</th><th>bytes</th><th>luma</th></tr></thead><tbody>" +
+      ss.frames.map(f => "<tr><td>#" + f.seq + "</td><td>" + new Date(f.ts).toLocaleTimeString() +
+        "</td><td>" + (f.bytes || "—") + "</td><td>" + (f.luma || "—") + "</td></tr>").join("") +
+      "</tbody></table></div>";
+    box.hidden = false;
+  });
 }
+$("devSide").addEventListener("toggle", () => { if ($("devSide").open) loadDev(); });
 
 // theme toggle (light default)
 $("themeBtn").onclick = () => {
@@ -362,8 +517,10 @@ $("themeBtn").onclick = () => {
   $("themeBtn").textContent = next === "dark" ? "light" : "dark";
 };
 
-diag();
-setStatus("idle","idle");
+(async () => {
+  try { $("build").textContent = (await fetch("health").then(r => r.json())).build; } catch (_) { /* health is best-effort */ }
+  setStatus("idle", "idle");
+})();
 </script>
 </body>
 </html>
