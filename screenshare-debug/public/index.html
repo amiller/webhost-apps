@@ -403,7 +403,7 @@ function renderBig(){
     const b = cv.getBoundingClientRect();
     return { x: (e.clientX - b.left) / b.width * f.w, y: (e.clientY - b.top) / b.height * f.h };
   };
-  cv.onpointerdown = (e) => { cv.setPointerCapture(e.pointerId); a = px(e); };
+  cv.onpointerdown = (e) => { if (e.isTrusted) cv.setPointerCapture(e.pointerId); a = px(e); }; // untrusted/dispatched events have no active pointer — capture would throw
   cv.onpointermove = (e) => {
     if (!a) return; const p = px(e);
     cx.fillStyle = "rgba(255,72,176,.55)";
